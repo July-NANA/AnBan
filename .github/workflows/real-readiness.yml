@@ -22,7 +22,6 @@ jobs:
       run:
         shell: bash -el {0}
     env:
-      ANBAN_WORKSPACE_DIR: ${{ runner.temp }}/AnbanWorkspace
       DATABASE_URL: postgresql+asyncpg://anban@127.0.0.1:5432/anban
       ANBAN_TEST_DATABASE_URL: postgresql+asyncpg://anban@127.0.0.1:5433/anban_test
       OPENAI_COMPATIBLE_BASE_URL: ${{ secrets.OPENAI_COMPATIBLE_BASE_URL }}
@@ -58,6 +57,9 @@ jobs:
     steps:
       - name: Check out exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure ephemeral Workspace path
+        run: echo "ANBAN_WORKSPACE_DIR=$RUNNER_TEMP/AnbanWorkspace" >> "$GITHUB_ENV"
 
       - name: Create Miniforge environment
         uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3

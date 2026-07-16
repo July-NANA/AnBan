@@ -16,6 +16,8 @@ from dotenv import dotenv_values
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageFunctionToolCall, ChatCompletionMessageParam
 
+from scripts.workspace_bootstrap import resolve_workspace as resolve_workspace_bootstrap
+
 MODEL_KEYS = (
     "OPENAI_COMPATIBLE_BASE_URL",
     "OPENAI_COMPATIBLE_API_KEY",
@@ -56,8 +58,7 @@ class ModelCheckResult:
 def resolve_workspace() -> Path:
     """Resolve the managed Workspace without exposing it to model-visible content."""
 
-    configured = os.environ.get("ANBAN_WORKSPACE_DIR")
-    return Path(configured).expanduser() if configured else Path("/Users/fanyuhang/AnbanWorkspace")
+    return resolve_workspace_bootstrap().path
 
 
 def load_model_configuration(workspace: Path) -> ModelConfiguration:

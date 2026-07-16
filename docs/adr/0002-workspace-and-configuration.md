@@ -9,7 +9,7 @@ Runtime configuration, credentials, installed Skills, run working data, and arti
 
 ## Decision
 
-The canonical local Workspace is `/Users/fanyuhang/AnbanWorkspace`.
+The primary workstation currently uses `/Users/fanyuhang/AnbanWorkspace`. This is an informational local record, not a portable runtime or domain contract.
 
 - Stable configuration: `anban.toml`
 - Secrets: `secrets.env`
@@ -19,9 +19,9 @@ The canonical local Workspace is `/Users/fanyuhang/AnbanWorkspace`.
 
 The Workspace root has mode 0700 and `secrets.env` has mode 0600. Database settings are referenced by environment-variable name from `anban.toml`; credentials are never embedded in TOML.
 
-The repository `.env` is limited to bootstrap configuration for `ANBAN_WORKSPACE_DIR`. Workspace content remains outside Git.
+The Workspace root is resolved by Bootstrap configuration: the current process `ANBAN_WORKSPACE_DIR`, then the repository's untracked `.env`, then the operating-system default. The repository `.env` is limited to bootstrap configuration for `ANBAN_WORKSPACE_DIR`. Workspace content remains outside Git, and `anban.toml` cannot select the root because it is read only after the Workspace has been found.
 
-Absolute host paths cannot enter Core, public APIs, model-visible content, audit data, or the frontend. Logical resources use `anban://...` URIs; adapters resolve them to local paths only at the execution boundary.
+Physical Workspace paths are adapter configuration rather than domain identity. Absolute host paths cannot enter Core, public APIs, model-visible content, audit data, or the frontend. Logical resources use stable `anban://...` URIs across environments; adapters resolve them to local paths only at the execution boundary.
 
 ## Consequences
 

@@ -6,11 +6,12 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
@@ -20,10 +21,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from scripts.check_real_model import ReadinessError, run_check
+from scripts.workspace_bootstrap import WorkspaceResolutionError, resolve_workspace
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-LOCAL_WORKSPACE = Path("/Users/fanyuhang/AnbanWorkspace")
-LOCAL_INTERPRETER = Path("/Users/fanyuhang/miniforge3/envs/anban/bin/python")
 CLAW_CLI = "clawhub@0.23.1"
 SKILL_SLUG = "@steipete/weather"
 SKILL_VERSION = "1.0.0"
@@ -54,8 +54,7 @@ def command(*arguments: str, cwd: Path = REPOSITORY, timeout: int = 120) -> str:
 
 
 def workspace_path() -> Path:
-    configured = os.environ.get("ANBAN_WORKSPACE_DIR")
-    return Path(configured).expanduser().resolve() if configured else LOCAL_WORKSPACE
+    return resolve_workspace(repository=REPOSITORY).path
 
 
 def pass_result(name: str, detail: str) -> CheckResult:
@@ -141,36 +140,85 @@ def check_repository() -> CheckResult:
     return pass_result("repository", f"anban exact HEAD {head[:12]}, clean tree, approved origin")
 
 
-def check_miniforge() -> CheckResult:
-    base = Path(command("conda", "info", "--base")).resolve()
-    executable = Path(sys.executable)
-    if "miniforge" not in base.name.lower():
-        return fail_result(
-            "Miniforge",
-            "miniforge_base_invalid",
-            "Conda base is not a Miniforge installation.",
-            "Install and activate Miniforge before running doctor.",
-        )
-    if sys.version_info[:2] != (3, 12) or executable.parent.parent.name != "anban":
+def environment_contract_valid(path: Path) -> bool:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    name_valid = re.search(r"(?m)^name:\s*anban\s*(?:#.*)?$", content) is not None
+    python_valid = re.search(r"(?m)^\s*-\s*python\s*=\s*3\.12\s*(?:#.*)?$", content) is not None
+    return name_valid and python_valid
+
+
+def python_environment_result(
+    environ: Mapping[str, str],
+    version: tuple[int, int],
+    executable: Path,
+    uv_version: str | None,
+    environment_file: Path,
+) -> CheckResult:
+    if environ.get("CONDA_DEFAULT_ENV") != "anban":
         return fail_result(
             "Miniforge",
             "miniforge_environment_invalid",
-            "Python is not 3.12 from the anban environment.",
+            "The active Conda environment is not anban.",
             "Activate the Miniforge anban environment.",
         )
-    agents = (REPOSITORY / "AGENTS.md").read_text(encoding="utf-8")
-    local_mismatch = executable != LOCAL_INTERPRETER or str(executable) not in agents
-    if os.environ.get("GITHUB_ACTIONS") != "true" and local_mismatch:
+    if version != (3, 12):
         return fail_result(
             "Miniforge",
-            "miniforge_interpreter_mismatch",
-            "Local interpreter differs from the AGENTS.md record.",
-            "Recreate the documented Miniforge environment or update the verified record.",
+            "miniforge_python_version_invalid",
+            "Python is not version 3.12.",
+            "Recreate the anban environment from environment.yml.",
         )
-    uv_version = command("uv", "--version")
+    prefix_value = environ.get("CONDA_PREFIX", "").strip()
+    if not prefix_value:
+        return fail_result(
+            "Miniforge",
+            "miniforge_prefix_missing",
+            "CONDA_PREFIX is not available.",
+            "Activate the Miniforge anban environment.",
+        )
+    prefix = Path(prefix_value).expanduser().resolve()
+    resolved_executable = executable.expanduser().resolve()
+    if prefix not in resolved_executable.parents:
+        return fail_result(
+            "Miniforge",
+            "miniforge_interpreter_invalid",
+            "Python does not come from the active CONDA_PREFIX.",
+            "Run doctor with Python from the active anban environment.",
+        )
+    if not environment_contract_valid(environment_file):
+        return fail_result(
+            "Miniforge",
+            "miniforge_environment_file_invalid",
+            "environment.yml does not require anban with Python 3.12.",
+            "Restore the approved environment.yml contract.",
+        )
+    if uv_version is None:
+        return fail_result(
+            "Miniforge",
+            "miniforge_uv_unavailable",
+            "uv is not executable in the active environment.",
+            "Install uv through the approved Miniforge environment.",
+        )
     return pass_result(
         "Miniforge",
-        f"{base}, Python {sys.version_info.major}.{sys.version_info.minor}, {uv_version}",
+        f"anban, Python {version[0]}.{version[1]}, interpreter inside CONDA_PREFIX, {uv_version}",
+    )
+
+
+def check_miniforge() -> CheckResult:
+    try:
+        uv_version = command("uv", "--version")
+    except (OSError, subprocess.SubprocessError):
+        uv_version = None
+    return python_environment_result(
+        os.environ,
+        (sys.version_info.major, sys.version_info.minor),
+        Path(sys.executable),
+        uv_version,
+        REPOSITORY / "environment.yml",
     )
 
 
@@ -179,14 +227,33 @@ def load_workspace_config(workspace: Path) -> dict[str, object]:
         return tomllib.load(handle)
 
 
-def check_workspace() -> CheckResult:
-    workspace = workspace_path()
-    if os.environ.get("GITHUB_ACTIONS") != "true" and workspace != LOCAL_WORKSPACE:
+def check_workspace(workspace: Path | None = None) -> CheckResult:
+    resolution = None
+    try:
+        if workspace is None:
+            resolution = resolve_workspace(repository=REPOSITORY)
+            workspace = resolution.path
+        else:
+            workspace = workspace.resolve()
+    except WorkspaceResolutionError as exc:
         return fail_result(
             "Workspace",
-            "workspace_path_invalid",
-            "Local Workspace is not the canonical path.",
-            "Set ANBAN_WORKSPACE_DIR to /Users/fanyuhang/AnbanWorkspace.",
+            exc.code,
+            str(exc),
+            "Set a valid absolute external Workspace Bootstrap path.",
+        )
+    repository = REPOSITORY.resolve()
+    home = Path.home().resolve()
+    if (
+        workspace == Path(workspace.anchor)
+        or workspace in {home, repository}
+        or repository in workspace.parents
+    ):
+        return fail_result(
+            "Workspace",
+            "workspace_path_unsafe",
+            "Workspace must not be a filesystem root, HOME, or inside the repository.",
+            "Choose a dedicated external Workspace directory.",
         )
     required = ("skills", "runs", "artifacts", "cache", "logs", "tmp")
     if not workspace.is_dir() or any(not (workspace / name).is_dir() for name in required):
@@ -227,7 +294,11 @@ def check_workspace() -> CheckResult:
             "anban.toml identity fields are invalid.",
             "Restore schema_version 1 and workspace_id local-main.",
         )
-    return pass_result("Workspace", f"{workspace}, mode 0700, secrets mode 0600, TOML valid")
+    source = resolution.source if resolution is not None else "explicit validation path"
+    return pass_result(
+        "Workspace",
+        f"resolved from {source}; external, mode 0700, secrets mode 0600, TOML valid",
+    )
 
 
 async def database_probe(url: str, expected_database: str) -> None:
@@ -452,7 +523,20 @@ def check_ci_files() -> CheckResult:
             "Baseline or trusted readiness workflow is missing.",
             "Add both version-independent GitHub Actions workflows.",
         )
-    return pass_result("CI files", "baseline and trusted readiness workflows exist")
+    if any(
+        "conda-incubator/setup-miniconda@" not in path.read_text(encoding="utf-8")
+        or "miniforge-version:" not in path.read_text(encoding="utf-8")
+        for path in paths
+    ):
+        return fail_result(
+            "CI files",
+            "ci_miniforge_configuration_invalid",
+            "A workflow does not configure setup-miniconda with miniforge-version.",
+            "Restore the portable Miniforge workflow configuration.",
+        )
+    return pass_result(
+        "CI files", "baseline and trusted readiness workflows use setup-miniconda Miniforge"
+    )
 
 
 def run_guarded[T](

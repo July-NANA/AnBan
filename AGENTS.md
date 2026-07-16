@@ -50,16 +50,19 @@ Anban / 安伴 is a security-governed AI application built around explicit archi
   conda activate anban
   ```
 
-- Resolved local interpreter: `/Users/fanyuhang/miniforge3/envs/anban/bin/python`
+- Verified primary workstation interpreter: `/Users/fanyuhang/miniforge3/envs/anban/bin/python`
+- This path is informational, not a portable runtime requirement. The authoritative requirements are Miniforge, environment `anban`, and Python 3.12.
+- Doctor must use the active environment facts and must not parse AGENTS.md for runtime configuration.
 - Do not use the macOS system Python.
 - Do not create a second virtual environment outside this Miniforge environment.
 - Run uv, Ruff, Pyright, pytest, and project Python commands only after activating this environment or through `conda run -n anban`.
-- Other developers may use a different Miniforge installation path, but the environment name and Python version must remain the same.
+- Other developers and CI may use a different Miniforge installation path, but the environment name and Python version must remain the same.
 
 ## Workspace and Secrets
 
 - The managed local Workspace is separate from the repository.
-- The canonical local path is `/Users/fanyuhang/AnbanWorkspace`.
+- The verified primary workstation path is `/Users/fanyuhang/AnbanWorkspace`; it is informational rather than a portable runtime requirement.
+- Workspace Bootstrap resolution is authoritative and may select a different external physical path on another workstation or in CI.
 - Repository `.env` files may only bootstrap `ANBAN_WORKSPACE_DIR`; runtime credentials belong in the Workspace `secrets.env`.
 - Never commit `.env`, Workspace content, credentials, database passwords, or provider responses.
 

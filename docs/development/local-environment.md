@@ -1,6 +1,6 @@
 # Local Environment
 
-This file records non-sensitive facts for the canonical local development workstation. Other developers may use a different Miniforge installation path while preserving the environment name and Python version.
+This file records non-sensitive facts for the primary local development workstation. Absolute paths below are workstation records only and do not participate in portable readiness decisions. Runtime authority comes from the active environment and Bootstrap configuration. Other developers and CI may use different physical paths while preserving the environment name and Python version.
 
 ## Python
 
@@ -12,12 +12,15 @@ This file records non-sensitive facts for the canonical local development workst
 - uv: `0.11.29`
 
 Do not use the macOS system Python or create a second virtual environment.
+Doctor validates the active Conda environment and does not read this document as runtime configuration.
 
 ## Workspace
 
 - Root: `/Users/fanyuhang/AnbanWorkspace`
 - Configuration: `anban.toml`
 - Secret file: `secrets.env` (values are intentionally not recorded)
+
+The root above is a primary workstation record. `ANBAN_WORKSPACE_DIR`, the repository Bootstrap `.env`, or the operating-system default resolves the active external Workspace.
 
 ## PostgreSQL
 
@@ -49,3 +52,4 @@ The Base URL, API key, Authorization data, and raw provider responses are intent
 - Real validation: public city query for Sydney through the Skill-documented `wttr.in` service
 
 Do not run automatic `update --all` during development readiness.
+The recorded Skill path follows this workstation's Workspace and is not a portable requirement.

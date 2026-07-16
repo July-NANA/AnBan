@@ -183,7 +183,7 @@ def test_missing_configuration_only_names_field() -> None:
     assert "value" not in output.lower()
 
 
-class FakeResult:
+class ProbeResult:
     def __init__(self, *, row: tuple[str, str] | None = None, scalar: object = None) -> None:
         self.row = row
         self.scalar = scalar
@@ -196,7 +196,7 @@ class FakeResult:
         return self.scalar
 
 
-class FakeTransaction:
+class ProbeTransaction:
     def __init__(self) -> None:
         self.rolled_back = False
 
@@ -204,48 +204,48 @@ class FakeTransaction:
         self.rolled_back = True
 
 
-class FakeConnection:
+class ProbeConnection:
     def __init__(self) -> None:
         self.queries: list[str] = []
-        self.transaction = FakeTransaction()
+        self.transaction = ProbeTransaction()
 
-    async def execute(self, statement: TextClause) -> FakeResult:
+    async def execute(self, statement: TextClause) -> ProbeResult:
         query = str(statement)
         self.queries.append(query)
         if "current_database()" in query:
-            return FakeResult(row=("anban", "anban"))
+            return ProbeResult(row=("anban", "anban"))
         if "SELECT value" in query:
-            return FakeResult(scalar="ok")
+            return ProbeResult(scalar="ok")
         if "to_regclass" in query:
-            return FakeResult(scalar=None)
+            return ProbeResult(scalar=None)
         if "information_schema.tables" in query:
-            return FakeResult(scalar=37)
-        return FakeResult()
+            return ProbeResult(scalar=37)
+        return ProbeResult()
 
     async def rollback(self) -> None:
         return None
 
-    async def begin(self) -> FakeTransaction:
+    async def begin(self) -> ProbeTransaction:
         return self.transaction
 
 
-class FakeConnectContext:
-    def __init__(self, connection: FakeConnection) -> None:
+class ProbeConnectContext:
+    def __init__(self, connection: ProbeConnection) -> None:
         self.connection = connection
 
-    async def __aenter__(self) -> FakeConnection:
+    async def __aenter__(self) -> ProbeConnection:
         return self.connection
 
     async def __aexit__(self, *_args: object) -> None:
         return None
 
 
-class FakeEngine:
-    def __init__(self, connection: FakeConnection) -> None:
+class ProbeEngine:
+    def __init__(self, connection: ProbeConnection) -> None:
         self.connection = connection
 
-    def connect(self) -> FakeConnectContext:
-        return FakeConnectContext(self.connection)
+    def connect(self) -> ProbeConnectContext:
+        return ProbeConnectContext(self.connection)
 
     async def dispose(self) -> None:
         return None
@@ -255,15 +255,15 @@ class FakeEngine:
 async def test_database_with_business_tables_passes_and_transaction_rolls_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    connection = FakeConnection()
-    engine = FakeEngine(connection)
+    connection = ProbeConnection()
+    engine = ProbeEngine(connection)
 
-    def fake_create_async_engine(_url: str, *, echo: bool, pool_pre_ping: bool) -> FakeEngine:
+    def probe_create_async_engine(_url: str, *, echo: bool, pool_pre_ping: bool) -> ProbeEngine:
         assert echo is False
         assert pool_pre_ping is True
         return engine
 
-    monkeypatch.setattr(doctor, "create_async_engine", fake_create_async_engine)
+    monkeypatch.setattr(doctor, "create_async_engine", probe_create_async_engine)
 
     await doctor.database_probe("postgresql+asyncpg://not-logged", "anban")
 

@@ -12,7 +12,7 @@ dependencies = [
   "openai>=1.75",
   "pydantic>=2.11",
   "python-dotenv>=1.1",
-  "sqlalchemy>=2.0",
+  "sqlalchemy[asyncio]>=2.0",
 ]
 
 [dependency-groups]

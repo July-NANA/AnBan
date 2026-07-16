@@ -94,4 +94,4 @@ jobs:
           npx --yes clawhub@0.23.1 --workdir "$ANBAN_WORKSPACE_DIR" --dir skills pin @steipete/weather --reason "Phase 0 trusted readiness baseline"
 
       - name: Run complete real readiness doctor
-        run: pnpm doctor
+        run: pnpm run doctor

@@ -8,6 +8,6 @@
     "check:python": "conda run -n anban ruff format --check . && conda run -n anban ruff check . && conda run -n anban python scripts/run_pyright.py && conda run -n anban pytest",
     "check": "pnpm check:python && pnpm --dir apps/web check",
     "build": "pnpm --dir apps/web build",
-    "doctor": "conda run -n anban python scripts/readiness.py"
+    "doctor": "conda run -n anban python -m scripts.readiness"
   }
 }

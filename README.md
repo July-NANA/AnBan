@@ -10,7 +10,9 @@ It intentionally contains no product Task, Run, Agent, Graph, Skill Runtime, or 
 2. Activate the environment before running Python tools.
 3. Set `ANBAN_WORKSPACE_DIR` to the managed Workspace when the operating-system default is not suitable.
 4. Install JavaScript dependencies with `pnpm install --frozen-lockfile`.
-5. Run `pnpm check`, `pnpm build`, and `pnpm doctor`.
+5. Run `pnpm check`, `pnpm build`, and `pnpm run doctor`.
+
+Use the explicit `run` form because pnpm also ships an unrelated built-in command named `doctor`.
 
 See [local environment](docs/development/local-environment.md), [architecture overview](docs/architecture/overview.md), and [contributing](CONTRIBUTING.md).
 

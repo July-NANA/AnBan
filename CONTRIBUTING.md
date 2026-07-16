@@ -23,7 +23,7 @@ Use Miniforge, the `anban` Conda environment, Python 3.12, and pnpm. Do not crea
 ```bash
 pnpm check
 pnpm build
-pnpm doctor
+pnpm run doctor
 ```
 
 Applicable GitHub Actions must pass on the exact pushed `anban` SHA.

@@ -143,7 +143,7 @@ def check_repository() -> CheckResult:
 
 def check_miniforge() -> CheckResult:
     base = Path(command("conda", "info", "--base")).resolve()
-    executable = Path(sys.executable).resolve()
+    executable = Path(sys.executable)
     if "miniforge" not in base.name.lower():
         return fail_result(
             "Miniforge",

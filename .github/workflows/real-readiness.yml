@@ -1,0 +1,97 @@
+name: Trusted Real Readiness
+
+on:
+  push:
+    branches:
+      - anban
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trusted-real-readiness-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  doctor:
+    name: Real model, database, Skill, and browser
+    runs-on: ubuntu-latest
+    environment: real-readiness
+    defaults:
+      run:
+        shell: bash -el {0}
+    env:
+      ANBAN_WORKSPACE_DIR: ${{ runner.temp }}/AnbanWorkspace
+      DATABASE_URL: postgresql+asyncpg://anban@127.0.0.1:5432/anban
+      ANBAN_TEST_DATABASE_URL: postgresql+asyncpg://anban@127.0.0.1:5433/anban_test
+      OPENAI_COMPATIBLE_BASE_URL: ${{ secrets.OPENAI_COMPATIBLE_BASE_URL }}
+      OPENAI_COMPATIBLE_API_KEY: ${{ secrets.OPENAI_COMPATIBLE_API_KEY }}
+      OPENAI_COMPATIBLE_MODEL: ${{ secrets.OPENAI_COMPATIBLE_MODEL }}
+    services:
+      development-postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: anban
+          POSTGRES_DB: anban
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U anban -d anban"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      test-postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: anban
+          POSTGRES_DB: anban_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U anban -d anban_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Create Miniforge environment
+        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3
+        with:
+          miniforge-version: latest
+          activate-environment: anban
+          environment-file: environment.yml
+          auto-activate-base: false
+          use-mamba: true
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: |
+          uv lock --check
+          uv export --frozen --all-groups --no-emit-project --format requirements-txt --output-file "$RUNNER_TEMP/requirements.txt"
+          uv pip install --python "$CONDA_PREFIX/bin/python" -r "$RUNNER_TEMP/requirements.txt"
+          pnpm install --frozen-lockfile
+          pnpm --dir apps/web exec playwright install --with-deps chromium
+
+      - name: Create ephemeral managed Workspace
+        run: python scripts/bootstrap_ci_workspace.py
+
+      - name: Install and pin approved real Skill
+        run: |
+          npx --yes clawhub@0.23.1 --workdir "$ANBAN_WORKSPACE_DIR" --dir skills install @steipete/weather --version 1.0.0
+          npx --yes clawhub@0.23.1 --workdir "$ANBAN_WORKSPACE_DIR" --dir skills pin @steipete/weather --reason "Phase 0 trusted readiness baseline"
+
+      - name: Run complete real readiness doctor
+        run: pnpm doctor

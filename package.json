@@ -1,0 +1,13 @@
+{
+  "name": "anban-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.19.0",
+  "scripts": {
+    "dev:web": "pnpm --dir apps/web dev",
+    "check:python": "conda run -n anban ruff check . && conda run -n anban pyright && conda run -n anban pytest",
+    "check": "pnpm check:python && pnpm --dir apps/web check",
+    "build": "pnpm --dir apps/web build",
+    "doctor": "conda run -n anban python scripts/readiness.py"
+  }
+}

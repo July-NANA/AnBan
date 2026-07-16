@@ -26,4 +26,7 @@ pnpm build
 pnpm run doctor
 ```
 
-Applicable GitHub Actions must pass on the exact pushed `anban` SHA.
+`pnpm check` and `pnpm build` are deterministic repository checks. `pnpm run doctor` diagnoses
+local prerequisites and does not perform public-network acceptance. A scoped Codex Phase or
+Version Gate explicitly runs applicable real model, Skill, Capability, and end-to-end checks.
+Ordinary GitHub Actions must pass on the exact pushed `anban` SHA.

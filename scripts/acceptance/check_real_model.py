@@ -1,4 +1,4 @@
-"""Validate a real OpenAI-compatible model and one bounded local file capability."""
+"""Explicitly validate a real model and one bounded local file capability."""
 
 from __future__ import annotations
 

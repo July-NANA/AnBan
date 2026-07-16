@@ -87,7 +87,7 @@ Authored Python and frontend source under `anban/`, `apps/`, `packages/`, `scrip
 
 - Do not add production dependencies casually; document the reason.
 - Do not introduce infrastructure without an ADR.
-- Do not bypass Ruff, Pyright, pytest, frontend checks, or real readiness checks.
+- Do not bypass Ruff, Pyright, pytest, frontend checks, doctor, or scoped real acceptance Gates.
 - PostgreSQL stores business data; do not introduce Redis, Celery, Kafka, RabbitMQ, a vector database, or another database without an approved architecture change.
 - Before changing behavior, inspect related architecture documents and ADRs.
 - Development-readiness work must not implement Task, Run, Agent, Graph, Capability Registry, Skill Runtime, Audit, Trace, or other product behavior.
@@ -96,7 +96,8 @@ Authored Python and frontend source under `anban/`, `apps/`, `packages/`, `scrip
 
 - Python formatting, linting, types, and tests pass.
 - Frontend types, tests, and build pass.
-- Real environment readiness passes when required.
+- Doctor passes for the local development environment.
+- Relevant real model, Skill, Capability, and end-to-end acceptance passes in the scoped Codex Phase or Version Gate when required.
 - Relevant architecture and development documentation is current.
 - No secret is tracked or emitted.
 - The exact pushed `anban` SHA passes all applicable remote CI.

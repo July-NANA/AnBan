@@ -13,6 +13,7 @@ This file records non-sensitive facts for the primary local development workstat
 
 Do not use the macOS system Python or create a second virtual environment.
 Doctor validates the active Conda environment and does not read this document as runtime configuration.
+It also verifies executable Node and pnpm versions against the root `packageManager` declaration.
 
 ## Workspace
 
@@ -37,6 +38,8 @@ Passwords are intentionally omitted.
 - Model: `deepseek-v4-pro`
 
 The Base URL, API key, Authorization data, and raw provider responses are intentionally omitted.
+Doctor checks only that the three model configuration fields are present. A scoped Codex Phase or
+Version Gate may run `pnpm run acceptance:model`; ordinary CI and doctor never make this request.
 
 ## Real ClawHub Skill
 
@@ -49,7 +52,19 @@ The Base URL, API key, Authorization data, and raw provider responses are intent
 - Pin: enabled; updates require explicit review
 - `SKILL.md` SHA-256: `1ca0c8d768ad603ea8d5d47f56a9b435fe575f7f34e719eda85c82003d740e93`
 - Installed: `2026-07-17`
-- Real validation: public city query for Sydney through the Skill-documented `wttr.in` service
+- Real validation helper: `pnpm run acceptance:skill` performs the Skill-documented bounded Sydney
+  query when a scoped Codex Phase or Version Gate requires it
 
-Do not run automatic `update --all` during development readiness.
+Doctor invokes the pinned CLI in npm offline mode and checks only the local Skill directory,
+`SKILL.md`, lock record, version, pin, and approved content hash. It does not install or update the
+Skill and does not access ClawHub, `wttr.in`, Open-Meteo, or another public service.
+
+Do not run automatic `update --all` during local diagnosis or acceptance.
 The recorded Skill path follows this workstation's Workspace and is not a portable requirement.
+
+## Commands and responsibility
+
+- `pnpm check`: deterministic code quality and tests.
+- `pnpm build`: deterministic frontend production build.
+- `pnpm run doctor`: local development environment diagnosis.
+- Codex Phase or Version Gate: scoped real model, Skill, Capability, and end-to-end acceptance.

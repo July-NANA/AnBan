@@ -25,4 +25,4 @@ Physical Workspace paths are adapter configuration rather than domain identity. 
 
 ## Consequences
 
-Local and CI environments may use different physical Workspace roots while preserving the same layout and logical identifiers. Readiness validates permissions, references, and isolation before execution.
+Local and CI environments may use different physical Workspace roots while preserving the same layout and logical identifiers. Doctor validates local permissions, references, configuration presence, and isolation without public-network calls. Real model, Skill, and Capability behavior is validated explicitly by the relevant Codex Phase or Version Gate.

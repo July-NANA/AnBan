@@ -2,92 +2,98 @@
 
 ## Project Overview
 
-Anban / 安伴 is a security-governed AI agent runtime application. It focuses on controlled agent execution, auditability, skill and tool governance, workflow orchestration, and future desktop operation.
+Anban / 安伴 is a security-governed AI application built around explicit architecture boundaries, real execution, auditable environment checks, and fail-closed integration behavior.
 
-## Repository Layout
+## Technology Stack
 
-- `apps/web`: React + TypeScript + Vite frontend.
-- `apps/api`: Rust Axum API service.
-- `apps/desktop`: reserved for future Tauri desktop work.
-- `crates/*`: Rust workspace crates for runtime, audit, skill, tool, governance, ClawHub, workflow, and LLM domains.
-- `packages/*`: shared frontend packages.
-- `docs/*`: specs, ADRs, and product notes.
+- Frontend: React + TypeScript
+- Backend: Python + FastAPI
+- Agent/Graph Runtime: LangGraph
+- Database: PostgreSQL
+- Python environment: Miniforge conda environment `anban`, Python 3.12
+- Python tooling: uv, Ruff, Pyright, pytest
+- Frontend tooling: pnpm, Vitest, Playwright
 
-## Required Commands
+## Backend Modules
 
-```bash
-pnpm install
-pnpm check
-pnpm build:web
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-```
-
-## Development Rules
-
-- Do not commit `.env` or any secret.
-- Do not write real tokens into README, workflow, test, fixture, example, or demo code.
-- Do not add production dependencies casually; explain the reason before adding one.
-- Do not introduce new infrastructure technology unless an ADR already exists or is updated.
-- Do not bypass Rust clippy, rustfmt, or TypeScript checks.
-- Do not use Supabase as the main business database.
-- Do not use a third-party Agent framework as the core Agent Runtime.
-- Prefer focused commits with one clear scope.
-- Before modifying behavior, check related docs, ADRs, and specs.
-
-## Repository Workflow
-
-- `anban` is the single active development, integration, remediation, governance, and acceptance branch.
-- Work directly and serially on `anban`. Feature, fix, documentation, and Batch branches are disabled unless the user explicitly requests a policy change.
-- Pull requests are not part of the current local Codex workflow, and `main` must not be operated directly.
-- Only one Batch and one repository writer may be active at a time. Do not allow another tool, Codex task, or user to modify or push the repository concurrently.
-- Before any write, confirm the current branch is `anban`, local `anban` equals `origin/anban`, ahead/behind is `0/0`, the working tree is clean, the approved base SHA is recorded, and applicable remote CI for that SHA succeeded.
-- Commit valid changes directly to `anban` only after the relevant local Gate passes. Keep each commit focused, clearly titled, and linked to the relevant Issue or Issues.
-- Do not use `Closes`, `Fixes`, or `Resolves` unless performing formal acceptance.
-- Never force-push, reset, rebase, squash, or amend pushed history. Correct failures after push with a new remediation commit on `anban`.
-- If exact-SHA CI fails after push, keep the active Issues in `in progress` or `review`, stop the next Batch, and remediate with a new commit.
-- Acceptance reviews the approved-base-to-current-`anban` diff and direct commits, confirms local Gates and exact-SHA remote CI, then updates and closes the accepted Issues.
-
-## Source File Size Limit
-
-For all future development, source code files should stay under 800 lines.
-
-Scope:
-
-- Applies to authored source code under `apps/`, `crates/`, and `packages/`.
-- Includes application code, library code, tests, and frontend source files.
-- Excludes generated files, lockfiles, build outputs, vendored dependencies, and migration files unless they are hand-authored and practically maintainable.
-
-Rules:
-
-- Do not create a new source file over 800 lines.
-- Do not expand an existing source file beyond 800 lines.
-- When a file approaches the limit, split it into focused modules before adding more logic.
-- When touching an existing file that already exceeds 800 lines, prefer splitting it as part of the change or create/attach a refactor issue before adding more logic.
-- Do not artificially compress code to stay under the limit; keep readability and clear module boundaries.
-- Public APIs should remain stable unless an issue explicitly approves breaking changes.
+- `interaction`: external input, output, feedback, and bidirectional event loops.
+- `core`: authoritative but thin domain identities, relationships, and lifecycles for concepts such as Task, Run, and Graph.
+- `runtime`: execution order, state machines, LangGraph scheduling, waiting, and recovery.
+- `model`: thinking, reasoning, and generation through an independent Model Port.
+- `capability`: Tool, Skill, MCP, external Agent, and other execution abilities.
+- `persistence`: durable memory, state, checkpoints, artifacts, audit data, and traces.
 
 ## Architecture Rules
 
-- Agent Runtime is self-developed.
-- Controlled Agent Loop is self-developed.
-- SkillManifest, ToolManifest, and AuditEvent are self-developed.
-- Supabase is only responsible for Auth.
-- PostgreSQL stores business data, Run / Step, Audit Event, Skill Registry, and Tool Registry.
-- V0.1 focuses on executable agents and recordable operation traces.
-- V0.5 focuses on ClawHub Skill search, installation, and governance.
-- V1.0 focuses on the security-governed runtime core.
-- V2.0 focuses on a complete platform.
+1. A Skill is a specialized Capability.
+2. Model is an independent Port and is not part of the general Capability abstraction.
+3. Interaction is a bidirectional loop, not a one-way input/output pipeline.
+4. Core stays thin and authoritative; it must not become a god module.
+5. Runtime owns execution discipline and must not duplicate capabilities already provided by LangGraph.
+6. Harness engineering is a cross-cutting requirement; do not create a Harness module or HarnessProfile.
+7. Future integrations enter through Interaction Adapters, Model Adapters, or Capability Adapters.
+8. Do not create core bypasses for a specific Skill, source, or Provider.
+9. Do not use Fake Models, Fake Capabilities, Mock Success, Placeholder Executors, or fallback success.
+10. Missing real model or execution conditions must fail explicitly.
+11. Secrets must never enter Git, APIs, logs, model output, audit output, or documentation.
+12. A Codex task may execute a complete delivery, but it must use phases, focused commits, and repeated acceptance.
+
+## Python Environment
+
+- Distribution: Miniforge
+- Conda environment name: `anban`
+- Required Python version: 3.12
+- Activation:
+
+  ```bash
+  source "$(conda info --base)/etc/profile.d/conda.sh"
+  conda activate anban
+  ```
+
+- Resolved local interpreter: `/Users/fanyuhang/miniforge3/envs/anban/bin/python`
+- Do not use the macOS system Python.
+- Do not create a second virtual environment outside this Miniforge environment.
+- Run uv, Ruff, Pyright, pytest, and project Python commands only after activating this environment or through `conda run -n anban`.
+- Other developers may use a different Miniforge installation path, but the environment name and Python version must remain the same.
+
+## Workspace and Secrets
+
+- The managed local Workspace is separate from the repository.
+- The canonical local path is `/Users/fanyuhang/AnbanWorkspace`.
+- Repository `.env` files may only bootstrap `ANBAN_WORKSPACE_DIR`; runtime credentials belong in the Workspace `secrets.env`.
+- Never commit `.env`, Workspace content, credentials, database passwords, or provider responses.
+
+## Repository Workflow
+
+- `main` is the stable release branch.
+- `anban` is the only development, integration, remediation, and acceptance branch.
+- Work directly and serially on `anban`; do not create feature or Batch branches unless the user changes this policy.
+- Pull requests are not part of the local Codex workflow, and `main` must not be modified directly.
+- Only one repository writer may be active at a time.
+- Before a delivery starts, record the approved base SHA and verify `anban` is clean and synchronized with `origin/anban`.
+- Use focused commits and validate each scope before pushing.
+- Never force-push, reset, rebase, squash, or amend pushed history. Correct pushed failures with a new remediation commit.
+- Final acceptance requires local Gates and applicable remote CI on the exact pushed SHA.
+- Do not create Issues, Epics, Milestones, roadmap items, release tags, or version scope unless the user explicitly requests them.
+
+## Source File Size Limit
+
+Authored Python and frontend source under `anban/`, `apps/`, `packages/`, `scripts/`, and `tests/` should stay below 800 lines. Generated files, lockfiles, build output, vendored dependencies, and migrations are excluded. Split approaching or oversized files into focused modules; do not compress code unnaturally to meet the limit.
+
+## Development Rules
+
+- Do not add production dependencies casually; document the reason.
+- Do not introduce infrastructure without an ADR.
+- Do not bypass Ruff, Pyright, pytest, frontend checks, or real readiness checks.
+- PostgreSQL stores business data; do not introduce Redis, Celery, Kafka, RabbitMQ, a vector database, or another database without an approved architecture change.
+- Before changing behavior, inspect related architecture documents and ADRs.
+- Development-readiness work must not implement Task, Run, Agent, Graph, Capability Registry, Skill Runtime, Audit, Trace, or other product behavior.
 
 ## Definition of Done
 
-- Code is formatted.
-- Frontend checks pass.
-- Rust clippy passes.
-- Rust tests pass.
-- Related documentation is updated.
-- Related ADR is updated or confirmed unnecessary.
-- Commits reference the relevant Issue or Issues.
-- The exact pushed `anban` SHA passes applicable remote CI.
-- No secret is committed.
+- Python formatting, linting, types, and tests pass.
+- Frontend types, tests, and build pass.
+- Real environment readiness passes when required.
+- Relevant architecture and development documentation is current.
+- No secret is tracked or emitted.
+- The exact pushed `anban` SHA passes all applicable remote CI.

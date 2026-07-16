@@ -14,45 +14,39 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+.venv/
 
-# Logs
-*.log
-logs/
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # Node / pnpm
 node_modules/
 **/node_modules/
 .pnpm-store/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 pnpm-debug.log*
 
-# Frontend / Vite build output
+# Frontend build and tests
 dist/
 **/dist/
-build/
-**/build/
 .vite/
 **/.vite/
+playwright-report/
+test-results/
+blob-report/
 
-# Rust
-target/
-**/target/
-
-# Tauri
-src-tauri/target/
-**/src-tauri/target/
-**/src-tauri/gen/
-**/src-tauri/.tauri/
-
-# Test and coverage artifacts
-coverage/
-.nyc_output/
-
-# Local scratch
+# Logs and local scratch
+*.log
+logs/
 tmp/
 temp/
 
-# Anban runtime workspace assets
+# Managed runtime workspace
 .anban/

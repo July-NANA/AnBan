@@ -13,61 +13,19 @@ from openai import (
     OpenAIError,
     omit,
 )
-from openai.types.chat import ChatCompletionMessageFunctionToolCall, ChatCompletionMessageParam
+from openai.types.chat import ChatCompletionMessageParam
 
 from anban.core import AnbanError, ErrorCode, ErrorInfo, SafeMetadata
+from anban.core.metadata import SafeScalar
 from anban.model.config import ModelConfiguration
-from anban.model.contracts import (
-    ModelMessage,
-    ModelRequest,
-    ModelTurn,
-    ToolCall,
-)
+from anban.model.contracts import ModelMessage, ModelRequest, ModelTurn
+from anban.model.response import normalize_response
 
 
-def model_failure(code: ErrorCode, message: str, **details: str | int) -> AnbanError:
+def model_failure(code: ErrorCode, message: str, **details: SafeScalar) -> AnbanError:
     return AnbanError(
         ErrorInfo(code=code, message=message, details=SafeMetadata.model_validate(details))
     )
-
-
-def validate_structured_output(value: dict[str, Any], schema: dict[str, Any]) -> None:
-    properties = cast(dict[str, Any], schema["properties"])
-    required = cast(list[str], schema.get("required", []))
-    if any(name not in value for name in required):
-        raise model_failure(
-            ErrorCode.MODEL_RESPONSE_INVALID, "structured output is missing a field"
-        )
-    if schema.get("additionalProperties") is False and set(value) - set(properties):
-        raise model_failure(
-            ErrorCode.MODEL_RESPONSE_INVALID, "structured output has an extra field"
-        )
-    for name, item in value.items():
-        definition = properties.get(name)
-        if not isinstance(definition, dict):
-            continue
-        typed_definition = cast(dict[str, Any], definition)
-        type_name = typed_definition.get("type")
-        matches = (
-            (type_name == "string" and isinstance(item, str))
-            or (type_name == "boolean" and isinstance(item, bool))
-            or (type_name == "integer" and isinstance(item, int) and not isinstance(item, bool))
-            or (
-                type_name == "number"
-                and isinstance(item, (int, float))
-                and not isinstance(item, bool)
-            )
-            or (type_name == "object" and isinstance(item, dict))
-            or (type_name == "array" and isinstance(item, list))
-        )
-        if not matches:
-            raise model_failure(
-                ErrorCode.MODEL_RESPONSE_INVALID, "structured output type is invalid"
-            )
-        if "const" in typed_definition and item != typed_definition["const"]:
-            raise model_failure(
-                ErrorCode.MODEL_RESPONSE_INVALID, "structured output value is invalid"
-            )
 
 
 def provider_message(
@@ -107,7 +65,7 @@ def provider_message(
 
 
 class OpenAICompatibleAdapter:
-    """Single-profile Adapter with bounded requests and no automatic retry."""
+    """Single-profile Adapter with SDK transport retries and strict response contracts."""
 
     def __init__(
         self,
@@ -115,10 +73,12 @@ class OpenAICompatibleAdapter:
         model: str,
         *,
         protected_values: tuple[str, ...] = (),
+        transport_retry_limit: int = 0,
     ) -> None:
         self._client = client
         self._model = model
         self._protected_values = tuple(value for value in protected_values if value)
+        self._transport_retry_limit = transport_retry_limit
 
     @classmethod
     def configured(
@@ -137,6 +97,7 @@ class OpenAICompatibleAdapter:
             client,
             configuration.model,
             protected_values=protected_values,
+            transport_retry_limit=configuration.transport_retries,
         )
 
     async def aclose(self) -> None:
@@ -170,125 +131,41 @@ class OpenAICompatibleAdapter:
                 0, cast(ChatCompletionMessageParam, {"role": "system", "content": instruction})
             )
         try:
-            response = await self._client.chat.completions.create(
+            raw_response = await self._client.chat.completions.with_raw_response.create(
                 model=self._model,
                 messages=messages,
                 tools=cast(Any, tools) if tools else omit,
                 response_format=cast(Any, response_format) if response_format else omit,
                 max_tokens=request.max_output_tokens,
             )
+            transport_retry_count = raw_response.retries_taken
+            response = raw_response.parse()
         except APITimeoutError as exc:
-            raise model_failure(ErrorCode.MODEL_TIMEOUT, "model request timed out") from exc
+            raise model_failure(
+                ErrorCode.MODEL_TIMEOUT,
+                "model request timed out",
+                transport_retry_limit=self._transport_retry_limit,
+            ) from exc
         except APIConnectionError as exc:
             raise model_failure(
-                ErrorCode.MODEL_TRANSPORT_FAILED, "model transport request failed"
+                ErrorCode.MODEL_TRANSPORT_FAILED,
+                "model transport request failed",
+                transport_retry_limit=self._transport_retry_limit,
             ) from exc
         except APIStatusError as exc:
             raise model_failure(
                 ErrorCode.MODEL_REJECTED,
                 "model provider rejected the request",
                 status_code=exc.status_code,
+                transport_retry_limit=self._transport_retry_limit,
             ) from exc
         except OpenAIError as exc:
             raise model_failure(ErrorCode.MODEL_REQUEST_FAILED, "model request failed") from exc
-
-        if not response.choices:
-            raise model_failure(ErrorCode.MODEL_RESPONSE_INVALID, "model response has no choice")
-        message = response.choices[0].message
-        finish_reason = response.choices[0].finish_reason
-        if not finish_reason:
-            raise model_failure(
-                ErrorCode.MODEL_RESPONSE_INVALID, "model response has no finish reason"
-            )
-        protected_fields = [response.model, finish_reason, message.content or ""]
-        protected_fields.extend(
-            value
-            for provider_call in message.tool_calls or ()
-            if isinstance(provider_call, ChatCompletionMessageFunctionToolCall)
-            for value in (
-                provider_call.id,
-                provider_call.function.name,
-                provider_call.function.arguments,
-            )
+        return normalize_response(
+            response,
+            request,
+            semantic_names,
+            configured_model=self._model,
+            protected_values=self._protected_values,
+            transport_retry_count=transport_retry_count,
         )
-        if any(
-            protected in field for protected in self._protected_values for field in protected_fields
-        ):
-            raise model_failure(
-                ErrorCode.MODEL_RESPONSE_INVALID,
-                "model response contains protected data",
-            )
-        calls: list[ToolCall] = []
-        for provider_call in message.tool_calls or ():
-            if not isinstance(provider_call, ChatCompletionMessageFunctionToolCall):
-                raise model_failure(
-                    ErrorCode.MODEL_RESPONSE_INVALID, "model returned an unsupported Tool Call"
-                )
-            semantic_name = semantic_names.get(provider_call.function.name)
-            if semantic_name is None:
-                raise model_failure(
-                    ErrorCode.MODEL_RESPONSE_INVALID,
-                    "model returned an unknown Tool Call",
-                )
-            try:
-                parsed: object = json.loads(provider_call.function.arguments)
-            except json.JSONDecodeError as exc:
-                raise model_failure(
-                    ErrorCode.MODEL_RESPONSE_INVALID, "model Tool Call arguments are invalid"
-                ) from exc
-            if not isinstance(parsed, dict):
-                raise model_failure(
-                    ErrorCode.MODEL_RESPONSE_INVALID, "model Tool Call arguments are invalid"
-                )
-            calls.append(
-                ToolCall.model_validate(
-                    {
-                        "id": provider_call.id,
-                        "name": semantic_name,
-                        "arguments": parsed,
-                    }
-                )
-            )
-        content = message.content.strip() if message.content and message.content.strip() else None
-        structured_output = None
-        if request.response_schema is not None:
-            if content is None:
-                raise model_failure(
-                    ErrorCode.MODEL_RESPONSE_INVALID, "structured model response is empty"
-                )
-            try:
-                structured: object = json.loads(content)
-            except json.JSONDecodeError as exc:
-                raise model_failure(
-                    ErrorCode.MODEL_RESPONSE_INVALID, "structured model response is invalid"
-                ) from exc
-            if not isinstance(structured, dict):
-                raise model_failure(
-                    ErrorCode.MODEL_RESPONSE_INVALID, "structured model response is invalid"
-                )
-            structured_output = cast(dict[str, Any], structured)
-            validate_structured_output(
-                structured_output, cast(dict[str, Any], request.response_schema)
-            )
-            content = None
-        usage = response.usage
-        metadata = SafeMetadata(
-            {
-                "provider": "openai-compatible",
-                "model": response.model,
-                "input_tokens": None if usage is None else usage.prompt_tokens,
-                "output_tokens": None if usage is None else usage.completion_tokens,
-            }
-        )
-        try:
-            return ModelTurn(
-                content=content,
-                structured_output=structured_output,
-                tool_calls=tuple(calls),
-                finish_reason=finish_reason,
-                metadata=metadata,
-            )
-        except ValueError as exc:
-            raise model_failure(
-                ErrorCode.MODEL_RESPONSE_INVALID, "model response shape is invalid"
-            ) from exc

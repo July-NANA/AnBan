@@ -97,7 +97,11 @@ Read [ADR-0003](docs/adr/0003-v0.1-core-runtime-cli.md), the
 The Runtime fails closed for missing configuration, invalid model or Tool Call data, unknown or
 invalid Capabilities, path escape, external symlinks, process timeout/output overflow, database or
 Event write failure, and interruption. It does not replay a Capability after an ambiguous
-post-side-effect persistence failure. Provider responses and process output are bounded; raw
+post-side-effect persistence failure. Transient model transport failures use two SDK retries by
+default (maximum three); successful HTTP transport is distinct from response-contract repair.
+An invalid response can consume at most three Node-shared repair requests, and no Tool Call from an
+invalid response is executed or copied into the repair prompt. Provider responses and process
+output are bounded; raw
 provider data, credentials, database URLs, Authorization data, and physical Workspace paths are
 not Event, Audit, Trace, or CLI fields.
 
@@ -117,7 +121,8 @@ Read [SECURITY.md](SECURITY.md) before handling real credentials or reporting a 
 - `persistence_unavailable`: verify the selected PostgreSQL profile, apply migrations, then rerun
   Doctor.
 - `model_transport_failed` or `model_timeout`: verify the configured provider independently; Anban
-  does not fall back to a fake model.
+  does not fall back to a fake model. Transport retry exhaustion remains a failure and never starts
+  response repair.
 - A failed Run is still queried with `anban run show <run-id>` and `anban trace <run-id>` when its
   durable identity was created successfully.
 

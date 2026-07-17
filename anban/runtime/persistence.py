@@ -40,7 +40,39 @@ from anban.core.persistence import ExecutionRepository, ExecutionRunAggregate, U
 from anban.model import ModelPort, ModelRequest, ModelTurn
 from anban.runtime.contracts import AgentOutcome, AgentOutcomeStatus
 
-_MODEL_EVENT_METADATA = frozenset({"provider", "model", "input_tokens", "output_tokens"})
+_MODEL_EVENT_METADATA = frozenset(
+    {
+        "provider",
+        "model",
+        "input_tokens",
+        "output_tokens",
+        "repair_attempt",
+        "response_variant",
+        "transport_retry_count",
+    }
+)
+_MODEL_DIAGNOSTIC_METADATA = frozenset(
+    {
+        "arguments_type",
+        "choice_count",
+        "content_empty",
+        "content_present",
+        "content_type",
+        "diagnostic_reason",
+        "finish_reason",
+        "function_name_present",
+        "message_role",
+        "repair_attempt",
+        "repair_attempts_exhausted",
+        "repairable",
+        "tool_call_count",
+        "tool_call_id_present",
+        "tool_call_type",
+        "tool_calls_present",
+        "transport_retry_count",
+        "transport_retry_limit",
+    }
+)
 _CAPABILITY_EVENT_METADATA = frozenset(
     {
         "content_hash",
@@ -180,19 +212,21 @@ class RunPersistence:
         )
         self.node = node
 
-    async def model_requested(self, turn_number: int) -> None:
+    async def model_requested(self, turn_number: int, request: ModelRequest) -> None:
+        metadata = SafeMetadata(
+            {"turn_number": turn_number, "repair_attempt": request.repair_attempt}
+        )
+        facts = [EventFact("model.requested", metadata, node_run_id=self.node.id)]
+        if request.repair_attempt > 0:
+            facts.append(EventFact("model.repair_requested", metadata, node_run_id=self.node.id))
         await self._events_only(
             "model_requested",
-            (
-                EventFact(
-                    "model.requested",
-                    SafeMetadata({"turn_number": turn_number}),
-                    node_run_id=self.node.id,
-                ),
-            ),
+            tuple(facts),
         )
 
-    async def model_completed(self, turn_number: int, turn: ModelTurn) -> None:
+    async def model_completed(
+        self, turn_number: int, request: ModelRequest, turn: ModelTurn
+    ) -> None:
         result_kind = (
             "tool_calls"
             if turn.tool_calls
@@ -203,32 +237,35 @@ class RunPersistence:
         metadata: dict[str, SafeScalar] = {
             **metadata_projection(turn.metadata, _MODEL_EVENT_METADATA).root,
             "turn_number": turn_number,
+            "repair_attempt": request.repair_attempt,
             "result_kind": result_kind,
             "finish_reason": turn.finish_reason,
             "tool_call_count": len(turn.tool_calls),
         }
-        await self._events_only(
-            "model_completed",
-            (
+        facts = [EventFact("model.completed", SafeMetadata(metadata), node_run_id=self.node.id)]
+        if request.repair_attempt > 0:
+            facts.append(
                 EventFact(
-                    "model.completed",
+                    "model.repair_completed",
                     SafeMetadata(metadata),
                     node_run_id=self.node.id,
-                ),
-            ),
-        )
+                )
+            )
+        await self._events_only("model_completed", tuple(facts))
 
-    async def model_failed(self, turn_number: int, error: ErrorInfo) -> None:
-        await self._events_only(
-            "model_failed",
-            (
-                EventFact(
-                    "model.failed",
-                    error_metadata(error, turn_number=turn_number),
-                    node_run_id=self.node.id,
-                ),
-            ),
+    async def model_failed(self, turn_number: int, request: ModelRequest, error: ErrorInfo) -> None:
+        projected = error_metadata(
+            error,
+            turn_number=turn_number,
+            allowed_details=_MODEL_DIAGNOSTIC_METADATA,
         )
+        metadata = SafeMetadata({**projected.root, "repair_attempt": request.repair_attempt})
+        facts = [EventFact("model.failed", metadata, node_run_id=self.node.id)]
+        if error.code is ErrorCode.MODEL_RESPONSE_INVALID:
+            facts.append(EventFact("model.response_invalid", metadata, node_run_id=self.node.id))
+            if request.repair_attempt > 0:
+                facts.append(EventFact("model.repair_failed", metadata, node_run_id=self.node.id))
+        await self._events_only("model_failed", tuple(facts))
 
     async def begin_invocation(self, name: str, context: InvocationContext) -> None:
         requested = CapabilityInvocation(
@@ -544,20 +581,20 @@ class PersistedModelPort:
     async def complete(self, request: ModelRequest) -> ModelTurn:
         self._turn_number += 1
         turn_number = self._turn_number
-        await self._persistence.model_requested(turn_number)
+        await self._persistence.model_requested(turn_number, request)
         try:
             turn = await self._inner.complete(request)
         except AnbanError as exc:
-            await self._persistence.model_failed(turn_number, exc.info)
+            await self._persistence.model_failed(turn_number, request, exc.info)
             raise
         except Exception:
             error = ErrorInfo(
                 code=ErrorCode.MODEL_REQUEST_FAILED,
                 message="Model request failed",
             )
-            await self._persistence.model_failed(turn_number, error)
+            await self._persistence.model_failed(turn_number, request, error)
             raise AnbanError(error) from None
-        await self._persistence.model_completed(turn_number, turn)
+        await self._persistence.model_completed(turn_number, request, turn)
         return turn
 
 
@@ -604,10 +641,16 @@ class PersistedCapabilityPort:
         await self._inner.cancel(context)
 
 
-def error_metadata(error: ErrorInfo, *, turn_number: int | None = None) -> SafeMetadata:
+def error_metadata(
+    error: ErrorInfo,
+    *,
+    turn_number: int | None = None,
+    allowed_details: frozenset[str] = frozenset(),
+) -> SafeMetadata:
     values: dict[str, SafeScalar] = {
         "error_code": error.code.value,
         "error_category": error.category.value,
+        **{key: value for key, value in error.details.root.items() if key in allowed_details},
     }
     if turn_number is not None:
         values["turn_number"] = turn_number

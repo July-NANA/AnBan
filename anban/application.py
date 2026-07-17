@@ -42,8 +42,9 @@ async def build_application() -> Application:
     """Compose real Adapters without exposing them to the CLI command handlers."""
 
     configuration = load_configuration()
+    model_configuration = configuration.require_model()
     model = OpenAICompatibleAdapter.configured(
-        configuration.require_model(), protected_values=configuration.protected_values()
+        model_configuration, protected_values=configuration.protected_values()
     )
     engine = create_database_engine(configuration.database.require("development"))
     try:
@@ -58,6 +59,7 @@ async def build_application() -> Application:
             capabilities,
             SQLAlchemyUnitOfWorkFactory(engine),
             limits=AgentLimits(**configuration.agent.model_dump()),
+            response_repair_retries=model_configuration.response_repair_retries,
         )
         queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
         return Application(InteractionService(runtime, queries), model, engine)

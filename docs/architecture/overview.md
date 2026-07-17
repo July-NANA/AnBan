@@ -40,7 +40,15 @@ or a concrete Capability. No provider, source, or Skill has a Core bypass.
 The only graph is `START -> General Agent -> END`. The General Agent may alternate model requests
 and Capability observations inside its single node. One execution is limited to eight model turns,
 eight Capability calls, and 180 seconds. Repeated calls and repeated observation fingerprints stop
-no-progress execution. An invalid Tool Call fails before Capability execution.
+no-progress execution. An invalid Tool Call fails before Capability execution. A successful HTTP
+model request with an invalid response shape may use up to three Node-shared contract-repair
+requests; each counts as a model turn and retains only safe structural diagnostics. Repair never
+replays an already completed Capability signature.
+
+Model transport retry and response repair are separate. The OpenAI-compatible SDK retries only
+connection failures, timeouts, 408, 409, 429, and 5xx within the Agent deadline. Permanent HTTP
+errors, configuration, Capability, persistence, and audit failures are not retried. Response repair
+starts only after transport succeeded and before any Tool Call in that response was executed.
 
 External model and process operations never run inside a database transaction. Runtime first
 persists Task/Run/Node identity, then uses short transactions for lifecycle state and matching

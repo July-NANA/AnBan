@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from anban.capability import ArtifactReference, CapabilityPort
+from anban.config import policy
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import new_execution_run_id, new_node_run_id, new_task_id
 from anban.core.metadata import SafeMetadata
@@ -36,11 +37,13 @@ class PersistentRuntime:
         unit_of_work: UnitOfWorkFactory,
         *,
         limits: AgentLimits | None = None,
+        response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
     ) -> None:
         self._model = model
         self._capabilities = capabilities
         self._unit_of_work = unit_of_work
         self._limits = limits
+        self._response_repair_retries = response_repair_retries
 
     async def execute(
         self, request: str, *, metadata: SafeMetadata | None = None
@@ -73,6 +76,7 @@ class PersistentRuntime:
             PersistedModelPort(self._model, persistence),
             PersistedCapabilityPort(self._capabilities, persistence),
             limits=self._limits,
+            response_repair_retries=self._response_repair_retries,
         )
         outcome = await agent.execute(
             AgentInput(request=request, run_id=run.id, node_run_id=node.id)
@@ -107,6 +111,7 @@ class PersistentRuntime:
             self._capabilities,
             self._unit_of_work,
             limits=self._limits,
+            response_repair_retries=self._response_repair_retries,
         )
 
     @staticmethod
@@ -148,11 +153,13 @@ class PersistentChatSession:
         unit_of_work: UnitOfWorkFactory,
         *,
         limits: AgentLimits | None = None,
+        response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
     ) -> None:
         self._model = model
         self._capabilities = capabilities
         self._unit_of_work = unit_of_work
         self._limits = limits
+        self._response_repair_retries = response_repair_retries
         self._started_at = now_utc()
         self._persistence: RunPersistence | None = None
         self._history: list[tuple[str, str]] = []
@@ -235,6 +242,7 @@ class PersistentChatSession:
             PersistedModelPort(self._model, persistence),
             PersistedCapabilityPort(self._capabilities, persistence),
             limits=self._limits,
+            response_repair_retries=self._response_repair_retries,
         )
         outcome = await agent.execute(
             AgentInput(

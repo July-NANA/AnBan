@@ -17,6 +17,7 @@ from anban.capability import (
 )
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import new_execution_run_id, new_node_run_id
+from anban.core.metadata import SafeMetadata
 from anban.model import ModelRequest, ModelTurn, ToolCall
 from anban.runtime import (
     AgentInput,
@@ -52,14 +53,16 @@ class RecordingHandler:
         result: CapabilityResult | None = None,
         observation: Callable[[int], str] | None = None,
         blocking: bool = False,
+        capability_name: str = "file.read",
+        argument_name: str = "path",
     ) -> None:
         self.descriptor = CapabilityDescriptor(
-            name="file.read",
+            name=capability_name,
             description="Read one bounded file.",
             input_schema={
                 "type": "object",
-                "properties": {"path": {"type": "string", "minLength": 1, "maxLength": 512}},
-                "required": ["path"],
+                "properties": {argument_name: {"type": "string", "minLength": 1, "maxLength": 512}},
+                "required": [argument_name],
                 "additionalProperties": False,
             },
         )
@@ -109,6 +112,21 @@ def tool_turn(tool_call: ToolCall, *, finish_reason: str = "tool_calls") -> Mode
 
 def final_turn(content: str = "Final bounded answer.", *, finish_reason: str = "stop") -> ModelTurn:
     return ModelTurn(content=content, finish_reason=finish_reason)
+
+
+def invalid_response(*, repairable: bool = True) -> AnbanError:
+    return AnbanError(
+        ErrorInfo(
+            code=ErrorCode.MODEL_RESPONSE_INVALID,
+            message="model response shape is invalid",
+            details=SafeMetadata(
+                {
+                    "diagnostic_reason": "empty_response",
+                    "repairable": repairable,
+                }
+            ),
+        )
+    )
 
 
 async def test_graph_topology_is_fixed_start_agent_end() -> None:
@@ -326,3 +344,121 @@ def test_limits_cannot_exceed_v01_bounds() -> None:
         AgentLimits(max_capability_calls=9)
     with pytest.raises(ValueError):
         AgentLimits(total_timeout_seconds=181)
+
+
+@pytest.mark.parametrize(
+    ("invalid_count", "expected_turns"),
+    [(1, 2), (2, 3), (3, 4)],
+)
+async def test_response_repair_succeeds_within_shared_budget(
+    invalid_count: int, expected_turns: int
+) -> None:
+    turns: list[ModelTurn | Exception] = []
+    turns.extend(invalid_response() for _ in range(invalid_count))
+    turns.append(final_turn())
+    model = ScriptedModel(turns)
+    outcome = await FixedGeneralAgent(model, CapabilityRegistry()).execute(agent_input())
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert outcome.model_turn_count == expected_turns
+    assert [request.repair_attempt for request in model.requests] == list(range(0, expected_turns))
+    repair_messages = [
+        message.content
+        for request in model.requests[1:]
+        for message in request.messages
+        if message.role == "system" and message.content and "violated" in message.content
+    ]
+    assert repair_messages
+    assert all("Tool Call" in message for message in repair_messages)
+
+
+async def test_original_and_three_repairs_fail_closed_after_four_requests() -> None:
+    model = ScriptedModel([invalid_response() for _ in range(4)])
+    outcome = await FixedGeneralAgent(model, CapabilityRegistry()).execute(agent_input())
+    assert outcome.status is AgentOutcomeStatus.FAILED
+    assert outcome.error is not None
+    assert outcome.error.code is ErrorCode.MODEL_RESPONSE_INVALID
+    assert outcome.model_turn_count == 4
+    assert [request.repair_attempt for request in model.requests] == [0, 1, 2, 3]
+
+
+async def test_nonrepairable_invalid_response_never_retries_or_invokes() -> None:
+    model = ScriptedModel([invalid_response(repairable=False), final_turn("must not run")])
+    handler = RecordingHandler()
+    outcome = await FixedGeneralAgent(model, CapabilityRegistry((handler,))).execute(agent_input())
+    assert outcome.status is AgentOutcomeStatus.FAILED
+    assert len(model.requests) == 1
+    assert handler.calls == []
+
+
+@pytest.mark.parametrize(
+    "code",
+    [ErrorCode.MODEL_TRANSPORT_FAILED, ErrorCode.MODEL_TIMEOUT, ErrorCode.MODEL_REJECTED],
+)
+async def test_transport_or_http_failure_never_triggers_structure_repair(code: ErrorCode) -> None:
+    model = ScriptedModel(
+        [AnbanError(ErrorInfo(code=code, message="Model request failed")), final_turn()]
+    )
+    outcome = await FixedGeneralAgent(model, CapabilityRegistry()).execute(agent_input())
+    assert outcome.status is not AgentOutcomeStatus.SUCCEEDED
+    assert len(model.requests) == 1
+    assert model.requests[0].repair_attempt == 0
+
+
+async def test_repair_budget_is_node_shared_across_separate_invalid_responses() -> None:
+    model = ScriptedModel([invalid_response(), tool_turn(call()), invalid_response(), final_turn()])
+    handler = RecordingHandler()
+    outcome = await FixedGeneralAgent(model, CapabilityRegistry((handler,))).execute(agent_input())
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert [request.repair_attempt for request in model.requests] == [0, 1, 0, 2]
+    assert len(handler.calls) == 1
+
+
+async def test_repair_cannot_replay_completed_skill_activation() -> None:
+    activation_call = ToolCall(
+        id="activate-1",
+        name="skill.activate",
+        arguments={"name": "@steipete/weather"},
+    )
+    replay_call = activation_call.model_copy(update={"id": "activate-2"})
+    model = ScriptedModel([tool_turn(activation_call), invalid_response(), tool_turn(replay_call)])
+    handler = RecordingHandler(
+        capability_name="skill.activate",
+        argument_name="name",
+        observation=lambda count: "activated",
+    )
+    outcome = await FixedGeneralAgent(model, CapabilityRegistry((handler,))).execute(agent_input())
+    assert outcome.status is AgentOutcomeStatus.FAILED
+    assert outcome.error is not None
+    assert outcome.error.code is ErrorCode.MODEL_RESPONSE_INVALID
+    assert outcome.error.details.root["reason"] == "repair_replayed_completed_call"
+    assert len(handler.calls) == 1
+
+
+async def test_invalid_response_never_executes_a_capability() -> None:
+    model = ScriptedModel([invalid_response(), final_turn()])
+    handler = RecordingHandler()
+    outcome = await FixedGeneralAgent(model, CapabilityRegistry((handler,))).execute(agent_input())
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert handler.calls == []
+
+
+async def test_repair_request_is_bounded_by_total_timeout() -> None:
+    class BlockingRepairModel:
+        def __init__(self) -> None:
+            self.requests: list[ModelRequest] = []
+
+        async def complete(self, request: ModelRequest) -> ModelTurn:
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                raise invalid_response()
+            await asyncio.Event().wait()
+            return final_turn("unreachable")
+
+    model = BlockingRepairModel()
+    outcome = await FixedGeneralAgent(
+        model,
+        CapabilityRegistry(),
+        limits=AgentLimits(total_timeout_seconds=1),
+    ).execute(agent_input())
+    assert outcome.status is AgentOutcomeStatus.TIMED_OUT
+    assert [request.repair_attempt for request in model.requests] == [0, 1]

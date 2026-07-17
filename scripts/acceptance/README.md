@@ -4,7 +4,8 @@ These fail-closed scripts are invoked explicitly by a scoped Codex Phase Gate or
 They are not part of `pnpm run doctor` or ordinary CI.
 
 - `pnpm run acceptance:model` uses the production ModelPort Adapter for a real model request,
-  native Tool Calling, Tool Result pairing, final response, and structured output.
+  native Tool Calling, Tool Result pairing, final response, structured output, configured transport
+  retries, and strict response normalization.
 - `pnpm run acceptance:skill` uses the production Workspace catalog and Registry to discover,
   hash-check, safely project, and activate the approved local Weather Skill, then performs its
   documented bounded live weather request through the production `http.get` Capability.

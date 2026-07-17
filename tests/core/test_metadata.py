@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from anban.core import SafeMetadata
+from anban.core.metadata import validate_safe_text
 
 
 def test_safe_scalar_metadata_passes() -> None:
@@ -19,6 +20,12 @@ def test_safe_scalar_metadata_passes() -> None:
         }
     )
     assert metadata.root["attempt"] == 1
+
+
+def test_standalone_slash_is_punctuation_but_absolute_host_path_is_rejected() -> None:
+    assert validate_safe_text("18 C / 64 F", label="weather") == "18 C / 64 F"
+    with pytest.raises(ValueError, match="absolute_host_path"):
+        validate_safe_text("stored at /private/result.txt", label="unsafe")
 
 
 @pytest.mark.parametrize(

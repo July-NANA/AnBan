@@ -26,6 +26,7 @@ from anban.core.ids import (
     TaskId,
     new_artifact_id,
 )
+from anban.core.metadata import SafeMetadata
 from anban.core.models import Artifact, CapabilityInvocation, Event, ExecutionRun, NodeRun, Task
 from anban.core.persistence import ExecutionRunAggregate
 from anban.model import ModelRequest, ModelTurn, ToolCall
@@ -344,6 +345,39 @@ async def test_model_failure_is_persisted_as_safe_terminal_state() -> None:
     assert aggregate.run.error_code is ErrorCode.MODEL_REQUEST_FAILED
     assert "model.failed" in {event.event_type for event in aggregate.events}
     assert "run.error" in {event.event_type for event in aggregate.events}
+
+
+async def test_response_repair_events_are_safe_and_complete() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    raw_canary = "raw-provider-output-must-not-persist"
+    invalid = AnbanError(
+        ErrorInfo(
+            code=ErrorCode.MODEL_RESPONSE_INVALID,
+            message="model response shape is invalid",
+            details=SafeMetadata(
+                {
+                    "diagnostic_reason": "empty_response",
+                    "choice_count": 1,
+                    "repairable": True,
+                    "content_present": False,
+                }
+            ),
+        )
+    )
+    model = TransactionCheckingModel(factory, [invalid, final_turn()])
+    result = await PersistentRuntime(model, CapabilityRegistry(), factory).execute("Repair safely.")
+    assert result.outcome.status is AgentOutcomeStatus.SUCCEEDED
+    aggregate = await load_run(factory, result.run_id)
+    events = {event.event_type: event for event in aggregate.events}
+    assert {
+        "model.response_invalid",
+        "model.repair_requested",
+        "model.repair_completed",
+    } <= set(events)
+    assert events["model.response_invalid"].metadata.root["diagnostic_reason"] == "empty_response"
+    assert events["model.repair_requested"].metadata.root["repair_attempt"] == 1
+    assert events["model.repair_completed"].metadata.root["repair_attempt"] == 1
+    assert raw_canary not in "".join(event.model_dump_json() for event in aggregate.events)
 
 
 async def test_capability_failure_and_timeout_are_persisted() -> None:

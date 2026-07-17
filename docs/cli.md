@@ -65,6 +65,9 @@ return it; otherwise only the structured top-level error is emitted.
 ## Execution limits
 
 - Model turns per Agent Node: 8
+- Model request timeout: 60 seconds by default, configurable from 1–120 seconds
+- Model transport retries: 2 by default, configurable from 0–3; temporary transport/HTTP errors only
+- Model response repair: 3 by default, configurable from 0–3 and shared by the Agent Node
 - Capability calls per Agent Node: 8
 - HTTP requests: `http.get` plus `http.request` for GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS;
   caller-selected HTTP(S) destinations, no redirects, bounded JSON bodies and text responses

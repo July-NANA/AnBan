@@ -6,6 +6,7 @@ from typing import Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from anban.config import policy
 from anban.core.metadata import SafeMetadata
 
 
@@ -56,9 +57,21 @@ class ModelRequest(ModelValue):
     tools: tuple[ToolDefinition, ...] = ()
     response_schema: dict[str, JsonValue] | None = None
     max_output_tokens: int = Field(default=2048, ge=1, le=16_384)
+    repair_attempt: int = Field(
+        default=0,
+        ge=policy.MODEL_RESPONSE_REPAIR_RETRIES_MIN,
+        le=policy.MODEL_RESPONSE_REPAIR_RETRIES_MAX,
+    )
+    repair_limit: int = Field(
+        default=policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
+        ge=policy.MODEL_RESPONSE_REPAIR_RETRIES_MIN,
+        le=policy.MODEL_RESPONSE_REPAIR_RETRIES_MAX,
+    )
 
     @model_validator(mode="after")
     def validate_exchange(self) -> Self:
+        if self.repair_attempt > self.repair_limit:
+            raise ValueError("repair attempt cannot exceed its Node budget")
         tool_names = [tool.name for tool in self.tools]
         if len(tool_names) != len(set(tool_names)):
             raise ValueError("Model tools must have unique names")

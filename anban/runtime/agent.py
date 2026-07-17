@@ -18,9 +18,10 @@ from anban.capability import (
     CapabilityResultStatus,
     InvocationContext,
 )
+from anban.config import policy
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import new_capability_invocation_id
-from anban.core.metadata import SafeMetadata, validate_safe_text
+from anban.core.metadata import SafeMetadata, safe_text_violation_reason, validate_safe_text
 from anban.core.models import now_utc
 from anban.model import (
     ModelMessage,
@@ -39,6 +40,11 @@ _SYSTEM_INSTRUCTIONS = (
     "You are the fixed Anban v0.1 General Agent. Use only the listed Capabilities. "
     "Never invent a Capability or Runtime identity. Use Tool Results as observations, "
     "then return one concise final answer."
+)
+_REPAIR_INSTRUCTION = (
+    "Your previous response violated the response contract. Return exactly one of: "
+    "1. valid native tool_calls with complete IDs, function names, and JSON object arguments; "
+    "or 2. one non-empty final assistant message. Do not describe a Tool Call in plain text."
 )
 
 
@@ -69,10 +75,18 @@ class FixedGeneralAgent:
         capabilities: CapabilityPort,
         *,
         limits: AgentLimits | None = None,
+        response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
     ) -> None:
         self._model = model
         self._capabilities = capabilities
         self._limits = limits or AgentLimits()
+        if not (
+            policy.MODEL_RESPONSE_REPAIR_RETRIES_MIN
+            <= response_repair_retries
+            <= policy.MODEL_RESPONSE_REPAIR_RETRIES_MAX
+        ):
+            raise ValueError("response repair budget is outside the safety policy")
+        self._response_repair_retries = response_repair_retries
         builder = StateGraph(AgentGraphState)
         builder.add_node(GENERAL_AGENT_NODE, self._general_agent_node)
         builder.add_edge(START, GENERAL_AGENT_NODE)
@@ -175,13 +189,34 @@ class FixedGeneralAgent:
         last_signature: str | None = None
         repeated_calls = 0
         completed_rounds: set[str] = set()
+        completed_signatures: set[str] = set()
+        repair_attempts_used = 0
+        request_is_repair = False
 
         while progress.model_turns < self._limits.max_model_turns:
+            request_repair_attempt = repair_attempts_used if request_is_repair else 0
+            progress.model_turns += 1
             try:
                 turn = await self._model.complete(
-                    ModelRequest(messages=tuple(messages), tools=tools)
+                    ModelRequest(
+                        messages=tuple(messages),
+                        tools=tools,
+                        repair_attempt=request_repair_attempt,
+                        repair_limit=self._response_repair_retries,
+                    )
                 )
             except AnbanError as exc:
+                if (
+                    exc.info.code is ErrorCode.MODEL_RESPONSE_INVALID
+                    and exc.info.details.root.get("repairable") is True
+                    and repair_attempts_used < self._response_repair_retries
+                    and progress.model_turns < self._limits.max_model_turns
+                    and now_utc() < deadline_at
+                ):
+                    repair_attempts_used += 1
+                    request_is_repair = True
+                    messages.append(ModelMessage(role="system", content=_REPAIR_INSTRUCTION))
+                    continue
                 return self._failure_outcome(exc.info, progress)
             except Exception:
                 return self._outcome(
@@ -193,23 +228,28 @@ class FixedGeneralAgent:
                         "model_exception",
                     ),
                 )
-            progress.model_turns += 1
+            repaired_response = request_is_repair
+            request_is_repair = False
             invalid = self._validate_turn(turn)
             if invalid is not None:
                 return self._outcome(AgentOutcomeStatus.FAILED, progress, error=invalid)
             if turn.content is not None:
+                stripped_content = turn.content.strip()
                 try:
                     final_text = validate_safe_text(
-                        turn.content.strip(), label="Agent final text", max_length=32_768
+                        stripped_content, label="Agent final text", max_length=32_768
                     )
                 except ValueError:
+                    violation = (
+                        safe_text_violation_reason(stripped_content, max_length=32_768) or "unknown"
+                    )
                     return self._outcome(
                         AgentOutcomeStatus.FAILED,
                         progress,
                         error=self._error(
                             ErrorCode.MODEL_RESPONSE_INVALID,
                             "Model final response is unsafe",
-                            "unsafe_final",
+                            f"unsafe_final_{violation}",
                         ),
                     )
                 if not final_text:
@@ -242,10 +282,22 @@ class FixedGeneralAgent:
                         "duplicate_tool_call",
                     ),
                 )
+            signatures = tuple(self._call_signature(call) for call in calls)
+            if repaired_response and any(
+                signature in completed_signatures for signature in signatures
+            ):
+                return self._outcome(
+                    AgentOutcomeStatus.FAILED,
+                    progress,
+                    error=self._error(
+                        ErrorCode.MODEL_RESPONSE_INVALID,
+                        "Model repair replayed a completed Capability call",
+                        "repair_replayed_completed_call",
+                    ),
+                )
             messages.append(ModelMessage(role="assistant", tool_calls=calls))
             round_facts: list[str] = []
-            for call in calls:
-                signature = self._call_signature(call)
+            for call, signature in zip(calls, signatures, strict=True):
                 if signature == last_signature:
                     repeated_calls += 1
                 else:
@@ -279,6 +331,7 @@ class FixedGeneralAgent:
                         tool_result=ToolResult(tool_call_id=call.id, content=observation),
                     )
                 )
+                completed_signatures.add(signature)
                 round_facts.append(
                     f"{signature}:{hashlib.sha256(observation.encode()).hexdigest()}"
                 )

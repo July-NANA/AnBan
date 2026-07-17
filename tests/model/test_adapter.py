@@ -38,18 +38,20 @@ def adapter(
     handler: Callable[[httpx.Request], httpx.Response],
     *,
     protected_values: tuple[str, ...] = (),
+    transport_retries: int = 0,
 ) -> OpenAICompatibleAdapter:
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     client = AsyncOpenAI(
         api_key="synthetic-test-value",
         base_url="https://provider.invalid/v1",
         http_client=http_client,
-        max_retries=0,
+        max_retries=transport_retries,
     )
     return OpenAICompatibleAdapter(
         client,
         "test-model",
         protected_values=protected_values,
+        transport_retry_limit=transport_retries,
     )
 
 
@@ -128,6 +130,9 @@ async def test_native_tool_call_is_parsed_to_structured_arguments() -> None:
         "model": "test-model",
         "input_tokens": 3,
         "output_tokens": 2,
+        "repair_attempt": 0,
+        "transport_retry_count": 0,
+        "response_variant": "canonical",
     }
 
 
@@ -283,3 +288,202 @@ async def test_provider_failures_are_distinct_and_safe(
         )
     assert raised.value.info.code is code
     assert "canary raw body" not in str(raised.value.as_dict())
+
+
+def native_call(
+    *,
+    identifier: object = "call-1",
+    name: object = "anban_tool_0",
+    arguments: object = "{}",
+    call_type: object = "function",
+) -> dict[str, object]:
+    return {
+        "id": identifier,
+        "type": call_type,
+        "function": {"name": name, "arguments": arguments},
+    }
+
+
+def tool_request(*, repair_attempt: int = 0) -> ModelRequest:
+    return ModelRequest(
+        messages=(ModelMessage(role="user", content="Call."),),
+        tools=(
+            ToolDefinition(
+                name="file.read",
+                description="Read.",
+                input_schema={"type": "object", "additionalProperties": False},
+            ),
+        ),
+        repair_attempt=repair_attempt,
+        repair_limit=3,
+    )
+
+
+@pytest.mark.parametrize(
+    ("message", "finish_reason", "reason", "repairable"),
+    [
+        (
+            {"role": "assistant", "content": "text", "tool_calls": [native_call()]},
+            "tool_calls",
+            "ambiguous_content_and_calls",
+            True,
+        ),
+        ({"role": "assistant", "content": None}, "stop", "empty_response", True),
+        (
+            {"role": "assistant", "content": None, "tool_calls": [native_call(identifier=None)]},
+            "tool_calls",
+            "missing_tool_call_id",
+            True,
+        ),
+        (
+            {"role": "assistant", "content": None, "tool_calls": [native_call(name=None)]},
+            "tool_calls",
+            "missing_function_name",
+            True,
+        ),
+        (
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [native_call(arguments='{"path":')],
+            },
+            "tool_calls",
+            "invalid_arguments_json",
+            True,
+        ),
+        (
+            {"role": "assistant", "content": None, "tool_calls": [native_call(arguments="[]")]},
+            "tool_calls",
+            "arguments_not_object",
+            True,
+        ),
+        (
+            {"role": "assistant", "content": None, "tool_calls": [native_call(name="other")]},
+            "tool_calls",
+            "unknown_tool_name",
+            False,
+        ),
+        (
+            {"role": "assistant", "content": None, "tool_calls": [native_call()]},
+            "stop",
+            "invalid_finish_reason",
+            True,
+        ),
+        (
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [native_call(call_type="custom")],
+            },
+            "tool_calls",
+            "unsupported_tool_call_type",
+            True,
+        ),
+    ],
+)
+async def test_invalid_shapes_emit_safe_stable_diagnostics(
+    message: dict[str, object],
+    finish_reason: str,
+    reason: str,
+    repairable: bool,
+) -> None:
+    raw_canary = "must-not-appear-in-diagnostic"
+    message["extra_raw_field"] = raw_canary
+    with pytest.raises(AnbanError) as failure:
+        await adapter(lambda request: response(message, finish_reason=finish_reason)).complete(
+            tool_request(repair_attempt=2)
+        )
+    details = failure.value.info.details.root
+    assert failure.value.info.code is ErrorCode.MODEL_RESPONSE_INVALID
+    assert details["diagnostic_reason"] == reason
+    assert details["repair_attempt"] == 2
+    assert details["repairable"] is repairable
+    assert details["choice_count"] == 1
+    assert raw_canary not in str(failure.value.as_dict())
+
+
+async def test_whitespace_content_with_calls_is_safe_provider_normalization() -> None:
+    turn = await adapter(
+        lambda request: response(
+            {
+                "role": "assistant",
+                "content": "  \n",
+                "tool_calls": [native_call(arguments={"path": "a.txt"})],
+            },
+            finish_reason="tool_calls",
+        )
+    ).complete(tool_request())
+    assert turn.content is None
+    assert turn.tool_calls[0].arguments == {"path": "a.txt"}
+    assert turn.metadata.root["response_variant"] == "whitespace_content_and_decoded_arguments"
+
+
+@pytest.mark.parametrize("status", [408, 409, 429, 500, 502, 503])
+async def test_transient_http_status_uses_configured_sdk_retries(status: int) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            return httpx.Response(status, headers={"retry-after-ms": "0"}, json={"error": {}})
+        return response({"role": "assistant", "content": "recovered"})
+
+    turn = await adapter(handler, transport_retries=2).complete(
+        ModelRequest(messages=(ModelMessage(role="user", content="Answer."),))
+    )
+    assert calls == 3
+    assert turn.metadata.root["transport_retry_count"] == 2
+
+
+async def test_connection_error_uses_configured_sdk_retries() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise httpx.ConnectError("temporary", request=request)
+        return response({"role": "assistant", "content": "recovered"})
+
+    turn = await adapter(handler, transport_retries=2).complete(
+        ModelRequest(messages=(ModelMessage(role="user", content="Answer."),))
+    )
+    assert calls == 3
+    assert turn.metadata.root["transport_retry_count"] == 2
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+async def test_permanent_http_status_is_not_retried(status: int) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(status, json={"error": {"message": "raw-canary"}})
+
+    with pytest.raises(AnbanError) as failure:
+        await adapter(handler, transport_retries=3).complete(
+            ModelRequest(messages=(ModelMessage(role="user", content="Answer."),))
+        )
+    assert failure.value.info.code is ErrorCode.MODEL_REJECTED
+    assert calls == 1
+    assert "raw-canary" not in str(failure.value.as_dict())
+
+
+async def test_transport_retry_exhaustion_retains_original_error_classification() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500, headers={"retry-after-ms": "0"}, json={"error": {}})
+
+    with pytest.raises(AnbanError) as failure:
+        await adapter(handler, transport_retries=2).complete(
+            ModelRequest(messages=(ModelMessage(role="user", content="Answer."),))
+        )
+    assert failure.value.info.code is ErrorCode.MODEL_REJECTED
+    assert failure.value.info.details.root["status_code"] == 500
+    assert failure.value.info.details.root["transport_retry_limit"] == 2
+    assert calls == 3

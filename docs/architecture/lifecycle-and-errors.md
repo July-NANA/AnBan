@@ -34,5 +34,11 @@ credentials, raw process output, exception strings, and physical Workspace paths
 details.
 
 Persistence and audit/trace failures have separate codes because either one invalidates a normal
-success result. Timeout and interruption also remain distinct terminal semantics. Retry,
-waiting/resume, and checkpoint behavior are outside v0.1.
+success result. Timeout and interruption also remain distinct terminal semantics.
+
+The v0.1 retry surface is deliberately narrow. The model SDK may retry temporary transport errors
+up to the configured limit; this never replays a Capability. Separately, a transported but invalid
+model response may trigger at most three contract-only repair requests shared by one Agent Node.
+Events record the structural reason, attempt, repairability, exhaustion, and safe transport retry
+count without the response, Prompt, or Tool arguments. Waiting/resume and checkpoint behavior
+remain outside v0.1.

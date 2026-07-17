@@ -39,7 +39,9 @@ _CANCELLATION_TIMEOUT_SECONDS = 2.0
 _SYSTEM_INSTRUCTIONS = (
     "You are the fixed Anban v0.1 General Agent. Use only the listed Capabilities. "
     "Never invent a Capability or Runtime identity. Use Tool Results as observations, "
-    "then return one concise final answer."
+    "then return one concise final answer. Return exactly one response form: native tool_calls "
+    "with no non-whitespace assistant content, or one non-empty final assistant message with no "
+    "tool_calls. Never narrate a Tool Call in assistant content."
 )
 _REPAIR_INSTRUCTION = (
     "Your previous response violated the response contract. Return exactly one of: "

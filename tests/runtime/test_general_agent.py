@@ -138,13 +138,15 @@ async def test_graph_topology_is_fixed_start_agent_end() -> None:
 
 
 async def test_valid_model_final_is_the_only_success_path() -> None:
-    outcome = await FixedGeneralAgent(ScriptedModel([final_turn()]), CapabilityRegistry()).execute(
-        agent_input()
-    )
+    model = ScriptedModel([final_turn()])
+    outcome = await FixedGeneralAgent(model, CapabilityRegistry()).execute(agent_input())
     assert outcome.status is AgentOutcomeStatus.SUCCEEDED
     assert outcome.final_text == "Final bounded answer."
     assert outcome.model_turn_count == 1
     assert outcome.capability_call_count == 0
+    system_contract = model.requests[0].messages[0].content or ""
+    assert "no non-whitespace assistant content" in system_contract
+    assert "no tool_calls" in system_contract
 
 
 async def test_tool_call_result_pairing_across_model_turns() -> None:

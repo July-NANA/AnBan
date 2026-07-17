@@ -47,6 +47,12 @@ from anban.core.models import (
     TaskStatus,
     now_utc,
 )
+from anban.core.persistence import (
+    ExecutionRepository,
+    ExecutionRunAggregate,
+    UnitOfWork,
+    UnitOfWorkFactory,
+)
 
 __all__ = [
     "AnbanError",
@@ -65,6 +71,8 @@ __all__ = [
     "ExecutionRunId",
     "ExecutionRunStatus",
     "EXECUTION_RUN_TRANSITIONS",
+    "ExecutionRepository",
+    "ExecutionRunAggregate",
     "GraphRevisionId",
     "InvalidTransitionError",
     "NodeRun",
@@ -76,6 +84,8 @@ __all__ = [
     "TaskId",
     "TaskStatus",
     "TASK_TRANSITIONS",
+    "UnitOfWork",
+    "UnitOfWorkFactory",
     "ensure_capability_invocation_transition",
     "ensure_execution_run_transition",
     "ensure_node_run_transition",

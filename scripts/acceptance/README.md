@@ -7,6 +7,9 @@ They are not part of `pnpm run doctor` or ordinary CI.
   real file operation, Tool Result return, and a final model response.
 - `pnpm run acceptance:skill` verifies the approved local Weather Skill baseline, reads its real
   instructions, and performs the documented bounded live weather request.
+- `conda run -n anban python -m scripts.acceptance.check_migration_schema` verifies the migrated
+  PostgreSQL test profile, six-table schema, status and relationship constraints, and ordered Event
+  uniqueness. Its probe records are rolled back.
 
 Run only the helper required by the current Gate. Credentials remain in the managed Workspace
 `secrets.env`; the scripts emit allowlisted status messages and fail with a non-zero exit code.

@@ -64,6 +64,9 @@ class MemoryRepository:
         self.factory = factory
 
     async def add_task(self, task: Task) -> None:
+        if self.factory.fail_add_task:
+            self.factory.fail_add_task = False
+            raise RuntimeError("test-only state write failure")
         self.store.tasks[task.id] = task
 
     async def get_task(self, task_id: TaskId) -> Task | None:
@@ -125,6 +128,8 @@ class MemoryRepository:
         )
 
     async def load_run(self, run_id: ExecutionRunId) -> ExecutionRunAggregate | None:
+        if self.factory.fail_load:
+            raise RuntimeError("test-only read failure")
         run = self.store.runs.get(run_id)
         if run is None:
             return None
@@ -177,6 +182,8 @@ class MemoryUnitOfWorkFactory:
         self.store = MemoryStore()
         self.active = 0
         self.fail_event_type: str | None = None
+        self.fail_load = False
+        self.fail_add_task = False
 
     def __call__(self) -> MemoryUnitOfWork:
         return MemoryUnitOfWork(self)
@@ -358,13 +365,29 @@ async def test_capability_failure_and_timeout_are_persisted() -> None:
         assert aggregate.run.status.value == expected.value
 
 
-async def test_initial_persistence_failure_never_calls_model() -> None:
+async def test_initial_event_failure_never_calls_model() -> None:
     factory = MemoryUnitOfWorkFactory()
     factory.fail_event_type = "task.created"
     model = TransactionCheckingModel(factory, [final_turn()])
 
     result = await PersistentRuntime(model, CapabilityRegistry(), factory).execute(
         "Do not execute without identity."
+    )
+
+    assert result.persisted is False
+    assert result.outcome.status is AgentOutcomeStatus.FAILED
+    assert result.outcome.error is not None
+    assert result.outcome.error.code is ErrorCode.AUDIT_TRACE_WRITE_FAILED
+    assert model.calls == 0
+
+
+async def test_initial_state_persistence_failure_never_calls_model() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    factory.fail_add_task = True
+    model = TransactionCheckingModel(factory, [final_turn()])
+
+    result = await PersistentRuntime(model, CapabilityRegistry(), factory).execute(
+        "Do not execute without durable state."
     )
 
     assert result.persisted is False
@@ -386,7 +409,7 @@ async def test_final_event_failure_replaces_success_with_durable_failure() -> No
     assert result.persisted is True
     assert result.outcome.status is AgentOutcomeStatus.FAILED
     assert result.outcome.error is not None
-    assert result.outcome.error.code is ErrorCode.PERSISTENCE_WRITE_FAILED
+    assert result.outcome.error.code is ErrorCode.AUDIT_TRACE_WRITE_FAILED
     aggregate = await load_run(factory, result.run_id)
     assert aggregate.run.status.value == "failed"
     assert aggregate.run.final_text is None
@@ -405,7 +428,7 @@ async def test_post_side_effect_event_failure_does_not_retry_capability() -> Non
     assert capability.calls == 1
     assert result.outcome.status is AgentOutcomeStatus.FAILED
     assert result.outcome.error is not None
-    assert result.outcome.error.code is ErrorCode.PERSISTENCE_WRITE_FAILED
+    assert result.outcome.error.code is ErrorCode.AUDIT_TRACE_WRITE_FAILED
     aggregate = await load_run(factory, result.run_id)
     assert aggregate.run.status.value == "failed"
     assert aggregate.invocations[0].status.value == "running"

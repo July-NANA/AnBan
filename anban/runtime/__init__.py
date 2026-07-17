@@ -8,6 +8,12 @@ from anban.runtime.contracts import (
     AgentOutcomeStatus,
     ExecutionResult,
 )
+from anban.runtime.observability import (
+    AuditEntry,
+    EventProjectionService,
+    RunObservability,
+    TraceEntry,
+)
 from anban.runtime.service import PersistentRuntime
 
 __all__ = [
@@ -15,7 +21,11 @@ __all__ = [
     "AgentLimits",
     "AgentOutcome",
     "AgentOutcomeStatus",
+    "AuditEntry",
+    "EventProjectionService",
     "ExecutionResult",
     "FixedGeneralAgent",
     "PersistentRuntime",
+    "RunObservability",
+    "TraceEntry",
 ]

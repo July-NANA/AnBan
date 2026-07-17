@@ -21,7 +21,7 @@ from anban.persistence import (
     create_database_engine,
 )
 from anban.persistence.models import TaskRecord
-from anban.runtime import AgentOutcomeStatus, PersistentRuntime
+from anban.runtime import AgentOutcomeStatus, EventProjectionService, PersistentRuntime
 from scripts.workspace_bootstrap import WorkspaceResolutionError, resolve_workspace
 
 
@@ -35,6 +35,7 @@ async def inspect_persisted_run(run_id: ExecutionRunId) -> None:
         factory = SQLAlchemyUnitOfWorkFactory(engine)
         async with factory() as unit:
             aggregate = await unit.executions.load_run(run_id)
+        observability = await EventProjectionService(factory).inspect(run_id)
         if aggregate is None:
             raise RuntimeAcceptanceError("persisted Run is unavailable")
         event_types = {event.event_type for event in aggregate.events}
@@ -57,8 +58,25 @@ async def inspect_persisted_run(run_id: ExecutionRunId) -> None:
                 "run.final",
             }
             <= event_types
+            or not observability.complete
+            or observability.inconsistencies
+            or len(observability.trace) != len(aggregate.events)
+            or not observability.audit
         ):
             raise RuntimeAcceptanceError("persisted Run aggregate is incomplete")
+        safe_projection = observability.model_dump_json().lower()
+        if any(
+            forbidden in safe_projection
+            for forbidden in (
+                "authorization:",
+                "bearer ",
+                "file://",
+                "postgresql://",
+                "postgresql+asyncpg://",
+                "provider_response",
+            )
+        ):
+            raise RuntimeAcceptanceError("observability projection contains unsafe data")
     finally:
         await engine.dispose()
 
@@ -145,7 +163,10 @@ def main() -> int:
     except Exception as exc:
         print(f"persistent Runtime acceptance: FAIL ({type(exc).__name__})", file=sys.stderr)
         return 1
-    print("persistent Runtime acceptance: PASS - real model, Capability, PostgreSQL, restart")
+    print(
+        "persistent Runtime acceptance: PASS - real model, Capability, PostgreSQL, "
+        "Audit/Trace, restart"
+    )
     return 0
 
 

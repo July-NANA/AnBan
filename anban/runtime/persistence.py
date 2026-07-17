@@ -74,6 +74,16 @@ def persistence_error(stage: str) -> AnbanError:
     )
 
 
+def audit_trace_error(stage: str) -> AnbanError:
+    return AnbanError(
+        ErrorInfo(
+            code=ErrorCode.AUDIT_TRACE_WRITE_FAILED,
+            message="Runtime Event persistence failed",
+            details=SafeMetadata({"stage": stage}),
+        )
+    )
+
+
 def capability_error() -> ErrorInfo:
     return ErrorInfo(
         code=ErrorCode.CAPABILITY_EXECUTION_FAILED,
@@ -405,8 +415,11 @@ class RunPersistence:
         try:
             async with self._factory() as unit:
                 await operation(unit.executions)
-                for event in events:
-                    await unit.executions.add_event(event)
+                try:
+                    for event in events:
+                        await unit.executions.add_event(event)
+                except Exception:
+                    raise audit_trace_error(stage) from None
                 await unit.commit()
         except AnbanError:
             await self._resync_sequence()

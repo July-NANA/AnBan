@@ -49,7 +49,7 @@ class PersistentRuntime:
             await persistence.initialize()
             await persistence.start()
         except AnbanError as exc:
-            outcome = persistence_failure_outcome(exc.info, stage="setup")
+            outcome = storage_failure_outcome(exc.info, stage="setup")
             persisted = await self._recover_terminal(persistence, outcome)
             return ExecutionResult(
                 task_id=task.id,
@@ -73,7 +73,7 @@ class PersistentRuntime:
             if await self._matches_terminal(persistence, outcome):
                 persisted = True
             else:
-                outcome = persistence_failure_outcome(
+                outcome = storage_failure_outcome(
                     exc.info,
                     stage="finalize",
                     model_turn_count=outcome.model_turn_count,
@@ -117,7 +117,7 @@ class PersistentRuntime:
             return False
 
 
-def persistence_failure_outcome(
+def storage_failure_outcome(
     cause: ErrorInfo,
     *,
     stage: str,
@@ -127,14 +127,23 @@ def persistence_failure_outcome(
 ) -> AgentOutcome:
     code = (
         cause.code
-        if cause.code in {ErrorCode.PERSISTENCE_UNAVAILABLE, ErrorCode.PERSISTENCE_WRITE_FAILED}
+        if cause.code
+        in {
+            ErrorCode.PERSISTENCE_UNAVAILABLE,
+            ErrorCode.PERSISTENCE_WRITE_FAILED,
+            ErrorCode.AUDIT_TRACE_WRITE_FAILED,
+        }
         else ErrorCode.PERSISTENCE_WRITE_FAILED
     )
     return AgentOutcome(
         status=AgentOutcomeStatus.FAILED,
         error=ErrorInfo(
             code=code,
-            message="Runtime persistence failed",
+            message=(
+                "Runtime Event persistence failed"
+                if code is ErrorCode.AUDIT_TRACE_WRITE_FAILED
+                else "Runtime persistence failed"
+            ),
             details=SafeMetadata({"stage": stage}),
         ),
         model_turn_count=model_turn_count,

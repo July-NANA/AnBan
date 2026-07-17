@@ -5,17 +5,212 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from anban.capability import ArtifactReference
 from anban.config import policy
 from anban.core.errors import ErrorInfo
 from anban.core.ids import ExecutionRunId, NodeRunId, TaskId
-from anban.core.metadata import validate_safe_text
+from anban.core.metadata import SafeMetadata, validate_safe_text
+from anban.core.models import UtcDateTime, now_utc
 
 
 class RuntimeValue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ExecutionStrategy(StrEnum):
+    """Provider-neutral ways the Main Agent may attempt a goal."""
+
+    DIRECT_ANSWER = "direct_answer"
+    USE_CAPABILITY = "use_capability"
+    ACTIVATE_SKILL = "activate_skill"
+    USE_PROCESS = "use_process"
+    ACQUIRE_SKILL = "acquire_skill"
+    DELEGATE = "delegate"
+    CLARIFY = "clarify"
+    FAIL = "fail"
+
+
+class MainAgentPhase(StrEnum):
+    PLANNING = "planning"
+    EXECUTING = "executing"
+    OBSERVING = "observing"
+    WAITING = "waiting"
+    TERMINAL = "terminal"
+
+
+class ObservationStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+    UNAVAILABLE = "unavailable"
+
+
+class AgentDecision(RuntimeValue):
+    """One bounded, auditable Main Agent strategy decision."""
+
+    strategy: ExecutionStrategy
+    rationale: str = Field(min_length=1, max_length=2048)
+    target: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z@][a-z0-9_.@/-]*$",
+    )
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    created_at: UtcDateTime = Field(default_factory=now_utc)
+    metadata: SafeMetadata = Field(default_factory=SafeMetadata)
+
+    @field_validator("rationale")
+    @classmethod
+    def validate_rationale(cls, value: str) -> str:
+        return validate_safe_text(value, label="Agent decision rationale", max_length=2048)
+
+    @model_validator(mode="after")
+    def validate_strategy_shape(self) -> Self:
+        if self.strategy in {
+            ExecutionStrategy.DIRECT_ANSWER,
+            ExecutionStrategy.CLARIFY,
+            ExecutionStrategy.FAIL,
+        } and (self.target is not None or self.arguments):
+            raise ValueError("terminal and direct strategies cannot select an execution target")
+        if (
+            self.strategy
+            in {
+                ExecutionStrategy.USE_CAPABILITY,
+                ExecutionStrategy.ACTIVATE_SKILL,
+                ExecutionStrategy.DELEGATE,
+            }
+            and self.target is None
+        ):
+            raise ValueError("selected execution strategy requires a generic target")
+        return self
+
+
+class AgentObservation(RuntimeValue):
+    """Safe observation returned from a real strategy attempt."""
+
+    sequence: int = Field(ge=1)
+    strategy: ExecutionStrategy
+    status: ObservationStatus
+    summary: str = Field(min_length=1, max_length=4096)
+    retry_safe: bool
+    side_effect_completed: bool
+    observed_at: UtcDateTime = Field(default_factory=now_utc)
+    metadata: SafeMetadata = Field(default_factory=SafeMetadata)
+
+    @field_validator("summary")
+    @classmethod
+    def validate_summary(cls, value: str) -> str:
+        return validate_safe_text(
+            value,
+            label="Agent observation summary",
+            max_length=4096,
+            allow_absolute_paths=True,
+        )
+
+
+class CompletionAssessment(RuntimeValue):
+    """Determine whether the original user goal is truthfully complete."""
+
+    complete: bool
+    rationale: str = Field(min_length=1, max_length=2048)
+    confidence: float = Field(ge=0, le=1)
+    unmet_conditions: tuple[str, ...] = Field(default=(), max_length=32)
+    final_text: str | None = Field(default=None, max_length=32_768)
+    assessed_at: UtcDateTime = Field(default_factory=now_utc)
+
+    @field_validator("rationale")
+    @classmethod
+    def validate_completion_rationale(cls, value: str) -> str:
+        return validate_safe_text(value, label="Completion rationale", max_length=2048)
+
+    @field_validator("unmet_conditions")
+    @classmethod
+    def validate_unmet_conditions(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            validate_safe_text(value, label="Unmet condition", max_length=512) for value in values
+        )
+
+    @model_validator(mode="after")
+    def validate_completion_shape(self) -> Self:
+        if self.complete:
+            if self.unmet_conditions or self.final_text is None:
+                raise ValueError("complete assessment requires final text and no unmet conditions")
+            validate_safe_text(
+                self.final_text,
+                label="Completion final text",
+                max_length=32_768,
+                allow_absolute_paths=True,
+            )
+        elif self.final_text is not None:
+            raise ValueError("incomplete assessment cannot contain final text")
+        return self
+
+
+class ReplanDecision(RuntimeValue):
+    """A bounded choice to continue, clarify, fail, or select another path."""
+
+    should_replan: bool
+    rationale: str = Field(min_length=1, max_length=2048)
+    next_strategy: ExecutionStrategy | None = None
+    remaining_attempts: int = Field(ge=0, le=32)
+    requires_clarification: bool = False
+    must_fail: bool = False
+
+    @field_validator("rationale")
+    @classmethod
+    def validate_replan_rationale(cls, value: str) -> str:
+        return validate_safe_text(value, label="Replan rationale", max_length=2048)
+
+    @model_validator(mode="after")
+    def validate_replan_shape(self) -> Self:
+        terminal_choices = int(self.requires_clarification) + int(self.must_fail)
+        if terminal_choices > 1:
+            raise ValueError("replan decision cannot clarify and fail simultaneously")
+        if self.should_replan:
+            if self.next_strategy is None or terminal_choices or self.remaining_attempts == 0:
+                raise ValueError("bounded replan requires a next strategy and remaining budget")
+        elif self.next_strategy is not None:
+            raise ValueError("non-replan decision cannot select a next strategy")
+        return self
+
+
+class MainAgentState(RuntimeValue):
+    """Serializable state shared by fixed and future dynamic Main Agent graphs."""
+
+    task_id: TaskId
+    run_id: ExecutionRunId
+    phase: MainAgentPhase
+    goal: str = Field(min_length=1, max_length=32_768)
+    decisions: tuple[AgentDecision, ...] = Field(default=(), max_length=64)
+    observations: tuple[AgentObservation, ...] = Field(default=(), max_length=128)
+    completion: CompletionAssessment | None = None
+    replan: ReplanDecision | None = None
+    terminal_error: ErrorInfo | None = None
+
+    @field_validator("goal")
+    @classmethod
+    def validate_goal(cls, value: str) -> str:
+        return validate_safe_text(
+            value,
+            label="Main Agent goal",
+            max_length=32_768,
+            allow_absolute_paths=True,
+        )
+
+    @model_validator(mode="after")
+    def validate_phase_shape(self) -> Self:
+        terminal_facts = int(self.completion is not None) + int(self.terminal_error is not None)
+        if self.phase is MainAgentPhase.TERMINAL and terminal_facts != 1:
+            raise ValueError("terminal Main Agent state requires one terminal fact")
+        if self.phase is not MainAgentPhase.TERMINAL and terminal_facts:
+            raise ValueError("non-terminal Main Agent state cannot contain a terminal fact")
+        sequences = [observation.sequence for observation in self.observations]
+        if sequences != list(range(1, len(sequences) + 1)):
+            raise ValueError("Agent observations must use contiguous ordered sequence numbers")
+        return self
 
 
 class AgentOutcomeStatus(StrEnum):

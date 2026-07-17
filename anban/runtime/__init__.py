@@ -2,11 +2,19 @@
 
 from anban.runtime.agent import FixedGeneralAgent
 from anban.runtime.contracts import (
+    AgentDecision,
     AgentInput,
     AgentLimits,
+    AgentObservation,
     AgentOutcome,
     AgentOutcomeStatus,
+    CompletionAssessment,
     ExecutionResult,
+    ExecutionStrategy,
+    MainAgentPhase,
+    MainAgentState,
+    ObservationStatus,
+    ReplanDecision,
 )
 from anban.runtime.inspection import (
     ArtifactDetail,
@@ -25,22 +33,30 @@ from anban.runtime.observability import (
 from anban.runtime.service import PersistentChatSession, PersistentRuntime
 
 __all__ = [
+    "AgentDecision",
     "AgentInput",
     "AgentLimits",
+    "AgentObservation",
     "AgentOutcome",
     "AgentOutcomeStatus",
     "AuditEntry",
     "ArtifactDetail",
+    "CompletionAssessment",
     "ExecutionQueryService",
     "ExecutionResult",
+    "ExecutionStrategy",
     "FixedGeneralAgent",
     "InvocationDetail",
     "NodeDetail",
+    "MainAgentPhase",
+    "MainAgentState",
+    "ObservationStatus",
     "PersistentRuntime",
     "PersistentChatSession",
     "RunObservability",
     "RunDetail",
     "RunSummary",
+    "ReplanDecision",
     "TaskDetail",
     "TraceEntry",
 ]

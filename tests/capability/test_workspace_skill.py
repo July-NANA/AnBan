@@ -83,6 +83,30 @@ def test_package_and_workspace_skills_use_the_same_parser(tmp_path: Path) -> Non
     assert installed.skill_root == "skills/@owner/runner"
 
 
+def test_scoped_plain_markdown_skill_uses_path_identity_and_body_description(
+    tmp_path: Path,
+) -> None:
+    plain_source = """# Data Format Converter
+
+Convert CSV, JSON, XML, YAML, and TOML with ordinary local programs.
+"""
+    package_root = tmp_path / "package-skills"
+    workspace = tmp_path / "workspace"
+    write_skill(package_root, "@owner/data-format-converter", plain_source)
+    write_skill(workspace / "skills", "@other/plain-tool", plain_source)
+
+    packages = catalog(workspace, package_root).discover()
+
+    assert [package.slug for package in packages] == [
+        "@other/plain-tool",
+        "@owner/data-format-converter",
+    ]
+    assert packages[0].name == "plain-tool"
+    assert packages[0].description.startswith("Convert CSV")
+    assert packages[1].name == "data-format-converter"
+    assert packages[1].instructions == plain_source
+
+
 def test_multiple_scoped_and_local_skills_are_discovered_without_external_metadata(
     tmp_path: Path,
 ) -> None:

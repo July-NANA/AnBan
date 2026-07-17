@@ -139,10 +139,16 @@ class WorkspaceSkillCatalog:
         if any(value in source for value in self._protected_values):
             raise SkillLoadError("protected_value")
         fields = self._frontmatter(source)
-        name = fields["name"]
+        if fields is None:
+            name = self._scoped_name(relative)
+            if name is None:
+                raise SkillLoadError("frontmatter_invalid")
+            description = self._plain_description(source)
+        else:
+            name = fields["name"]
+            description = fields["description"]
         if not _NAME_PATTERN.fullmatch(name):
             raise SkillLoadError("name_invalid")
-        description = fields["description"]
         if not description or len(description) > 1024:
             raise SkillLoadError("description_invalid")
         slug = self._slug(relative, name)
@@ -157,10 +163,10 @@ class WorkspaceSkillCatalog:
         )
 
     @staticmethod
-    def _frontmatter(source: str) -> dict[str, str]:
+    def _frontmatter(source: str) -> dict[str, str] | None:
         lines = source.splitlines()
         if not lines or lines[0].strip() != "---":
-            raise SkillLoadError("frontmatter_invalid")
+            return None
         try:
             end = next(index for index in range(1, min(len(lines), 65)) if lines[index] == "---")
         except StopIteration as exc:
@@ -177,6 +183,21 @@ class WorkspaceSkillCatalog:
         if not fields.get("name") or not fields.get("description"):
             raise SkillLoadError("frontmatter_invalid")
         return fields
+
+    @staticmethod
+    def _scoped_name(relative: Path) -> str | None:
+        parts = relative.parts
+        if len(parts) != 3 or not parts[0].startswith("@") or parts[2] != "SKILL.md":
+            return None
+        return parts[1]
+
+    @staticmethod
+    def _plain_description(source: str) -> str:
+        for line in source.splitlines():
+            candidate = line.strip()
+            if candidate and not candidate.startswith(("#", "```")):
+                return candidate
+        raise SkillLoadError("description_invalid")
 
     @staticmethod
     def _slug(relative: Path, name: str) -> str:

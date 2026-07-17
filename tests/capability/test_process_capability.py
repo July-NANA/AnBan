@@ -92,20 +92,43 @@ async def test_nonzero_exit_does_not_return_raw_output(tmp_path: Path) -> None:
 
 
 async def test_process_timeout_terminates_the_process_group(tmp_path: Path) -> None:
+    invocation_context = context()
+    child = (
+        "import time;time.sleep(2);"
+        "open('late-child.txt','w',encoding='utf-8').write('not-terminated')"
+    )
     result = await registry(tmp_path).invoke(
         "process.execute",
-        {"command": "python", "args": ["-c", "import time;time.sleep(5)"], "timeout": 1},
-        context(),
+        {
+            "command": "python",
+            "args": [
+                "-c",
+                "import subprocess,sys,time;"
+                f"subprocess.Popen([sys.executable,'-c',{child!r}]);time.sleep(5)",
+            ],
+            "timeout": 1,
+        },
+        invocation_context,
     )
     assert result.status is CapabilityResultStatus.TIMED_OUT
     assert result.error is not None
     assert result.error.code is ErrorCode.EXECUTION_TIMED_OUT
+    await asyncio.sleep(2)
+    marker = tmp_path / "runs" / str(invocation_context.run_id) / "workspace" / "late-child.txt"
+    assert not marker.exists()
 
 
-async def test_process_output_limit_fails_without_returning_output(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "program",
+    ["print('x'*20000)", "import sys;print('x'*20000,file=sys.stderr)"],
+)
+async def test_process_output_limit_fails_without_returning_output(
+    tmp_path: Path,
+    program: str,
+) -> None:
     result = await registry(tmp_path).invoke(
         "process.execute",
-        {"command": "python", "args": ["-c", "print('x'*20000)"]},
+        {"command": "python", "args": ["-c", program]},
         context(),
     )
     assert result.status is CapabilityResultStatus.FAILED

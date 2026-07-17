@@ -109,9 +109,16 @@ def provider_message(
 class OpenAICompatibleAdapter:
     """Single-profile Adapter with bounded requests and no automatic retry."""
 
-    def __init__(self, client: AsyncOpenAI, model: str) -> None:
+    def __init__(
+        self,
+        client: AsyncOpenAI,
+        model: str,
+        *,
+        protected_values: tuple[str, ...] = (),
+    ) -> None:
         self._client = client
         self._model = model
+        self._protected_values = tuple(value for value in protected_values if value)
 
     @classmethod
     def configured(cls, configuration: ModelConfiguration | None = None) -> OpenAICompatibleAdapter:
@@ -122,7 +129,11 @@ class OpenAICompatibleAdapter:
             timeout=60.0,
             max_retries=0,
         )
-        return cls(client, configuration.model)
+        return cls(
+            client,
+            configuration.model,
+            protected_values=(configuration.api_key,),
+        )
 
     async def aclose(self) -> None:
         await self._client.close()
@@ -184,6 +195,24 @@ class OpenAICompatibleAdapter:
         if not finish_reason:
             raise model_failure(
                 ErrorCode.MODEL_RESPONSE_INVALID, "model response has no finish reason"
+            )
+        protected_fields = [response.model, finish_reason, message.content or ""]
+        protected_fields.extend(
+            value
+            for provider_call in message.tool_calls or ()
+            if isinstance(provider_call, ChatCompletionMessageFunctionToolCall)
+            for value in (
+                provider_call.id,
+                provider_call.function.name,
+                provider_call.function.arguments,
+            )
+        )
+        if any(
+            protected in field for protected in self._protected_values for field in protected_fields
+        ):
+            raise model_failure(
+                ErrorCode.MODEL_RESPONSE_INVALID,
+                "model response contains protected data",
             )
         calls: list[ToolCall] = []
         for provider_call in message.tool_calls or ():

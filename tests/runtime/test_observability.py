@@ -118,7 +118,9 @@ async def test_projection_metadata_uses_allowlist_even_for_safe_event_values() -
                 ModelTurn(
                     content="Done.",
                     finish_reason="stop",
-                    metadata=SafeMetadata({"provider": "test", "unlisted_fact": "drop"}),
+                    metadata=SafeMetadata(
+                        {"provider": "test", "unlisted_fact": "audit-trace-canary"}
+                    ),
                 )
             ],
         ),
@@ -131,7 +133,9 @@ async def test_projection_metadata_uses_allowlist_even_for_safe_event_values() -
     )
     factory.store.events[persisted_event.id] = persisted_event.model_copy(
         update={
-            "metadata": SafeMetadata({**persisted_event.metadata.root, "unlisted_fact": "drop"})
+            "metadata": SafeMetadata(
+                {**persisted_event.metadata.root, "unlisted_fact": "audit-trace-canary"}
+            )
         }
     )
 
@@ -141,6 +145,7 @@ async def test_projection_metadata_uses_allowlist_even_for_safe_event_values() -
     )
     assert model_event.metadata.root["provider"] == "test"
     assert "unlisted_fact" not in model_event.metadata.root
+    assert "audit-trace-canary" not in observation.model_dump_json()
 
 
 async def test_skill_activation_is_distinct_and_uses_logical_reference() -> None:

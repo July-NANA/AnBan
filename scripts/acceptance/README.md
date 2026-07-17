@@ -31,6 +31,11 @@ They are not part of `pnpm run doctor` or ordinary CI.
   for `runs`, `run show`, `trace`, and `artifacts`, verifies the pinned Skill hash and physical
   Artifact against safe durable metadata, and proves model, missing-Skill, and database failures are
   explicit. Its Run records and isolated files are removed.
+- `pnpm run acceptance:security` runs the deterministic fail-closed regression matrix, then uses an
+  installed CLI and test-only hanging Provider endpoint to prove missing model configuration and
+  process interruption return non-success, persist cancellation, survive restart inspection, and
+  exclude a Canary Secret, database configuration, and physical Workspace path from CLI,
+  Event/Audit, and Trace output. The probe uses the test PostgreSQL profile and removes its records.
 
 Run only the helper required by the current Gate. Credentials remain in the managed Workspace
 `secrets.env`; the scripts emit allowlisted status messages and fail with a non-zero exit code.

@@ -34,7 +34,11 @@ def response(message: dict[str, object], *, finish_reason: str = "stop") -> http
     )
 
 
-def adapter(handler: Callable[[httpx.Request], httpx.Response]) -> OpenAICompatibleAdapter:
+def adapter(
+    handler: Callable[[httpx.Request], httpx.Response],
+    *,
+    protected_values: tuple[str, ...] = (),
+) -> OpenAICompatibleAdapter:
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     client = AsyncOpenAI(
         api_key="synthetic-test-value",
@@ -42,7 +46,11 @@ def adapter(handler: Callable[[httpx.Request], httpx.Response]) -> OpenAICompati
         http_client=http_client,
         max_retries=0,
     )
-    return OpenAICompatibleAdapter(client, "test-model")
+    return OpenAICompatibleAdapter(
+        client,
+        "test-model",
+        protected_values=protected_values,
+    )
 
 
 def timeout_handler(request: httpx.Request) -> httpx.Response:
@@ -186,6 +194,60 @@ async def test_unknown_provider_tool_alias_fails_closed() -> None:
             )
         )
     assert failure.value.info.code is ErrorCode.MODEL_RESPONSE_INVALID
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["content", "arguments"])
+async def test_known_secret_in_provider_output_fails_before_projection(surface: str) -> None:
+    canary = "anban-provider-canary-secret-value"
+    if surface == "content":
+        message: dict[str, object] = {"role": "assistant", "content": canary}
+        request = ModelRequest(messages=(ModelMessage(role="user", content="Answer."),))
+        finish_reason = "stop"
+    else:
+        message = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "anban_tool_0",
+                        "arguments": json.dumps({"path": "safe.txt", "content": canary}),
+                    },
+                }
+            ],
+        }
+        request = ModelRequest(
+            messages=(ModelMessage(role="user", content="Write."),),
+            tools=(
+                ToolDefinition(
+                    name="file.write",
+                    description="Write a bounded file.",
+                    input_schema={"type": "object", "additionalProperties": False},
+                ),
+            ),
+        )
+        finish_reason = "tool_calls"
+    with pytest.raises(AnbanError) as failure:
+        await adapter(
+            lambda _request: response(message, finish_reason=finish_reason),
+            protected_values=(canary,),
+        ).complete(request)
+    assert failure.value.info.code is ErrorCode.MODEL_RESPONSE_INVALID
+    assert canary not in str(failure.value.as_dict())
+
+
+@pytest.mark.asyncio
+async def test_oversized_model_output_fails_without_retaining_raw_content() -> None:
+    canary = "oversized-model-output-canary"
+    with pytest.raises(AnbanError) as failure:
+        await adapter(
+            lambda _request: response({"role": "assistant", "content": canary + "x" * 32_768})
+        ).complete(ModelRequest(messages=(ModelMessage(role="user", content="Answer."),)))
+    assert failure.value.info.code is ErrorCode.MODEL_RESPONSE_INVALID
+    assert canary not in str(failure.value.as_dict())
 
 
 @pytest.mark.asyncio

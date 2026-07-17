@@ -16,6 +16,7 @@
     "acceptance:runtime": "conda run -n anban python -m scripts.acceptance.check_persistent_runtime",
     "acceptance:p2": "conda run -n anban python -m scripts.acceptance.check_p2_gate",
     "acceptance:e2e": "conda run -n anban python -m scripts.acceptance.check_cli_e2e",
+    "acceptance:security": "conda run -n anban pytest tests/core/test_metadata.py tests/model/test_adapter.py tests/capability tests/runtime/test_general_agent.py tests/runtime/test_persistent_runtime.py tests/runtime/test_observability.py tests/test_cli.py && conda run -n anban python tests/acceptance/cli_security_probe.py",
     "acceptance:persistence": "conda run -n anban python -m scripts.acceptance.check_repositories"
   }
 }

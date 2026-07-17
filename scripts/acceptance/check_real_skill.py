@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from anban.capability import (
+    CapabilityRegistry,
+    CapabilityResultStatus,
+    InvocationContext,
+    register_workspace_skill,
+)
+from anban.core.errors import AnbanError
+from anban.core.ids import (
+    new_capability_invocation_id,
+    new_execution_run_id,
+    new_node_run_id,
+)
 from scripts.doctor import CLAW_CLI, REPOSITORY, command, skill_baseline_result
 from scripts.workspace_bootstrap import WorkspaceResolutionError, resolve_workspace
 
@@ -27,14 +41,29 @@ def main() -> int:
         print(f"real Skill: FAIL [{baseline.code}] {baseline.detail}")
         return 1
 
-    skill_file = workspace / "skills" / "@steipete" / "weather" / "SKILL.md"
     try:
-        instructions = skill_file.read_text(encoding="utf-8")
-    except OSError as exc:
-        print(f"real Skill: FAIL [skill_instruction_unreadable] {type(exc).__name__}")
+        registry = CapabilityRegistry()
+        packages = register_workspace_skill(registry, workspace_root=workspace)
+        context = InvocationContext(
+            run_id=new_execution_run_id(),
+            node_run_id=new_node_run_id(),
+            invocation_id=new_capability_invocation_id(),
+            deadline_at=datetime.now(UTC) + timedelta(seconds=30),
+        )
+        activation = asyncio.run(
+            registry.invoke("skill.activate", {"name": "@steipete/weather"}, context)
+        )
+    except AnbanError as exc:
+        print(f"real Skill: FAIL [{exc.info.code.value}] activation failed")
         return 1
-    if "wttr.in" not in instructions:
-        print("real Skill: FAIL [skill_instruction_invalid] Approved service instruction missing.")
+    if (
+        len(packages) != 1
+        or activation.status is not CapabilityResultStatus.COMPLETED
+        or "wttr.in" not in (activation.observation or "")
+        or str(workspace) in str(activation.model_dump(mode="json"))
+        or "/tmp/" in (activation.observation or "")
+    ):
+        print("real Skill: FAIL [skill_activation_invalid] safe activation mismatch")
         return 1
 
     try:
@@ -54,7 +83,9 @@ def main() -> int:
         print("real Skill: FAIL [real_skill_response_invalid] City identity missing.")
         return 1
 
-    print("real Skill: PASS approved version, pin, hash, instructions, and live weather request")
+    print(
+        "real Skill: PASS discovery, version, pin, hash, safe activation, and live weather request"
+    )
     return 0
 
 

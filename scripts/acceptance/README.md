@@ -5,8 +5,9 @@ They are not part of `pnpm run doctor` or ordinary CI.
 
 - `pnpm run acceptance:model` uses the production ModelPort Adapter for a real model request,
   native Tool Calling, Tool Result pairing, final response, and structured output.
-- `pnpm run acceptance:skill` verifies the approved local Weather Skill baseline, reads its real
-  instructions, and performs the documented bounded live weather request.
+- `pnpm run acceptance:skill` uses the production Workspace catalog and Registry to discover,
+  hash-check, safely project, and activate the approved local Weather Skill, then performs its
+  documented bounded live weather request.
 - `pnpm run acceptance:capability` invokes the production Registry against the managed Workspace,
   performs real run-scoped file write/read/list operations, creates and verifies a logical Artifact
   snapshot, and executes one real allowlisted no-shell process. Its isolated files are removed.

@@ -20,14 +20,15 @@ from dotenv import dotenv_values
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from anban.capability.skill import WEATHER_SKILL
 from scripts.workspace_bootstrap import WorkspaceResolutionError, resolve_workspace
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 CLAW_CLI = "clawhub@0.23.1"
 CLAW_CLI_VERSION = "0.23.1"
-SKILL_SLUG = "@steipete/weather"
-SKILL_VERSION = "1.0.0"
-SKILL_HASH = "1ca0c8d768ad603ea8d5d47f56a9b435fe575f7f34e719eda85c82003d740e93"
+SKILL_SLUG = WEATHER_SKILL.slug
+SKILL_VERSION = WEATHER_SKILL.version
+SKILL_HASH = WEATHER_SKILL.sha256
 CONFIGURATION_KEYS = (
     "DATABASE_URL",
     "ANBAN_TEST_DATABASE_URL",

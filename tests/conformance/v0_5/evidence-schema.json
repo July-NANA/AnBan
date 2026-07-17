@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/July-NANA/AnBan/tests/conformance/v0_5/evidence-schema.json",
+  "title": "AnBan v0.5 conformance evidence bundle",
+  "type": "object",
+  "required": ["scenario_id", "fixture_id", "run_ids", "database", "audit", "trace", "integrations", "result"],
+  "properties": {
+    "scenario_id": {"type": "string", "pattern": "^S(0[1-9]|1[0-2])$"},
+    "fixture_id": {"type": "string", "minLength": 1},
+    "run_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "database": {"type": "object"},
+    "audit": {"type": "array", "items": {"type": "object"}},
+    "trace": {"type": "object", "required": ["complete", "inconsistencies"]},
+    "artifacts": {"type": "array", "items": {"type": "object"}},
+    "integrations": {"type": "array", "items": {"type": "object"}},
+    "restart": {"type": ["object", "null"]},
+    "result": {"enum": ["passed", "failed"]}
+  },
+  "additionalProperties": false
+}

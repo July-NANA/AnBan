@@ -1,0 +1,17 @@
+{
+  "rules": [
+    {"id": "AH01", "requirement": "Generate Skill IDs at runtime."},
+    {"id": "AH02", "requirement": "Generate Skill directories at runtime."},
+    {"id": "AH03", "requirement": "Exercise at least three semantic expressions of each task."},
+    {"id": "AH04", "requirement": "Generate Artifact content at runtime."},
+    {"id": "AH05", "requirement": "Do not match a complete acceptance Prompt."},
+    {"id": "AH06", "requirement": "Do not select a dedicated Handler by Skill name."},
+    {"id": "AH07", "requirement": "Do not return a fixed result."},
+    {"id": "AH08", "requirement": "Do not use a test-only success switch."},
+    {"id": "AH09", "requirement": "Do not bypass Interaction, Runtime, Capability, or Persistence."},
+    {"id": "AH10", "requirement": "Include a reverse or negative scenario."},
+    {"id": "AH11", "requirement": "Repeat with a different task object."},
+    {"id": "AH12", "requirement": "Verify a real service-process restart when recovery is claimed."},
+    {"id": "AH13", "requirement": "Reconcile database facts with Audit and Trace."}
+  ]
+}

@@ -36,6 +36,10 @@ class SchemaDefinitionError(ValueError):
 class ArgumentsValidationError(ValueError):
     """Model arguments do not match a registered Capability schema."""
 
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
 
 def _is_mapping(value: JsonValue) -> TypeGuard[dict[str, JsonValue]]:
     return isinstance(value, dict)
@@ -134,7 +138,7 @@ def _validate_schema_node(
 
 def validate_arguments(schema: Mapping[str, JsonValue], arguments: Mapping[str, JsonValue]) -> None:
     if any(name in _RESERVED_ARGUMENTS for name in arguments):
-        raise ArgumentsValidationError("Runtime identity cannot be supplied in arguments")
+        raise ArgumentsValidationError("reserved_runtime_identity")
     _validate_value(dict(schema), dict(arguments), path="arguments")
 
 
@@ -144,7 +148,7 @@ def _validate_value(schema: dict[str, JsonValue], value: JsonValue, *, path: str
         raise SchemaDefinitionError("validated schema type is missing")
     if schema_type == "object":
         if not _is_mapping(value):
-            raise ArgumentsValidationError(f"{path} must be an object")
+            raise ArgumentsValidationError("object_required")
         properties = schema["properties"]
         if not _is_mapping(properties):
             raise SchemaDefinitionError("validated properties are missing")
@@ -155,9 +159,9 @@ def _validate_value(schema: dict[str, JsonValue], value: JsonValue, *, path: str
         missing = [name for name in required_names if name not in value]
         unknown = set(value) - set(properties)
         if missing:
-            raise ArgumentsValidationError(f"{path} is missing required fields")
+            raise ArgumentsValidationError("missing_required_fields")
         if unknown:
-            raise ArgumentsValidationError(f"{path} contains unknown fields")
+            raise ArgumentsValidationError("unknown_fields")
         for name, child_value in value.items():
             child = properties[name]
             if not _is_mapping(child):
@@ -166,7 +170,7 @@ def _validate_value(schema: dict[str, JsonValue], value: JsonValue, *, path: str
         return
     if schema_type == "array":
         if not isinstance(value, list):
-            raise ArgumentsValidationError(f"{path} must be an array")
+            raise ArgumentsValidationError("array_required")
         max_items = schema["maxItems"]
         min_items = schema.get("minItems", 0)
         items = schema["items"]
@@ -177,7 +181,7 @@ def _validate_value(schema: dict[str, JsonValue], value: JsonValue, *, path: str
         ):
             raise SchemaDefinitionError("validated array bounds are missing")
         if not min_items <= len(value) <= max_items:
-            raise ArgumentsValidationError(f"{path} has an invalid item count")
+            raise ArgumentsValidationError("item_count_invalid")
         for index, item in enumerate(value):
             _validate_value(items, item, path=f"{path}[{index}]")
         return
@@ -188,10 +192,10 @@ def _validate_value(schema: dict[str, JsonValue], value: JsonValue, *, path: str
         "boolean": isinstance(value, bool),
     }
     if not type_matches[schema_type]:
-        raise ArgumentsValidationError(f"{path} has the wrong type")
+        raise ArgumentsValidationError("type_invalid")
     enum = schema.get("enum")
     if isinstance(enum, list) and value not in enum:
-        raise ArgumentsValidationError(f"{path} is not an allowed value")
+        raise ArgumentsValidationError("enum_invalid")
     if isinstance(value, str):
         min_length = schema.get("minLength", 0)
         max_length = schema.get("maxLength", 16_384)
@@ -200,11 +204,11 @@ def _validate_value(schema: dict[str, JsonValue], value: JsonValue, *, path: str
             or not isinstance(max_length, int)
             or not min_length <= len(value) <= max_length
         ):
-            raise ArgumentsValidationError(f"{path} has an invalid length")
+            raise ArgumentsValidationError("length_invalid")
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         minimum = schema.get("minimum")
         maximum = schema.get("maximum")
         if isinstance(minimum, (int, float)) and value < minimum:
-            raise ArgumentsValidationError(f"{path} is below its minimum")
+            raise ArgumentsValidationError("minimum_invalid")
         if isinstance(maximum, (int, float)) and value > maximum:
-            raise ArgumentsValidationError(f"{path} is above its maximum")
+            raise ArgumentsValidationError("maximum_invalid")

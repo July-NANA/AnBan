@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
 
-from anban.capability import ArtifactReference, CapabilityPort
+from anban.capability import ArtifactReference, CapabilityPort, InvocationContext
 from anban.config import policy
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import new_execution_run_id, new_node_run_id, new_task_id
@@ -13,6 +14,7 @@ from anban.core.models import ExecutionRun, NodeRun, Task, now_utc
 from anban.core.persistence import UnitOfWorkFactory
 from anban.model import ModelPort
 from anban.runtime.agent import FixedGeneralAgent
+from anban.runtime.capability_persistence import PersistedCapabilityPort
 from anban.runtime.contracts import (
     AgentInput,
     AgentLimits,
@@ -20,10 +22,17 @@ from anban.runtime.contracts import (
     AgentOutcomeStatus,
     ExecutionResult,
 )
-from anban.runtime.persistence import (
-    PersistedCapabilityPort,
-    PersistedModelPort,
-    RunPersistence,
+from anban.runtime.persistence import PersistedModelPort, RunPersistence
+
+_STORAGE_FAILURE_DETAILS = frozenset(
+    {
+        "artifact_cleanup_attempted",
+        "artifact_cleanup_failed",
+        "artifact_cleanup_succeeded",
+        "compensation_error_code",
+        "invocation_compensation_failed",
+        "persistence_state_unconfirmed",
+    }
 )
 
 
@@ -38,12 +47,14 @@ class PersistentRuntime:
         *,
         limits: AgentLimits | None = None,
         response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
+        artifact_cleanup: Callable[[InvocationContext, ArtifactReference], None] | None = None,
     ) -> None:
         self._model = model
         self._capabilities = capabilities
         self._unit_of_work = unit_of_work
         self._limits = limits
         self._response_repair_retries = response_repair_retries
+        self._artifact_cleanup = artifact_cleanup
 
     async def execute(
         self, request: str, *, metadata: SafeMetadata | None = None
@@ -74,7 +85,11 @@ class PersistentRuntime:
 
         agent = FixedGeneralAgent(
             PersistedModelPort(self._model, persistence),
-            PersistedCapabilityPort(self._capabilities, persistence),
+            PersistedCapabilityPort(
+                self._capabilities,
+                persistence,
+                artifact_cleanup=self._artifact_cleanup,
+            ),
             limits=self._limits,
             response_repair_retries=self._response_repair_retries,
         )
@@ -112,6 +127,7 @@ class PersistentRuntime:
             self._unit_of_work,
             limits=self._limits,
             response_repair_retries=self._response_repair_retries,
+            artifact_cleanup=self._artifact_cleanup,
         )
 
     @staticmethod
@@ -154,12 +170,14 @@ class PersistentChatSession:
         *,
         limits: AgentLimits | None = None,
         response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
+        artifact_cleanup: Callable[[InvocationContext, ArtifactReference], None] | None = None,
     ) -> None:
         self._model = model
         self._capabilities = capabilities
         self._unit_of_work = unit_of_work
         self._limits = limits
         self._response_repair_retries = response_repair_retries
+        self._artifact_cleanup = artifact_cleanup
         self._started_at = now_utc()
         self._persistence: RunPersistence | None = None
         self._history: list[tuple[str, str]] = []
@@ -243,7 +261,11 @@ class PersistentChatSession:
 
         agent = FixedGeneralAgent(
             PersistedModelPort(self._model, persistence),
-            PersistedCapabilityPort(self._capabilities, persistence),
+            PersistedCapabilityPort(
+                self._capabilities,
+                persistence,
+                artifact_cleanup=self._artifact_cleanup,
+            ),
             limits=self._limits,
             response_repair_retries=self._response_repair_retries,
         )
@@ -439,7 +461,16 @@ def storage_failure_outcome(
                 if code is ErrorCode.AUDIT_TRACE_WRITE_FAILED
                 else "Runtime persistence failed"
             ),
-            details=SafeMetadata({"stage": stage}),
+            details=SafeMetadata(
+                {
+                    "stage": stage,
+                    **{
+                        key: value
+                        for key, value in cause.details.root.items()
+                        if key in _STORAGE_FAILURE_DETAILS
+                    },
+                }
+            ),
         ),
         model_turn_count=model_turn_count,
         capability_call_count=capability_call_count,

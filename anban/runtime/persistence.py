@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-
-from pydantic import JsonValue
+from typing import Literal
 
 from anban.capability import (
-    CapabilityDescriptor,
-    CapabilityPort,
     CapabilityResult,
     CapabilityResultStatus,
     InvocationContext,
@@ -99,6 +95,19 @@ _CAPABILITY_EVENT_METADATA = frozenset(
         "timed_out",
     }
 )
+_PERSISTENCE_DIAGNOSTIC_METADATA = frozenset(
+    {
+        "artifact_cleanup_attempted",
+        "artifact_cleanup_failed",
+        "artifact_cleanup_succeeded",
+        "compensation_error_code",
+        "invocation_compensation_failed",
+        "persistence_state_unconfirmed",
+        "reason",
+    }
+)
+
+InvocationPersistenceState = Literal["committed", "uncommitted", "unconfirmed"]
 
 
 @dataclass(frozen=True)
@@ -127,13 +136,6 @@ def audit_trace_error(stage: str) -> AnbanError:
             message="Runtime Event persistence failed",
             details=SafeMetadata({"stage": stage}),
         )
-    )
-
-
-def capability_error() -> ErrorInfo:
-    return ErrorInfo(
-        code=ErrorCode.CAPABILITY_EXECUTION_FAILED,
-        message="Capability execution failed",
     )
 
 
@@ -360,7 +362,13 @@ class RunPersistence:
                 **projected.root,
                 "capability_name": name,
                 "artifact_count": len(artifacts),
-                **({} if result.error is None else error_metadata(result.error).root),
+                **(
+                    {}
+                    if result.error is None
+                    else error_metadata(
+                        result.error, allowed_details=_PERSISTENCE_DIAGNOSTIC_METADATA
+                    ).root
+                ),
             }
         )
         facts = [
@@ -394,25 +402,105 @@ class RunPersistence:
         )
         await self._write("capability_finished", operation, tuple(facts))
 
-    async def finish_invocation_error(
+    async def invocation_result_state(
+        self,
+        context: InvocationContext,
+        result: CapabilityResult,
+    ) -> InvocationPersistenceState:
+        """Confirm a terminal transaction without assuming a failed commit rolled back."""
+
+        aggregate = await self.load()
+        if aggregate is None:
+            return "unconfirmed"
+        invocation = next(
+            (item for item in aggregate.invocations if item.id == context.invocation_id), None
+        )
+        if invocation is None:
+            return "unconfirmed"
+        expected_status = {
+            CapabilityResultStatus.COMPLETED: CapabilityInvocationStatus.SUCCEEDED,
+            CapabilityResultStatus.FAILED: CapabilityInvocationStatus.FAILED,
+            CapabilityResultStatus.CANCELLED: CapabilityInvocationStatus.CANCELLED,
+            CapabilityResultStatus.TIMED_OUT: CapabilityInvocationStatus.TIMED_OUT,
+        }[result.status]
+        expected_artifacts = {reference.id for reference in result.artifacts}
+        persisted_artifacts = {
+            artifact.id
+            for artifact in aggregate.artifacts
+            if artifact.invocation_id == context.invocation_id
+        }
+        terminal_events = tuple(
+            event
+            for event in aggregate.events
+            if event.invocation_id == context.invocation_id
+            and event.event_type.startswith("capability.")
+            and event.event_type not in {"capability.requested", "capability.started"}
+        )
+        artifact_events = {
+            event.artifact_id
+            for event in aggregate.events
+            if event.invocation_id == context.invocation_id
+            and event.event_type == "artifact.created"
+            and event.artifact_id is not None
+        }
+        if (
+            invocation.status is expected_status
+            and any(
+                event.event_type == f"capability.{result.status.value}" for event in terminal_events
+            )
+            and persisted_artifacts == expected_artifacts
+            and artifact_events == expected_artifacts
+        ):
+            return "committed"
+        if (
+            invocation.status is CapabilityInvocationStatus.RUNNING
+            and not terminal_events
+            and not persisted_artifacts
+            and not artifact_events
+        ):
+            return "uncommitted"
+        return "unconfirmed"
+
+    async def compensate_invocation_failure(
         self,
         name: str,
         context: InvocationContext,
         error: ErrorInfo,
-        *,
-        cancelled: bool = False,
     ) -> None:
-        status = (
-            CapabilityResultStatus.CANCELLED
-            if cancelled
-            else CapabilityResultStatus.TIMED_OUT
-            if error.code in {ErrorCode.EXECUTION_TIMED_OUT, ErrorCode.MODEL_TIMEOUT}
-            else CapabilityResultStatus.FAILED
+        """Persist one explicit failed terminal without replaying the Capability."""
+
+        invocation = await self._load_invocation(context.invocation_id)
+        if invocation.status is not CapabilityInvocationStatus.RUNNING:
+            raise persistence_error("invocation_compensation_conflict")
+        terminal = invocation.model_copy(
+            update={
+                "status": CapabilityInvocationStatus.FAILED,
+                "finished_at": now_utc(),
+                "error_code": error.code,
+            }
         )
-        await self.finish_invocation(
-            name,
-            context,
-            CapabilityResult(status=status, error=error),
+
+        async def operation(repository: ExecutionRepository) -> None:
+            await repository.update_invocation(terminal)
+
+        metadata = SafeMetadata(
+            {
+                "capability_name": name,
+                "artifact_count": 0,
+                **error_metadata(error, allowed_details=_PERSISTENCE_DIAGNOSTIC_METADATA).root,
+            }
+        )
+        await self._write(
+            "invocation_compensation",
+            operation,
+            (
+                EventFact(
+                    "capability.failed",
+                    metadata,
+                    node_run_id=context.node_run_id,
+                    invocation_id=context.invocation_id,
+                ),
+            ),
         )
 
     async def finish(
@@ -628,49 +716,6 @@ class PersistedModelPort:
         return turn
 
 
-class PersistedCapabilityPort:
-    """Record Invocation, Artifact, and Event facts around a real Capability Port."""
-
-    def __init__(self, inner: CapabilityPort, persistence: RunPersistence) -> None:
-        self._inner = inner
-        self._persistence = persistence
-
-    def search(self, query: str | None = None) -> tuple[CapabilityDescriptor, ...]:
-        return self._inner.search(query)
-
-    def describe(self, name: str) -> CapabilityDescriptor:
-        return self._inner.describe(name)
-
-    async def invoke(
-        self,
-        name: str,
-        arguments: dict[str, JsonValue],
-        context: InvocationContext,
-    ) -> CapabilityResult:
-        await self._persistence.begin_invocation(name, context)
-        try:
-            result = await self._inner.invoke(name, arguments, context)
-        except asyncio.CancelledError:
-            error = ErrorInfo(
-                code=ErrorCode.EXECUTION_INTERRUPTED,
-                message="Capability execution was interrupted",
-            )
-            await self._persistence.finish_invocation_error(name, context, error, cancelled=True)
-            raise
-        except AnbanError as exc:
-            await self._persistence.finish_invocation_error(name, context, exc.info)
-            raise
-        except Exception:
-            error = capability_error()
-            await self._persistence.finish_invocation_error(name, context, error)
-            raise AnbanError(error) from None
-        await self._persistence.finish_invocation(name, context, result)
-        return result
-
-    async def cancel(self, context: InvocationContext) -> None:
-        await self._inner.cancel(context)
-
-
 def error_metadata(
     error: ErrorInfo,
     *,
@@ -721,6 +766,12 @@ def outcome_metadata(
                 else capability_call_count
             ),
             "artifact_count": len(outcome.artifacts) if artifact_count is None else artifact_count,
-            **({} if outcome.error is None else error_metadata(outcome.error).root),
+            **(
+                {}
+                if outcome.error is None
+                else error_metadata(
+                    outcome.error, allowed_details=_PERSISTENCE_DIAGNOSTIC_METADATA
+                ).root
+            ),
         }
     )

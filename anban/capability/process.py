@@ -487,6 +487,20 @@ class ProcessCapability:
             json.dumps(
                 {
                     "status": status.value,
+                    **(
+                        {}
+                        if status is CapabilityResultStatus.COMPLETED
+                        else {
+                            "error_code": (
+                                ErrorCode.EXECUTION_TIMED_OUT.value
+                                if status is CapabilityResultStatus.TIMED_OUT
+                                else ErrorCode.EXECUTION_INTERRUPTED.value
+                                if status is CapabilityResultStatus.CANCELLED
+                                else ErrorCode.CAPABILITY_EXECUTION_FAILED.value
+                            ),
+                            "reason": reason or status.value,
+                        }
+                    ),
                     "exit_code": exit_code,
                     "stdout": stdout.decode("utf-8", errors="replace"),
                     "stderr": stderr.decode("utf-8", errors="replace"),

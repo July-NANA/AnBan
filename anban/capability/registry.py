@@ -69,7 +69,12 @@ class CapabilityRegistry(CapabilityPort):
     ) -> CapabilityResult:
         handler = self._get_handler(name)
         if not handler.descriptor.available:
-            raise self._error(ErrorCode.CAPABILITY_UNAVAILABLE, "Capability is unavailable", name)
+            raise self._error(
+                ErrorCode.CAPABILITY_UNAVAILABLE,
+                "Capability is unavailable",
+                name,
+                reason="capability_unavailable",
+            )
         try:
             validate_arguments(handler.descriptor.input_schema, arguments)
         except ArgumentsValidationError as exc:
@@ -77,6 +82,7 @@ class CapabilityRegistry(CapabilityPort):
                 ErrorCode.CAPABILITY_ARGUMENTS_INVALID,
                 "Capability arguments are invalid",
                 name,
+                reason=exc.reason,
             ) from exc
         invocation_key = str(context.invocation_id)
         if invocation_key in self._active:
@@ -132,6 +138,17 @@ class CapabilityRegistry(CapabilityPort):
         return handler
 
     @staticmethod
-    def _error(code: ErrorCode, message: str, name: str | None = None) -> AnbanError:
-        details = SafeMetadata({"capability_name": name}) if name else SafeMetadata()
+    def _error(
+        code: ErrorCode,
+        message: str,
+        name: str | None = None,
+        *,
+        reason: str | None = None,
+    ) -> AnbanError:
+        details = SafeMetadata(
+            {
+                **({} if name is None else {"capability_name": name}),
+                **({} if reason is None else {"reason": reason}),
+            }
+        )
         return AnbanError(ErrorInfo(code=code, message=message, details=details))

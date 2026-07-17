@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from anban.capability import local_capability_registry
+from anban.capability.workspace import WorkspaceBoundary
 from anban.config import load_configuration
 from anban.interaction import InteractionService
 from anban.model import OpenAICompatibleAdapter
@@ -60,12 +61,14 @@ async def build_application() -> Application:
             artifact_max_bytes=configuration.process.artifact_max_bytes,
             protected_values=configuration.protected_values(),
         )
+        workspace_boundary = WorkspaceBoundary(configuration.workspace)
         runtime = PersistentRuntime(
             model,
             capabilities,
             SQLAlchemyUnitOfWorkFactory(engine),
             limits=AgentLimits(**configuration.agent.model_dump()),
             response_repair_retries=model_configuration.response_repair_retries,
+            artifact_cleanup=workspace_boundary.delete_artifact,
         )
         queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
         return Application(InteractionService(runtime, queries), model, engine)

@@ -54,6 +54,37 @@ def test_run_command_dispatch_and_global_json_option(
     assert received == [("bounded task", True)]
 
 
+def test_run_show_and_query_commands_dispatch_stable_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "00000000-0000-0000-0000-000000000123"
+    received: list[tuple[str, str, bool]] = []
+
+    async def show(identifier: object, *, json_output: bool) -> int:
+        received.append(("show", str(identifier), json_output))
+        return cli.EXIT_SUCCESS
+
+    async def trace(identifier: object, *, json_output: bool) -> int:
+        received.append(("trace", str(identifier), json_output))
+        return cli.EXIT_SUCCESS
+
+    async def artifacts(identifier: object, *, json_output: bool) -> int:
+        received.append(("artifacts", str(identifier), json_output))
+        return cli.EXIT_SUCCESS
+
+    monkeypatch.setattr(cli, "show_run", show)
+    monkeypatch.setattr(cli, "show_trace", trace)
+    monkeypatch.setattr(cli, "list_artifacts", artifacts)
+    assert cli.main(["run", "show", run_id, "--json"]) == cli.EXIT_SUCCESS
+    assert cli.main(["trace", run_id, "--json"]) == cli.EXIT_SUCCESS
+    assert cli.main(["artifacts", run_id, "--json"]) == cli.EXIT_SUCCESS
+    assert received == [
+        ("show", run_id, True),
+        ("trace", run_id, True),
+        ("artifacts", run_id, True),
+    ]
+
+
 def test_raw_exception_text_is_never_emitted(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

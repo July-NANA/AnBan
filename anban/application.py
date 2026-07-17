@@ -14,7 +14,7 @@ from anban.persistence import (
     SQLAlchemyUnitOfWorkFactory,
     create_database_engine,
 )
-from anban.runtime import PersistentRuntime
+from anban.runtime import ExecutionQueryService, PersistentRuntime
 
 
 @dataclass
@@ -27,6 +27,17 @@ class Application:
 
     async def close(self) -> None:
         await self._model.aclose()
+        await self._engine.dispose()
+
+
+@dataclass
+class QueryApplication:
+    """Database-only resources for restart-safe inspection commands."""
+
+    interactions: InteractionService
+    _engine: AsyncEngine
+
+    async def close(self) -> None:
         await self._engine.dispose()
 
 
@@ -43,8 +54,15 @@ async def build_application() -> Application:
             capabilities,
             SQLAlchemyUnitOfWorkFactory(engine),
         )
-        return Application(InteractionService(runtime), model, engine)
+        queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
+        return Application(InteractionService(runtime, queries), model, engine)
     except BaseException:
         await model.aclose()
         await engine.dispose()
         raise
+
+
+async def build_query_application() -> QueryApplication:
+    engine = create_database_engine(DatabaseProfile.DEVELOPMENT)
+    queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
+    return QueryApplication(InteractionService(None, queries), engine)

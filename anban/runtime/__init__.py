@@ -8,6 +8,15 @@ from anban.runtime.contracts import (
     AgentOutcomeStatus,
     ExecutionResult,
 )
+from anban.runtime.inspection import (
+    ArtifactDetail,
+    ExecutionQueryService,
+    InvocationDetail,
+    NodeDetail,
+    RunDetail,
+    RunSummary,
+    TaskDetail,
+)
 from anban.runtime.observability import (
     AuditEntry,
     EventProjectionService,
@@ -22,11 +31,18 @@ __all__ = [
     "AgentOutcome",
     "AgentOutcomeStatus",
     "AuditEntry",
+    "ArtifactDetail",
     "EventProjectionService",
+    "ExecutionQueryService",
     "ExecutionResult",
     "FixedGeneralAgent",
+    "InvocationDetail",
+    "NodeDetail",
     "PersistentRuntime",
     "PersistentChatSession",
     "RunObservability",
+    "RunDetail",
+    "RunSummary",
+    "TaskDetail",
     "TraceEntry",
 ]

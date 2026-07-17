@@ -98,21 +98,25 @@ class EventProjectionService:
                     details=SafeMetadata({"run_id": str(run_id)}),
                 )
             )
-        ordered = tuple(sorted(aggregate.events, key=lambda event: (event.sequence, event.id)))
-        trace = tuple(trace_entry(event) for event in ordered)
-        audit = tuple(
-            AuditEntry.model_validate(entry.model_dump())
-            for event, entry in zip(ordered, trace, strict=True)
-            if event.event_type.startswith(_AUDIT_EVENT_PREFIXES)
-        )
-        inconsistencies = inspect_consistency(aggregate, ordered)
-        return RunObservability(
-            run_id=run_id,
-            trace=trace,
-            audit=audit,
-            complete=not inconsistencies,
-            inconsistencies=inconsistencies,
-        )
+        return project_observability(aggregate)
+
+
+def project_observability(aggregate: ExecutionRunAggregate) -> RunObservability:
+    ordered = tuple(sorted(aggregate.events, key=lambda event: (event.sequence, event.id)))
+    trace = tuple(trace_entry(event) for event in ordered)
+    audit = tuple(
+        AuditEntry.model_validate(entry.model_dump())
+        for event, entry in zip(ordered, trace, strict=True)
+        if event.event_type.startswith(_AUDIT_EVENT_PREFIXES)
+    )
+    inconsistencies = inspect_consistency(aggregate, ordered)
+    return RunObservability(
+        run_id=aggregate.run.id,
+        trace=trace,
+        audit=audit,
+        complete=not inconsistencies,
+        inconsistencies=inconsistencies,
+    )
 
 
 def trace_entry(event: Event) -> TraceEntry:

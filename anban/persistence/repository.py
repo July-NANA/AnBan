@@ -203,6 +203,14 @@ class SQLAlchemyExecutionRepository:
         )
         return tuple(event_domain(record) for record in result.all())
 
+    async def list_runs(self, limit: int) -> tuple[ExecutionRun, ...]:
+        result = await self._session.scalars(
+            select(ExecutionRunRecord)
+            .order_by(ExecutionRunRecord.created_at.desc(), ExecutionRunRecord.id.desc())
+            .limit(limit)
+        )
+        return tuple(run_domain(record) for record in result.all())
+
     async def load_run(self, run_id: ExecutionRunId) -> ExecutionRunAggregate | None:
         run = await self.get_run(run_id)
         if run is None:

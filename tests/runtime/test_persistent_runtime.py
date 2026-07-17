@@ -127,6 +127,15 @@ class MemoryRepository:
             )
         )
 
+    async def list_runs(self, limit: int) -> tuple[ExecutionRun, ...]:
+        return tuple(
+            sorted(
+                self.store.runs.values(),
+                key=lambda run: (run.created_at, run.id),
+                reverse=True,
+            )[:limit]
+        )
+
     async def load_run(self, run_id: ExecutionRunId) -> ExecutionRunAggregate | None:
         if self.factory.fail_load:
             raise RuntimeError("test-only read failure")

@@ -7,14 +7,26 @@ import asyncio
 import json
 import sys
 from collections.abc import Sequence
+from uuid import UUID
 
 from pydantic import ValidationError
 
-from anban.application import Application, build_application
+from anban.application import (
+    Application,
+    build_application,
+    build_query_application,
+)
 from anban.core.errors import AnbanError, ErrorCategory, ErrorCode, ErrorInfo
-from anban.core.ids import new_interaction_id
+from anban.core.ids import ExecutionRunId, new_interaction_id
 from anban.interaction import InteractionEnvelope
-from anban.runtime import AgentOutcomeStatus, ExecutionResult
+from anban.runtime import (
+    AgentOutcomeStatus,
+    ArtifactDetail,
+    ExecutionResult,
+    RunDetail,
+    RunObservability,
+    RunSummary,
+)
 from anban.workspace import WorkspaceInitialization, initialize_workspace
 from scripts.workspace_bootstrap import WorkspaceResolutionError
 
@@ -34,10 +46,19 @@ def parser() -> argparse.ArgumentParser:
     workspace_init = workspace_commands.add_parser("init", help="Initialize the Workspace.")
     add_json_option(workspace_init)
     run = commands.add_parser("run", help="Execute one durable task.")
-    run.add_argument("task")
+    run.add_argument("values", nargs="+")
     add_json_option(run)
     chat = commands.add_parser("chat", help="Start one bounded temporary chat.")
     add_json_option(chat)
+    runs = commands.add_parser("runs", help="List durable Runs.")
+    runs.add_argument("--limit", type=int, default=20)
+    add_json_option(runs)
+    trace = commands.add_parser("trace", help="Show one ordered Run Trace.")
+    trace.add_argument("run_id")
+    add_json_option(trace)
+    artifacts = commands.add_parser("artifacts", help="List logical Run Artifacts.")
+    artifacts.add_argument("run_id")
+    add_json_option(artifacts)
     return root
 
 
@@ -101,6 +122,46 @@ async def execute_chat(*, json_output: bool) -> int:
                 emit_result(closed, json_output=json_output)
         await asyncio.shield(application.close())
     return exit_code
+
+
+async def list_runs(limit: int, *, json_output: bool) -> int:
+    application = await build_query_application()
+    try:
+        runs = await application.interactions.runs(limit)
+    finally:
+        await application.close()
+    emit_runs(runs, json_output=json_output)
+    return EXIT_SUCCESS
+
+
+async def show_run(run_id: ExecutionRunId, *, json_output: bool) -> int:
+    application = await build_query_application()
+    try:
+        detail = await application.interactions.show_run(run_id)
+    finally:
+        await application.close()
+    emit_run_detail(detail, json_output=json_output)
+    return EXIT_SUCCESS
+
+
+async def show_trace(run_id: ExecutionRunId, *, json_output: bool) -> int:
+    application = await build_query_application()
+    try:
+        trace = await application.interactions.trace(run_id)
+    finally:
+        await application.close()
+    emit_trace(trace, json_output=json_output)
+    return EXIT_SUCCESS
+
+
+async def list_artifacts(run_id: ExecutionRunId, *, json_output: bool) -> int:
+    application = await build_query_application()
+    try:
+        artifacts = await application.interactions.artifacts(run_id)
+    finally:
+        await application.close()
+    emit_artifacts(artifacts, json_output=json_output)
+    return EXIT_SUCCESS
 
 
 async def read_stdin_line(prompt: str) -> str:
@@ -171,6 +232,82 @@ def emit_workspace(result: WorkspaceInitialization, *, json_output: bool) -> Non
         print("Workspace initialized.")
 
 
+def emit_runs(runs: tuple[RunSummary, ...], *, json_output: bool) -> None:
+    if json_output:
+        print(
+            json.dumps(
+                [run.model_dump(mode="json") for run in runs],
+                separators=(",", ":"),
+            )
+        )
+        return
+    print("RUN ID                                STATUS      CREATED")
+    for run in runs:
+        print(f"{run.id}  {run.status.value:<10}  {run.created_at.isoformat()}")
+
+
+def emit_run_detail(detail: RunDetail, *, json_output: bool) -> None:
+    if json_output:
+        print(detail.model_dump_json())
+        return
+    print(f"Run: {detail.run.id}")
+    print(f"Task: {detail.task.id} [{detail.task.status.value}]")
+    print(f"Status: {detail.run.status.value}")
+    print(f"Created: {detail.run.created_at.isoformat()}")
+    if detail.final_text is not None:
+        print(f"Final: {detail.final_text}")
+    print("Nodes:")
+    for node in detail.nodes:
+        print(f"  {node.id}  {node.node_name}  {node.status.value}")
+    print("Invocations:")
+    for invocation in detail.invocations:
+        print(f"  {invocation.id}  {invocation.capability_name}  {invocation.status.value}")
+    print(f"Artifacts: {len(detail.artifacts)}")
+    print(f"Trace complete: {str(detail.observability.complete).lower()}")
+
+
+def emit_trace(trace: RunObservability, *, json_output: bool) -> None:
+    payload = {
+        "run_id": str(trace.run_id),
+        "complete": trace.complete,
+        "inconsistencies": trace.inconsistencies,
+        "trace": [entry.model_dump(mode="json") for entry in trace.trace],
+    }
+    if json_output:
+        print(json.dumps(payload, separators=(",", ":")))
+        return
+    print(f"Run: {trace.run_id}")
+    print(f"Complete: {str(trace.complete).lower()}")
+    for entry in trace.trace:
+        correlations = [
+            value
+            for value in (
+                None if entry.node_run_id is None else f"node={entry.node_run_id}",
+                None if entry.invocation_id is None else f"invocation={entry.invocation_id}",
+                None if entry.artifact_id is None else f"artifact={entry.artifact_id}",
+            )
+            if value is not None
+        ]
+        suffix = "" if not correlations else " " + " ".join(correlations)
+        print(f"{entry.sequence:04d} {entry.occurred_at.isoformat()} {entry.event_type}{suffix}")
+    for inconsistency in trace.inconsistencies:
+        print(f"Incomplete: {inconsistency}")
+
+
+def emit_artifacts(artifacts: tuple[ArtifactDetail, ...], *, json_output: bool) -> None:
+    if json_output:
+        print(
+            json.dumps(
+                [artifact.model_dump(mode="json") for artifact in artifacts],
+                separators=(",", ":"),
+            )
+        )
+        return
+    print("ARTIFACT ID                           SIZE  MEDIA TYPE  LOGICAL URI")
+    for artifact in artifacts:
+        print(f"{artifact.id}  {artifact.size_bytes}  {artifact.media_type}  {artifact.uri}")
+
+
 def result_exit_code(result: ExecutionResult) -> int:
     if not result.persisted:
         return EXIT_FAILURE
@@ -215,8 +352,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             emit_workspace(result, json_output=json_output)
             return EXIT_SUCCESS
         if arguments.command == "run":
-            return asyncio.run(execute_run(arguments.task, json_output=json_output))
-        return asyncio.run(execute_chat(json_output=json_output))
+            values = list(arguments.values)
+            if values[0] == "show":
+                if len(values) != 2:
+                    raise ValueError("run show requires one Run ID")
+                return asyncio.run(show_run(parse_run_id(values[1]), json_output=json_output))
+            return asyncio.run(execute_run(" ".join(values), json_output=json_output))
+        if arguments.command == "chat":
+            return asyncio.run(execute_chat(json_output=json_output))
+        if arguments.command == "runs":
+            return asyncio.run(list_runs(arguments.limit, json_output=json_output))
+        if arguments.command == "trace":
+            return asyncio.run(show_trace(parse_run_id(arguments.run_id), json_output=json_output))
+        return asyncio.run(list_artifacts(parse_run_id(arguments.run_id), json_output=json_output))
     except KeyboardInterrupt:
         emit_error("execution_interrupted", "Execution was interrupted", json_output=json_output)
         return EXIT_INTERRUPTED
@@ -232,6 +380,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception:
         emit_error("execution_failed", "Execution failed", json_output=json_output)
         return EXIT_FAILURE
+
+
+def parse_run_id(value: str) -> ExecutionRunId:
+    return ExecutionRunId(UUID(value))
 
 
 if __name__ == "__main__":

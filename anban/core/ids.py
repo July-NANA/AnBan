@@ -6,6 +6,7 @@ from typing import NewType
 from uuid import UUID, uuid4
 
 InteractionId = NewType("InteractionId", UUID)
+SessionId = NewType("SessionId", UUID)
 TaskId = NewType("TaskId", UUID)
 ExecutionRunId = NewType("ExecutionRunId", UUID)
 NodeRunId = NewType("NodeRunId", UUID)
@@ -13,10 +14,16 @@ CapabilityInvocationId = NewType("CapabilityInvocationId", UUID)
 ArtifactId = NewType("ArtifactId", UUID)
 EventId = NewType("EventId", UUID)
 GraphRevisionId = NewType("GraphRevisionId", UUID)
+ContextEntryId = NewType("ContextEntryId", UUID)
+ContextSummaryId = NewType("ContextSummaryId", UUID)
 
 
 def new_interaction_id() -> InteractionId:
     return InteractionId(uuid4())
+
+
+def new_session_id() -> SessionId:
+    return SessionId(uuid4())
 
 
 def new_task_id() -> TaskId:
@@ -45,3 +52,11 @@ def new_event_id() -> EventId:
 
 def new_graph_revision_id() -> GraphRevisionId:
     return GraphRevisionId(uuid4())
+
+
+def new_context_entry_id() -> ContextEntryId:
+    return ContextEntryId(uuid4())
+
+
+def new_context_summary_id() -> ContextSummaryId:
+    return ContextSummaryId(uuid4())

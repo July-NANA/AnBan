@@ -7,6 +7,9 @@ They are not part of `pnpm run doctor` or ordinary CI.
   native Tool Calling, Tool Result pairing, final response, and structured output.
 - `pnpm run acceptance:skill` verifies the approved local Weather Skill baseline, reads its real
   instructions, and performs the documented bounded live weather request.
+- `pnpm run acceptance:capability` invokes the production Registry against the managed Workspace,
+  performs real run-scoped file write/read/list operations, creates and verifies a logical Artifact
+  snapshot, and executes one real allowlisted no-shell process. Its isolated files are removed.
 - `conda run -n anban python -m scripts.acceptance.check_migration_schema` verifies the migrated
   PostgreSQL test profile, six-table schema, status and relationship constraints, and ordered Event
   uniqueness. Its probe records are rolled back.

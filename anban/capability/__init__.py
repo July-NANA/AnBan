@@ -10,6 +10,7 @@ from anban.capability.contracts import (
     CapabilityResultStatus,
     InvocationContext,
 )
+from anban.capability.local import local_capability_registry
 from anban.capability.registry import CapabilityRegistry
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "CapabilityResult",
     "CapabilityResultStatus",
     "InvocationContext",
+    "local_capability_registry",
 ]

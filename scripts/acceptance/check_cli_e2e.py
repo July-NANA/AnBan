@@ -178,6 +178,40 @@ async def gate_a() -> dict[str, object]:
     return {"run_id": str(result.run_id), "artifact_ids": [str(item.id) for item in artifacts]}
 
 
+async def gate_recoverable_artifacts() -> dict[str, object]:
+    prompts = (
+        "在 Workspace 的临时目录生成一份文本说明和一份 JSON 摘要，并把两个结果文件作为 "
+        "Artifact 返回。请真实执行并在完成后简要说明结果。",
+        "Create two useful, differently formatted result files in a temporary Workspace location "
+        "and return both as managed Artifacts. Choose the available program, paths, and filenames "
+        "yourself, execute the work for real, and summarize only after both outputs are collected.",
+    )
+    evidence: list[dict[str, object]] = []
+    for index, prompt in enumerate(prompts, start=1):
+        result = await submit(prompt)
+        require_success(result, f"recoverable Artifact run {index}")
+        observation = await trace(result.run_id)
+        application = await build_query_application()
+        try:
+            artifacts = await application.interactions.artifacts(result.run_id)
+        finally:
+            await application.close()
+        if (
+            not observation.complete
+            or observation.inconsistencies
+            or len(artifacts) != 2
+            or len({artifact.invocation_id for artifact in artifacts}) != 1
+        ):
+            raise RuntimeGateError(f"recoverable Artifact run {index} is incomplete")
+        evidence.append(
+            {
+                "run_id": str(result.run_id),
+                "artifact_ids": [str(artifact.id) for artifact in artifacts],
+            }
+        )
+    return {"runs": evidence}
+
+
 def workspace_packages(root: Path) -> tuple[str, ...]:
     empty_package = root / "empty-package-skills"
     empty_package.mkdir(exist_ok=True)
@@ -286,6 +320,7 @@ async def accept_runtime(gate_a_only: bool, gate_bcd_only: bool) -> dict[str, ob
         gate_a_root = prepare_workspace(parent, f"gate28-a-{marker}")
         with isolated_environment(gate_a_root, source):
             evidence["gate_a"] = await gate_a()
+            evidence["recoverable_artifacts"] = await gate_recoverable_artifacts()
     if not gate_a_only:
         gate_b_root = prepare_workspace(parent, f"gate28-b-{marker}")
         with isolated_environment(gate_b_root, source):

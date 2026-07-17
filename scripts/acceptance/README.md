@@ -15,12 +15,14 @@ These commands fail closed and emit only bounded evidence:
   Process/file/HTTP/Artifact work, invokes the ordinary packaged ClawHub Skill, installs exactly one
   compatible public Skill, starts new Applications, and requires three complete Skill/Process
   Traces. Skill identity evidence is limited to slug, relative `SKILL.md` path, and content hash;
-  production and acceptance do not derive identity from installation records.
+  production and acceptance do not derive identity from installation records. Gate A also runs two
+  differently worded multi-Artifact tasks without prescribing cwd, filenames, Tool Schema, command,
+  or Tool order.
 - `pnpm run acceptance:security`: deterministic fail-closed and Secret-boundary tests.
 - `pnpm run acceptance:v0.1`: local quality, Doctor base/online/web, database, model, Capability,
   Runtime, security, and release-closure checks.
 
 Gate E failure paths remain production-path tests: missing program, nonzero exit, timeout,
-cancellation, output/Artifact failure, damaged Skill, model repair/exhaustion, database failure,
-and Event failure. Fixtures provide invalid inputs only; they do not replace successful production
-execution.
+cancellation, output/Artifact failure, damaged Skill, model repair/exhaustion, database/Event
+failure, Invocation compensation, Artifact cleanup, compensation failure, and unconfirmed commit
+state. Fixtures provide invalid inputs only; they do not replace successful production execution.

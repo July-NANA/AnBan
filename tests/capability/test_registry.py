@@ -112,6 +112,8 @@ async def test_unknown_or_invalid_invocation_fails_explicitly(
     with pytest.raises(AnbanError) as failure:
         await registry.invoke(name, arguments, context())
     assert failure.value.info.code is code
+    if code is ErrorCode.CAPABILITY_ARGUMENTS_INVALID:
+        assert isinstance(failure.value.info.details.root.get("reason"), str)
 
 
 async def test_unavailable_capability_fails_explicitly() -> None:

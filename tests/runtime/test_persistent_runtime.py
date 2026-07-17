@@ -106,12 +106,23 @@ class MemoryRepository:
         self.store.invocations[invocation.id] = invocation
 
     async def add_artifact(self, artifact: Artifact) -> None:
+        if self.factory.fail_add_artifact:
+            self.factory.fail_add_artifact = False
+            raise RuntimeError("test-only Artifact write failure")
         self.store.artifacts[artifact.id] = artifact
 
     async def get_artifact(self, artifact_id: ArtifactId) -> Artifact | None:
         return self.store.artifacts.get(artifact_id)
 
     async def add_event(self, event: Event) -> None:
+        if self.factory.commit_before_event_failure_type == event.event_type:
+            self.factory.commit_before_event_failure_type = None
+            self.store.events[event.id] = event
+            self.factory.store = self.store.copy()
+            raise RuntimeError("test-only ambiguous commit response")
+        if self.factory.fail_event_types and self.factory.fail_event_types[0] == event.event_type:
+            self.factory.fail_event_types.pop(0)
+            raise RuntimeError("test-only queued Event failure")
         if self.factory.fail_event_type == event.event_type:
             self.factory.fail_event_type = None
             raise RuntimeError("test-only persistence failure")
@@ -138,6 +149,9 @@ class MemoryRepository:
         )
 
     async def load_run(self, run_id: ExecutionRunId) -> ExecutionRunAggregate | None:
+        if self.factory.fail_next_load:
+            self.factory.fail_next_load = False
+            raise RuntimeError("test-only one-shot read failure")
         if self.factory.fail_load:
             raise RuntimeError("test-only read failure")
         run = self.store.runs.get(run_id)
@@ -192,8 +206,12 @@ class MemoryUnitOfWorkFactory:
         self.store = MemoryStore()
         self.active = 0
         self.fail_event_type: str | None = None
+        self.fail_event_types: list[str] = []
+        self.commit_before_event_failure_type: str | None = None
         self.fail_load = False
+        self.fail_next_load = False
         self.fail_add_task = False
+        self.fail_add_artifact = False
 
     def __call__(self) -> MemoryUnitOfWork:
         return MemoryUnitOfWork(self)
@@ -548,7 +566,8 @@ async def test_post_side_effect_event_failure_does_not_retry_capability() -> Non
     assert result.outcome.error.code is ErrorCode.AUDIT_TRACE_WRITE_FAILED
     aggregate = await load_run(factory, result.run_id)
     assert aggregate.run.status.value == "failed"
-    assert aggregate.invocations[0].status.value == "running"
+    assert aggregate.invocations[0].status.value == "failed"
+    assert "capability.failed" in {event.event_type for event in aggregate.events}
 
 
 async def test_chat_uses_one_run_and_one_node_per_bounded_input() -> None:

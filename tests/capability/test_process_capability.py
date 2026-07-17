@@ -107,16 +107,32 @@ async def test_absolute_executable_and_many_plain_arguments(tmp_path: Path) -> N
     assert result.metadata.root["argument_count"] == 102
 
 
-@pytest.mark.parametrize("command", ["anban-program-that-does-not-exist", "./python"])
+@pytest.mark.parametrize(
+    ("command", "expected_code", "expected_reason"),
+    [
+        (
+            "anban-program-that-does-not-exist",
+            ErrorCode.CAPABILITY_UNAVAILABLE,
+            "missing_executable",
+        ),
+        (
+            "another-unavailable-program-name",
+            ErrorCode.CAPABILITY_UNAVAILABLE,
+            "missing_executable",
+        ),
+        ("./python", ErrorCode.CAPABILITY_ARGUMENTS_INVALID, "relative_executable"),
+    ],
+)
 async def test_missing_or_relative_executable_fails_explicitly(
-    tmp_path: Path, command: str
+    tmp_path: Path,
+    command: str,
+    expected_code: ErrorCode,
+    expected_reason: str,
 ) -> None:
     with pytest.raises(AnbanError) as failure:
         await registry(tmp_path).invoke("process.execute", {"command": command}, context())
-    assert failure.value.info.code in {
-        ErrorCode.CAPABILITY_UNAVAILABLE,
-        ErrorCode.CAPABILITY_ARGUMENTS_INVALID,
-    }
+    assert failure.value.info.code is expected_code
+    assert failure.value.info.details.root["reason"] == expected_reason
 
 
 async def test_inherited_environment_and_call_override(tmp_path: Path) -> None:
@@ -168,6 +184,22 @@ async def test_relative_and_absolute_working_directories(tmp_path: Path) -> None
         assert result.metadata.root["cwd_scope"] == expected_scope
 
 
+async def test_unavailable_working_directories_share_one_stable_semantic(
+    tmp_path: Path,
+) -> None:
+    regular_file = tmp_path / "not-a-directory"
+    regular_file.write_text("bounded", encoding="utf-8")
+    for value in ("absent-one", "nested/absent-two", str(regular_file)):
+        with pytest.raises(AnbanError) as failure:
+            await registry(tmp_path).invoke(
+                "process.execute",
+                {"command": sys.executable, "cwd": value},
+                context(),
+            )
+        assert failure.value.info.code is ErrorCode.CAPABILITY_ARGUMENTS_INVALID
+        assert failure.value.info.details.root["reason"] == "invalid_cwd"
+
+
 async def test_stdin_stdout_and_stderr_are_structured(tmp_path: Path) -> None:
     result = await registry(tmp_path).invoke(
         "process.execute",
@@ -208,7 +240,10 @@ async def test_nonzero_exit_is_failed_with_real_exit_code(tmp_path: Path) -> Non
     assert result.error is not None
     assert result.error.details.root["reason"] == "nonzero_exit"
     assert result.metadata.root["exit_code"] == 7
-    assert observation(result)["stderr"] == "why\n"
+    result_observation = observation(result)
+    assert result_observation["error_code"] == ErrorCode.CAPABILITY_EXECUTION_FAILED.value
+    assert result_observation["reason"] == "nonzero_exit"
+    assert result_observation["stderr"] == "why\n"
 
 
 async def test_timeout_terminates_the_process_group(tmp_path: Path) -> None:

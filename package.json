@@ -13,7 +13,7 @@
     "acceptance:capability": "python -m scripts.acceptance.check_local_capabilities",
     "acceptance:runtime": "python -m scripts.acceptance.check_cli_e2e",
     "acceptance:e2e": "python -m scripts.acceptance.check_cli_e2e",
-    "acceptance:security": "python -m pytest tests/core/test_metadata.py tests/model/test_adapter.py tests/capability tests/runtime/test_general_agent.py tests/runtime/test_persistent_runtime.py tests/runtime/test_observability.py tests/test_cli.py",
+    "acceptance:security": "python -m pytest tests/core/test_metadata.py tests/model/test_adapter.py tests/capability tests/runtime/test_general_agent.py tests/runtime/test_persistent_runtime.py tests/runtime/test_capability_recovery.py tests/runtime/test_observability.py tests/test_cli.py",
     "acceptance:v0.1": "pnpm check && pnpm build && pnpm run doctor && python -m scripts.doctor --online && python -m scripts.doctor --web && pnpm run acceptance:persistence && pnpm run acceptance:model && pnpm run acceptance:capability && pnpm run acceptance:runtime && pnpm run acceptance:security && python -m scripts.acceptance.check_release_closure",
     "acceptance:persistence": "python -m scripts.acceptance.check_repositories"
   }

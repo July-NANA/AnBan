@@ -7,6 +7,7 @@ explicit architecture authorization and an Architecture Delta in the delivery ev
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 from anban.capability import local_capability_registry
@@ -39,6 +40,15 @@ APPROVED_ADAPTER_TYPES = {
 }
 APPROVED_CAPABILITY_HANDLERS = {"ProcessCapability", "SkillActivationCapability"}
 APPROVED_INTERACTION_TYPES = {"InteractionChatSession", "InteractionService"}
+FORBIDDEN_ACCEPTANCE_LITERALS = {
+    "在 Workspace 的临时目录生成一份文本说明和一份 JSON 摘要",
+    "report.txt",
+    "summary.json",
+    "@local/json-utility-tools",
+}
+UUID_LITERAL = re.compile(
+    r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b"
+)
 
 
 def classes() -> tuple[tuple[Path, ast.ClassDef], ...]:
@@ -99,3 +109,10 @@ def test_production_capability_names_are_fixed(tmp_path: Path) -> None:
         "process.execute",
         "skill.activate",
     }
+
+
+def test_production_sources_do_not_embed_acceptance_specific_literals() -> None:
+    for source in sorted(ANBAN.rglob("*.py")):
+        content = source.read_text(encoding="utf-8")
+        assert not any(literal in content for literal in FORBIDDEN_ACCEPTANCE_LITERALS)
+        assert UUID_LITERAL.search(content) is None

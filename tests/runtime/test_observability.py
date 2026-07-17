@@ -129,7 +129,7 @@ async def test_failed_and_timed_out_runs_have_complete_explainable_trace(
     assert terminal_capability in {entry.event_type for entry in observation.audit}
 
 
-async def test_incomplete_invocation_is_detected_after_event_write_failure() -> None:
+async def test_invocation_compensation_restores_complete_trace_after_event_failure() -> None:
     factory = MemoryUnitOfWorkFactory()
     factory.fail_event_type = "capability.completed"
     result = await PersistentRuntime(
@@ -142,8 +142,9 @@ async def test_incomplete_invocation_is_detected_after_event_write_failure() -> 
     assert result.outcome.status is AgentOutcomeStatus.FAILED
     assert result.outcome.error is not None
     assert result.outcome.error.code is ErrorCode.AUDIT_TRACE_WRITE_FAILED
-    assert observation.complete is False
-    assert observation.inconsistencies == ("invocation_incomplete",)
+    assert observation.complete is True
+    assert observation.inconsistencies == ()
+    assert "capability.failed" in {entry.event_type for entry in observation.audit}
 
 
 async def test_projection_metadata_uses_allowlist_even_for_safe_event_values() -> None:

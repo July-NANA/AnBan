@@ -14,7 +14,7 @@ from anban.runtime.observability import (
     RunObservability,
     TraceEntry,
 )
-from anban.runtime.service import PersistentRuntime
+from anban.runtime.service import PersistentChatSession, PersistentRuntime
 
 __all__ = [
     "AgentInput",
@@ -26,6 +26,7 @@ __all__ = [
     "ExecutionResult",
     "FixedGeneralAgent",
     "PersistentRuntime",
+    "PersistentChatSession",
     "RunObservability",
     "TraceEntry",
 ]

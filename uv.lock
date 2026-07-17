@@ -19,7 +19,7 @@ wheels = [
 [[package]]
 name = "anban"
 version = "0.0.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },

@@ -196,10 +196,12 @@ class TransactionCheckingModel:
         self.factory = factory
         self.turns = turns
         self.calls = 0
+        self.requests: list[ModelRequest] = []
 
     async def complete(self, request: ModelRequest) -> ModelTurn:
         assert self.factory.active == 0
         self.calls += 1
+        self.requests.append(request)
         turn = self.turns.pop(0)
         if isinstance(turn, AnbanError):
             raise turn
@@ -253,8 +255,8 @@ def tool_turn() -> ModelTurn:
     )
 
 
-def final_turn() -> ModelTurn:
-    return ModelTurn(content="Persistent final result.", finish_reason="stop")
+def final_turn(content: str = "Persistent final result.") -> ModelTurn:
+    return ModelTurn(content=content, finish_reason="stop")
 
 
 def completed_capability(*, artifact: bool = False) -> CapabilityResult:
@@ -432,3 +434,76 @@ async def test_post_side_effect_event_failure_does_not_retry_capability() -> Non
     aggregate = await load_run(factory, result.run_id)
     assert aggregate.run.status.value == "failed"
     assert aggregate.invocations[0].status.value == "running"
+
+
+async def test_chat_uses_one_run_and_one_node_per_bounded_input() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    model = TransactionCheckingModel(factory, [final_turn(), final_turn()])
+    session = PersistentRuntime(model, CapabilityRegistry(), factory).chat()
+
+    first = await session.submit("First temporary message.")
+    second = await session.submit("Second temporary message.")
+    closed = await session.close()
+
+    assert first.run_id == second.run_id
+    assert first.task_id == second.task_id
+    assert first.node_run_id != second.node_run_id
+    assert closed is not None
+    assert closed.run_id == first.run_id
+    aggregate = await load_run(factory, first.run_id)
+    assert aggregate.run.status.value == "succeeded"
+    assert aggregate.task.request == "First temporary message."
+    assert len(aggregate.nodes) == 2
+    assert all(node.status.value == "succeeded" for node in aggregate.nodes)
+    assert session.user_input_count == 2
+    assert "Previous user: First temporary message." in (
+        model.requests[1].messages[1].content or ""
+    )
+
+
+async def test_chat_limit_closes_without_creating_another_run() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    model = TransactionCheckingModel(
+        factory, [final_turn(f"Answer {index}.") for index in range(8)]
+    )
+    session = PersistentRuntime(model, CapabilityRegistry(), factory).chat()
+
+    results = [await session.submit(f"Message {index}.") for index in range(8)]
+    assert session.can_continue is False
+    closed = await session.close()
+
+    assert closed is not None
+    assert {result.run_id for result in results} == {closed.run_id}
+    aggregate = await load_run(factory, closed.run_id)
+    assert len(aggregate.nodes) == 8
+    assert aggregate.run.status.value == "succeeded"
+
+
+async def test_empty_chat_creates_no_persistent_identity() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    session = PersistentRuntime(
+        TransactionCheckingModel(factory, []), CapabilityRegistry(), factory
+    ).chat()
+
+    assert await session.close() is None
+    assert factory.store.tasks == {}
+    assert factory.store.runs == {}
+
+
+async def test_chat_timeout_and_interruption_match_persisted_terminal_status() -> None:
+    for terminate, expected in (("expire", "timed_out"), ("interrupt", "cancelled")):
+        factory = MemoryUnitOfWorkFactory()
+        session = PersistentRuntime(
+            TransactionCheckingModel(factory, [final_turn()]), CapabilityRegistry(), factory
+        ).chat()
+        submitted = await session.submit("Create one chat node.")
+
+        terminal = await session.expire() if terminate == "expire" else await session.interrupt()
+
+        assert terminal is not None
+        assert terminal.outcome.status.value == expected
+        aggregate = await load_run(factory, submitted.run_id)
+        assert aggregate.run.status.value == expected
+        assert aggregate.task.status.value == expected
+        assert aggregate.nodes[0].status.value == "succeeded"
+        assert "run.error" in {event.event_type for event in aggregate.events}

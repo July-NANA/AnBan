@@ -26,6 +26,7 @@ __pycache__/
 .coverage
 coverage.xml
 htmlcov/
+*.egg-info/
 
 # Node / pnpm
 node_modules/

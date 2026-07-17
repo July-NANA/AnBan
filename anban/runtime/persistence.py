@@ -149,6 +149,35 @@ class RunPersistence:
         )
         self.task, self.run, self.node = task, run, node
 
+    async def add_node(self, node: NodeRun) -> None:
+        if node.run_id != self.run.id:
+            raise ValueError("NodeRun must belong to the active Run")
+
+        async def operation(repository: ExecutionRepository) -> None:
+            await repository.add_node_run(node)
+
+        await self._write(
+            "node_created",
+            operation,
+            (EventFact("node.created", node_run_id=node.id),),
+        )
+        self.node = node
+
+    async def start_node(self) -> None:
+        node = self.node.model_copy(
+            update={"status": NodeRunStatus.RUNNING, "started_at": now_utc()}
+        )
+
+        async def operation(repository: ExecutionRepository) -> None:
+            await repository.update_node_run(node)
+
+        await self._write(
+            "node_started",
+            operation,
+            (EventFact("node.started", node_run_id=node.id),),
+        )
+        self.node = node
+
     async def model_requested(self, turn_number: int) -> None:
         await self._events_only(
             "model_requested",
@@ -378,6 +407,58 @@ class RunPersistence:
         await self._write("finish", operation, facts)
         self.task, self.run, self.node = task, run, node
 
+    async def finish_node(self, outcome: AgentOutcome) -> None:
+        _, _, node_status = terminal_statuses(outcome.status)
+        error_code = None if outcome.error is None else outcome.error.code
+        node = self.node.model_copy(
+            update={
+                "status": node_status,
+                "finished_at": now_utc(),
+                "error_code": error_code,
+            }
+        )
+
+        async def operation(repository: ExecutionRepository) -> None:
+            await repository.update_node_run(node)
+
+        metadata = outcome_metadata(outcome)
+        await self._write(
+            "node_finished",
+            operation,
+            (EventFact(f"node.{outcome.status.value}", metadata, node_run_id=node.id),),
+        )
+        self.node = node
+
+    async def finish_run(self, outcome: AgentOutcome) -> None:
+        task_status, run_status, _ = terminal_statuses(outcome.status)
+        error_code = None if outcome.error is None else outcome.error.code
+        task = self.task.model_copy(update={"status": task_status, "error_code": error_code})
+        run = self.run.model_copy(
+            update={
+                "status": run_status,
+                "finished_at": now_utc(),
+                "final_text": outcome.final_text,
+                "error_code": error_code,
+            }
+        )
+
+        async def operation(repository: ExecutionRepository) -> None:
+            await repository.update_run(run)
+            await repository.update_task(task)
+
+        metadata = outcome_metadata(outcome)
+        terminal = outcome.status.value
+        await self._write(
+            "run_finished",
+            operation,
+            (
+                EventFact(f"run.{terminal}", metadata),
+                EventFact(f"task.{terminal}", metadata),
+                EventFact("run.final" if outcome.error is None else "run.error", metadata),
+            ),
+        )
+        self.task, self.run = task, run
+
     async def load(self) -> ExecutionRunAggregate | None:
         try:
             async with self._factory() as unit:
@@ -544,4 +625,14 @@ def terminal_statuses(
         TaskStatus(status.value),
         ExecutionRunStatus(status.value),
         NodeRunStatus(status.value),
+    )
+
+
+def outcome_metadata(outcome: AgentOutcome) -> SafeMetadata:
+    return SafeMetadata(
+        {
+            "model_turn_count": outcome.model_turn_count,
+            "capability_call_count": outcome.capability_call_count,
+            **({} if outcome.error is None else error_metadata(outcome.error).root),
+        }
     )

@@ -24,8 +24,11 @@ inspect GitHub workflow content. Missing local prerequisites fail explicitly.
 
 Real model, Skill, Capability, and end-to-end checks run only when required by the relevant Codex
 development task. They are explicit parts of a Phase Gate or Version Gate, not a permanent
-per-push readiness workflow. The fail-closed helpers under `scripts/acceptance/` retain real model
-native Tool Calling, real file Capability, Tool Result round trip, and real Weather Skill checks.
+per-push readiness workflow. The fail-closed helpers under `scripts/acceptance/` cover real model
+native Tool Calling, the pinned Weather Skill and its documented public request, real file/process
+Capability boundaries, the PostgreSQL Runtime slice, installed-CLI restart E2E, and security
+failure probes. Use the commands documented in the acceptance README; ordinary CI never runs them
+implicitly.
 
 Fake Models, Fake Capabilities, Mock Providers, Placeholder Executors, JSON-simulated Tool Calls,
 mock success, and silent fallback are prohibited. Checks emit allowlisted summaries only;

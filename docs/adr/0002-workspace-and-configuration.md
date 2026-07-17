@@ -9,7 +9,8 @@ Runtime configuration, credentials, installed Skills, run working data, and arti
 
 ## Decision
 
-The primary workstation currently uses `/Users/fanyuhang/AnbanWorkspace`. This is an informational local record, not a portable runtime or domain contract.
+The primary workstation uses an external managed Workspace. Its physical path is intentionally not
+a portable runtime or domain contract and is not recorded here.
 
 - Stable configuration: `anban.toml`
 - Secrets: `secrets.env`

@@ -30,3 +30,18 @@ pnpm run doctor
 local prerequisites and does not perform public-network acceptance. A scoped Codex Phase or
 Version Gate explicitly runs applicable real model, Skill, Capability, and end-to-end checks.
 Ordinary GitHub Actions must pass on the exact pushed `anban` SHA.
+
+The v0.1 release Gate additionally runs:
+
+```bash
+pnpm run acceptance:model
+pnpm run acceptance:skill
+pnpm run acceptance:capability
+pnpm run acceptance:e2e
+pnpm run acceptance:security
+```
+
+These commands require the documented external Workspace, both migrated PostgreSQL profiles, the
+pinned Skill, and real provider configuration. They are never replaced by deterministic test
+substitutes. Release integration, tag creation, and GitHub Release publication require explicit
+human acceptance after the exact-SHA Gate.

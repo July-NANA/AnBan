@@ -28,7 +28,7 @@ class ToolCall(ModelValue):
 
 class ToolResult(ModelValue):
     tool_call_id: str = Field(min_length=1, max_length=256)
-    content: str = Field(max_length=16_384)
+    content: str = Field(max_length=1_048_576)
 
 
 class ModelMessage(ModelValue):

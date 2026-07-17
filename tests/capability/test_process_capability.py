@@ -1,15 +1,23 @@
-"""Real subprocess boundary, output, timeout, and cancellation tests."""
+"""Real subprocess execution, bounded I/O, and Artifact snapshot tests."""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from pydantic import JsonValue, TypeAdapter
 
-from anban.capability import CapabilityRegistry, CapabilityResultStatus, InvocationContext
+from anban.capability import (
+    CapabilityRegistry,
+    CapabilityResult,
+    CapabilityResultStatus,
+    InvocationContext,
+)
 from anban.capability.local import local_capability_registry
 from anban.core.errors import AnbanError, ErrorCode
 from anban.core.ids import (
@@ -17,6 +25,8 @@ from anban.core.ids import (
     new_execution_run_id,
     new_node_run_id,
 )
+
+_OBSERVATION = TypeAdapter(dict[str, JsonValue])
 
 
 def context(*, seconds: int = 10) -> InvocationContext:
@@ -28,71 +38,176 @@ def context(*, seconds: int = 10) -> InvocationContext:
     )
 
 
-def registry(root: Path, *, executable: Path | None = None) -> CapabilityRegistry:
+def registry(
+    root: Path,
+    *,
+    stdout_max_bytes: int = 65_536,
+    stderr_max_bytes: int = 65_536,
+    artifact_max_bytes: int = 16_777_216,
+) -> CapabilityRegistry:
     return local_capability_registry(
         workspace_root=root,
-        allowed_executables={"python": Path(sys.executable) if executable is None else executable},
-        environment={"PYTHONUTF8": "1"},
+        stdout_max_bytes=stdout_max_bytes,
+        stderr_max_bytes=stderr_max_bytes,
+        artifact_max_bytes=artifact_max_bytes,
     )
 
 
-async def test_process_executes_without_shell_and_returns_bounded_output(tmp_path: Path) -> None:
+def observation(result: CapabilityResult) -> dict[str, JsonValue]:
+    raw = result.observation
+    assert isinstance(raw, str)
+    return _OBSERVATION.validate_json(raw)
+
+
+async def test_path_program_executes_in_workspace_with_safe_summary(tmp_path: Path) -> None:
     result = await registry(tmp_path).invoke(
         "process.execute",
         {"command": "python", "args": ["-c", "print('real process')"]},
         context(),
     )
+
     assert result.status is CapabilityResultStatus.COMPLETED
-    assert "real process" in (result.observation or "")
-    assert str(tmp_path) not in (result.observation or "")
+    assert observation(result)["stdout"] == "real process\n"
+    assert result.metadata.root == {
+        "command": "python",
+        "argument_count": 2,
+        "arguments_hash": hashlib.sha256(b'["-c","print(\'real process\')"]').hexdigest(),
+        "cwd_scope": "workspace_root",
+        "duration_ms": result.metadata.root["duration_ms"],
+        "exit_code": 0,
+        "stdout_size": 13,
+        "stderr_size": 0,
+        "stdout_hash": hashlib.sha256(b"real process\n").hexdigest(),
+        "stderr_hash": hashlib.sha256(b"").hexdigest(),
+        "artifact_count": 0,
+        "timed_out": False,
+        "cancelled": False,
+    }
+    assert isinstance(result.metadata.root["duration_ms"], int)
+    assert str(tmp_path) not in str(result.metadata.model_dump())
 
 
-async def test_process_does_not_inherit_secret_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_absolute_executable_and_many_plain_arguments(tmp_path: Path) -> None:
+    many = [str(index) for index in range(100)]
+    result = await registry(tmp_path).invoke(
+        "process.execute",
+        {
+            "command": sys.executable,
+            "args": ["-c", "import sys;print(len(sys.argv)-1)", *many],
+        },
+        context(),
+    )
+
+    assert result.status is CapabilityResultStatus.COMPLETED
+    assert observation(result)["stdout"] == "100\n"
+    assert result.metadata.root["command"] == Path(sys.executable).name
+    assert result.metadata.root["argument_count"] == 102
+
+
+@pytest.mark.parametrize("command", ["anban-program-that-does-not-exist", "./python"])
+async def test_missing_or_relative_executable_fails_explicitly(
+    tmp_path: Path, command: str
 ) -> None:
-    monkeypatch.setenv("ANBAN_CANARY_SECRET", "canary-value")
+    with pytest.raises(AnbanError) as failure:
+        await registry(tmp_path).invoke("process.execute", {"command": command}, context())
+    assert failure.value.info.code in {
+        ErrorCode.CAPABILITY_UNAVAILABLE,
+        ErrorCode.CAPABILITY_ARGUMENTS_INVALID,
+    }
+
+
+async def test_inherited_environment_and_call_override(tmp_path: Path) -> None:
+    inherited_name = "ANBAN_PROCESS_INHERITED_TEST"
+    previous = os.environ.get(inherited_name)
+    os.environ[inherited_name] = "inherited"
+    try:
+        result = await registry(tmp_path).invoke(
+            "process.execute",
+            {
+                "command": "python",
+                "args": [
+                    "-c",
+                    "import os;print(os.environ['HOME']);"
+                    "print(os.environ['ANBAN_PROCESS_INHERITED_TEST'])",
+                ],
+                "env": [{"name": inherited_name, "value": "overridden"}],
+            },
+            context(),
+        )
+    finally:
+        if previous is None:
+            os.environ.pop(inherited_name, None)
+        else:
+            os.environ[inherited_name] = previous
+
+    assert result.status is CapabilityResultStatus.COMPLETED
+    output = str(observation(result)["stdout"])
+    assert str(Path.home()) in output
+    assert output.endswith("overridden\n")
+    assert "overridden" not in str(result.metadata.model_dump())
+
+
+async def test_relative_and_absolute_working_directories(tmp_path: Path) -> None:
+    relative = tmp_path / "nested"
+    relative.mkdir()
+    outside = tmp_path.parent
+    for value, expected_scope, expected in (
+        ("nested", "workspace_relative", relative),
+        (str(outside), "absolute", outside),
+    ):
+        result = await registry(tmp_path).invoke(
+            "process.execute",
+            {"command": "python", "args": ["-c", "import os;print(os.getcwd())"], "cwd": value},
+            context(),
+        )
+        assert result.status is CapabilityResultStatus.COMPLETED
+        assert observation(result)["stdout"] == f"{expected}\n"
+        assert result.metadata.root["cwd_scope"] == expected_scope
+
+
+async def test_stdin_stdout_and_stderr_are_structured(tmp_path: Path) -> None:
     result = await registry(tmp_path).invoke(
         "process.execute",
         {
             "command": "python",
             "args": [
                 "-c",
-                "import os;print(os.getenv('ANBAN_CANARY_SECRET','not-inherited'))",
+                "import sys;data=sys.stdin.read();print(data.upper());"
+                "print('diagnostic',file=sys.stderr)",
             ],
+            "stdin": "input text",
         },
         context(),
     )
+
     assert result.status is CapabilityResultStatus.COMPLETED
-    assert "not-inherited" in (result.observation or "")
-    assert "canary-value" not in (result.observation or "")
+    assert observation(result) == {
+        "status": "completed",
+        "exit_code": 0,
+        "stdout": "INPUT TEXT\n",
+        "stderr": "diagnostic\n",
+        "artifacts": [],
+    }
 
 
-@pytest.mark.parametrize("command", ["unknown", "python"])
-async def test_unknown_or_missing_executable_is_structured(tmp_path: Path, command: str) -> None:
-    executable = Path(sys.executable) if command == "unknown" else tmp_path / "missing"
-    result = await registry(tmp_path, executable=executable).invoke(
-        "process.execute",
-        {"command": command},
-        context(),
-    )
-    assert result.status is CapabilityResultStatus.FAILED
-    assert result.error is not None
-    assert result.error.code is ErrorCode.CAPABILITY_UNAVAILABLE
-
-
-async def test_nonzero_exit_does_not_return_raw_output(tmp_path: Path) -> None:
-    canary = "subprocess-canary"
+async def test_nonzero_exit_is_failed_with_real_exit_code(tmp_path: Path) -> None:
     result = await registry(tmp_path).invoke(
         "process.execute",
-        {"command": "python", "args": ["-c", f"print('{canary}');raise SystemExit(2)"]},
+        {
+            "command": "python",
+            "args": ["-c", "import sys;print('why',file=sys.stderr);sys.exit(7)"],
+        },
         context(),
     )
+
     assert result.status is CapabilityResultStatus.FAILED
-    assert canary not in str(result.model_dump(mode="json"))
+    assert result.error is not None
+    assert result.error.details.root["reason"] == "nonzero_exit"
+    assert result.metadata.root["exit_code"] == 7
+    assert observation(result)["stderr"] == "why\n"
 
 
-async def test_process_timeout_terminates_the_process_group(tmp_path: Path) -> None:
-    invocation_context = context()
+async def test_timeout_terminates_the_process_group(tmp_path: Path) -> None:
     child = (
         "import time;time.sleep(2);"
         "open('late-child.txt','w',encoding='utf-8').write('not-terminated')"
@@ -108,33 +223,35 @@ async def test_process_timeout_terminates_the_process_group(tmp_path: Path) -> N
             ],
             "timeout": 1,
         },
-        invocation_context,
+        context(),
     )
+
     assert result.status is CapabilityResultStatus.TIMED_OUT
-    assert result.error is not None
-    assert result.error.code is ErrorCode.EXECUTION_TIMED_OUT
+    assert result.metadata.root["timed_out"] is True
     await asyncio.sleep(2)
-    marker = tmp_path / "runs" / str(invocation_context.run_id) / "workspace" / "late-child.txt"
-    assert not marker.exists()
+    assert not (tmp_path / "late-child.txt").exists()
 
 
 @pytest.mark.parametrize(
-    "program",
-    ["print('x'*20000)", "import sys;print('x'*20000,file=sys.stderr)"],
+    ("program", "field"),
+    [
+        ("print('x'*1000)", "stdout"),
+        ("import sys;print('x'*1000,file=sys.stderr)", "stderr"),
+    ],
 )
-async def test_process_output_limit_fails_without_returning_output(
-    tmp_path: Path,
-    program: str,
+async def test_output_limit_fails_with_bounded_observation(
+    tmp_path: Path, program: str, field: str
 ) -> None:
-    result = await registry(tmp_path).invoke(
+    result = await registry(tmp_path, stdout_max_bytes=128, stderr_max_bytes=128).invoke(
         "process.execute",
         {"command": "python", "args": ["-c", program]},
         context(),
     )
+
     assert result.status is CapabilityResultStatus.FAILED
-    assert result.observation is None
     assert result.error is not None
     assert result.error.details.root["reason"] == "output_limit"
+    assert len(str(observation(result)[field]).encode()) <= 128
 
 
 async def test_process_can_be_cancelled_through_registry(tmp_path: Path) -> None:
@@ -150,23 +267,117 @@ async def test_process_can_be_cancelled_through_registry(tmp_path: Path) -> None
     await asyncio.sleep(0.2)
     await gateway.cancel(invocation_context)
     result = await invocation
+
     assert result.status is CapabilityResultStatus.CANCELLED
+    assert result.metadata.root["cancelled"] is True
 
 
-async def test_process_cwd_cannot_escape_run_workspace(tmp_path: Path) -> None:
-    with pytest.raises(AnbanError) as failure:
-        await registry(tmp_path).invoke(
+async def test_single_and_multiple_declared_artifacts_are_snapshotted(tmp_path: Path) -> None:
+    invocation_context = context()
+    result = await registry(tmp_path).invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": [
+                "-c",
+                "from pathlib import Path;Path('one.txt').write_text('one');"
+                "Path('two.bin').write_bytes(b'two')",
+            ],
+            "artifacts": [
+                {"path": "one.txt", "media_type": "text/plain"},
+                {"path": "two.bin"},
+            ],
+        },
+        invocation_context,
+    )
+
+    assert result.status is CapabilityResultStatus.COMPLETED
+    assert [item.media_type for item in result.artifacts] == [
+        "text/plain",
+        "application/octet-stream",
+    ]
+    assert [item.sha256 for item in result.artifacts] == [
+        hashlib.sha256(b"one").hexdigest(),
+        hashlib.sha256(b"two").hexdigest(),
+    ]
+    artifact_root = tmp_path / "artifacts" / str(invocation_context.run_id)
+    assert [(artifact_root / str(item.id)).read_bytes() for item in result.artifacts] == [
+        b"one",
+        b"two",
+    ]
+
+
+async def test_missing_or_oversized_artifact_fails_without_partial_snapshot(
+    tmp_path: Path,
+) -> None:
+    cases: tuple[tuple[list[JsonValue], int], ...] = (
+        ([{"path": "created.txt"}, {"path": "missing.txt"}], 1024),
+        ([{"path": "created.txt"}], 2),
+    )
+    for declarations, limit in cases:
+        invocation_context = context()
+        result = await registry(tmp_path, artifact_max_bytes=limit).invoke(
             "process.execute",
-            {"command": "python", "cwd": ".."},
-            context(),
+            {
+                "command": "python",
+                "args": ["-c", "open('created.txt','w').write('data')"],
+                "artifacts": declarations,
+            },
+            invocation_context,
         )
-    assert failure.value.info.code is ErrorCode.CAPABILITY_ARGUMENTS_INVALID
+        assert result.status is CapabilityResultStatus.FAILED
+        assert result.error is not None
+        assert result.error.details.root["reason"] == "artifact_collection_failed"
+        assert not (tmp_path / "artifacts" / str(invocation_context.run_id)).exists()
 
 
-def test_process_environment_rejects_non_allowlisted_keys(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="non-allowlisted"):
-        local_capability_registry(
-            workspace_root=tmp_path,
-            allowed_executables={"python": Path(sys.executable)},
-            environment={"ANBAN_CANARY_SECRET": "canary-value"},
-        )
+async def test_failed_process_does_not_collect_declared_artifact(tmp_path: Path) -> None:
+    invocation_context = context()
+    result = await registry(tmp_path).invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": ["-c", "open('result.txt','w').write('data');raise SystemExit(2)"],
+            "artifacts": [{"path": "result.txt"}],
+        },
+        invocation_context,
+    )
+    assert result.status is CapabilityResultStatus.FAILED
+    assert not (tmp_path / "artifacts" / str(invocation_context.run_id)).exists()
+
+
+async def test_sensitive_output_and_artifact_fail_without_persisting_value(
+    tmp_path: Path,
+) -> None:
+    secret = "gate-secret-canary-value"
+    gateway = local_capability_registry(workspace_root=tmp_path, protected_values=(secret,))
+    output_context = context()
+    output_result = await gateway.invoke(
+        "process.execute",
+        {"command": "python", "args": ["-c", f"print({secret!r})"]},
+        output_context,
+    )
+    artifact_context = context()
+    artifact_result = await gateway.invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": ["-c", f"open('unsafe.txt','w').write({secret!r})"],
+            "artifacts": [{"path": "unsafe.txt"}],
+        },
+        artifact_context,
+    )
+
+    assert output_result.status is CapabilityResultStatus.FAILED
+    assert output_result.observation is None
+    assert artifact_result.status is CapabilityResultStatus.FAILED
+    assert secret not in str(output_result.model_dump(mode="json"))
+    assert secret not in str(artifact_result.model_dump(mode="json"))
+    assert not (tmp_path / "artifacts" / str(artifact_context.run_id)).exists()
+
+
+def test_workspace_root_cannot_overlap_repository() -> None:
+    from scripts.workspace_bootstrap import REPOSITORY
+
+    with pytest.raises(ValueError, match="overlaps"):
+        local_capability_registry(workspace_root=REPOSITORY)

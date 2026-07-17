@@ -22,58 +22,52 @@ MODEL_RESPONSE_REPAIR_RETRIES_MIN = 0
 MODEL_RESPONSE_REPAIR_RETRIES_MAX = 3
 
 # 单个 Agent Node 的默认模型逻辑轮次；用户可调但不得超过安全上限。
-AGENT_MAX_MODEL_TURNS_DEFAULT = 8
+AGENT_MAX_MODEL_TURNS_DEFAULT = 12
 # 模型逻辑轮次的最小值；至少允许一次真实模型请求。
 AGENT_MAX_MODEL_TURNS_MIN = 1
 # 模型逻辑轮次的安全硬上限；包含结构修复请求。
-AGENT_MAX_MODEL_TURNS_MAX = 8
+AGENT_MAX_MODEL_TURNS_MAX = 24
 
 # 单个 Agent Node 的默认 Capability 调用次数；用户可在范围内调低。
-AGENT_MAX_CAPABILITY_CALLS_DEFAULT = 8
+AGENT_MAX_CAPABILITY_CALLS_DEFAULT = 16
 # Capability 调用次数的最小值；保持可执行 Agent 的基本能力。
 AGENT_MAX_CAPABILITY_CALLS_MIN = 1
 # Capability 调用次数的安全硬上限；限制副作用与资源消耗。
-AGENT_MAX_CAPABILITY_CALLS_MAX = 8
+AGENT_MAX_CAPABILITY_CALLS_MAX = 32
 
 # 单次 Agent 执行的默认总超时，单位为秒；覆盖模型、重试和 Capability。
-AGENT_TOTAL_TIMEOUT_DEFAULT_SECONDS = 180
+AGENT_TOTAL_TIMEOUT_DEFAULT_SECONDS = 600
 # Agent 总超时的最小值，单位为秒；拒绝零或负时间预算。
 AGENT_TOTAL_TIMEOUT_MIN_SECONDS = 1
 # Agent 总超时的安全硬上限，单位为秒；所有内部重试均受其约束。
-AGENT_TOTAL_TIMEOUT_MAX_SECONDS = 180
+AGENT_TOTAL_TIMEOUT_MAX_SECONDS = 1_800
 
 # 连续相同 Capability 调用的默认终止阈值；第三次执行前失败。
 AGENT_REPEATED_CALL_LIMIT_DEFAULT = 3
 # 连续相同调用阈值的最小值；允许更严格地在第二次前终止。
-AGENT_REPEATED_CALL_LIMIT_MIN = 2
+AGENT_REPEATED_CALL_LIMIT_MIN = 0
 # 连续相同调用阈值的安全硬上限；防止重复副作用。
-AGENT_REPEATED_CALL_LIMIT_MAX = 3
+AGENT_REPEATED_CALL_LIMIT_MAX = 8
 
 # process.execute 的默认超时，单位为秒；用户可在安全范围内调整。
-PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS = 10
+PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS = 60
 # process.execute 默认超时的最小值，单位为秒。
 PROCESS_DEFAULT_TIMEOUT_MIN_SECONDS = 1
 # process.execute 超时参数及默认值的安全硬上限，单位为秒。
-PROCESS_TIMEOUT_MAX_SECONDS = 30
+PROCESS_TIMEOUT_CONFIG_DEFAULT_SECONDS = 300
+PROCESS_TIMEOUT_MAX_SECONDS = 600
 
 # process.execute 最多保留的 stdout 字节数；固定硬上限防止内存与输出放大。
-PROCESS_STDOUT_MAX_BYTES = 16_384
+PROCESS_STDOUT_MAX_BYTES = 65_536
+PROCESS_OUTPUT_HARD_MAX_BYTES = 262_144
 # process.execute 最多保留的 stderr 字节数；固定硬上限防止敏感或无界输出。
-PROCESS_STDERR_MAX_BYTES = 16_384
+PROCESS_STDERR_MAX_BYTES = 65_536
 # process.execute 允许的最大参数数量；固定硬上限防止命令放大。
-PROCESS_ARGUMENTS_MAX = 64
-
-# HTTP Capability 的固定最长执行时间，单位为秒；不可由 Workspace 放宽并受 Agent 剩余时间约束。
-HTTP_TIMEOUT_MAX_SECONDS = 30
-# HTTP Capability 的固定最大响应字节数；避免下载、解压和模型上下文放大。
-HTTP_RESPONSE_MAX_BYTES = 16_384
-# HTTP Capability 的最大 JSON 请求体字节数；限制外部副作用和内存放大。
-HTTP_REQUEST_BODY_MAX_BYTES = 16_384
-# HTTP Capability 的最大 URL 长度；不限制主机，但限制解析和请求表面积。
-HTTP_URL_MAX_LENGTH = 2_048
-# HTTP Capability 的最大自定义请求头数量；只允许非敏感、定长头部。
-HTTP_HEADER_MAX_ITEMS = 16
-# HTTP Capability 单个请求头名称的最大字符数；固定上限防止头部放大。
-HTTP_HEADER_NAME_MAX_LENGTH = 128
-# HTTP Capability 单个请求头值的最大字符数；固定上限防止头部放大和泄漏面扩张。
-HTTP_HEADER_VALUE_MAX_LENGTH = 1_024
+PROCESS_ARGUMENTS_MAX = 128
+PROCESS_ARGUMENTS_HARD_MAX = 256
+PROCESS_STDIN_MAX_BYTES = 65_536
+PROCESS_STDIN_HARD_MAX_BYTES = 262_144
+PROCESS_ARTIFACTS_MAX = 8
+PROCESS_ARTIFACTS_HARD_MAX = 32
+PROCESS_ARTIFACT_MAX_BYTES = 16_777_216
+PROCESS_ARTIFACT_HARD_MAX_BYTES = 67_108_864

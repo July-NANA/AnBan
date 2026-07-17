@@ -10,7 +10,15 @@ from typing import Literal, Self
 from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from anban.config import policy
 from anban.core import AnbanError, ErrorCode, ErrorInfo, SafeMetadata
@@ -79,6 +87,13 @@ class AgentConfiguration(ConfigurationValue):
         le=policy.AGENT_REPEATED_CALL_LIMIT_MAX,
     )
 
+    @field_validator("repeated_call_limit")
+    @classmethod
+    def validate_repeated_call_limit(cls, value: int) -> int:
+        if value == 1:
+            raise ValueError("repeated call limit must be zero or at least two")
+        return value
+
 
 class ProcessConfiguration(ConfigurationValue):
     default_timeout_seconds: int = Field(
@@ -86,6 +101,47 @@ class ProcessConfiguration(ConfigurationValue):
         ge=policy.PROCESS_DEFAULT_TIMEOUT_MIN_SECONDS,
         le=policy.PROCESS_TIMEOUT_MAX_SECONDS,
     )
+    max_timeout_seconds: int = Field(
+        default=policy.PROCESS_TIMEOUT_CONFIG_DEFAULT_SECONDS,
+        ge=policy.PROCESS_DEFAULT_TIMEOUT_MIN_SECONDS,
+        le=policy.PROCESS_TIMEOUT_MAX_SECONDS,
+    )
+    stdout_max_bytes: int = Field(
+        default=policy.PROCESS_STDOUT_MAX_BYTES,
+        ge=1,
+        le=policy.PROCESS_OUTPUT_HARD_MAX_BYTES,
+    )
+    stderr_max_bytes: int = Field(
+        default=policy.PROCESS_STDERR_MAX_BYTES,
+        ge=1,
+        le=policy.PROCESS_OUTPUT_HARD_MAX_BYTES,
+    )
+    stdin_max_bytes: int = Field(
+        default=policy.PROCESS_STDIN_MAX_BYTES,
+        ge=1,
+        le=policy.PROCESS_STDIN_HARD_MAX_BYTES,
+    )
+    max_arguments: int = Field(
+        default=policy.PROCESS_ARGUMENTS_MAX,
+        ge=1,
+        le=policy.PROCESS_ARGUMENTS_HARD_MAX,
+    )
+    max_artifacts: int = Field(
+        default=policy.PROCESS_ARTIFACTS_MAX,
+        ge=1,
+        le=policy.PROCESS_ARTIFACTS_HARD_MAX,
+    )
+    artifact_max_bytes: int = Field(
+        default=policy.PROCESS_ARTIFACT_MAX_BYTES,
+        ge=1,
+        le=policy.PROCESS_ARTIFACT_HARD_MAX_BYTES,
+    )
+
+    @model_validator(mode="after")
+    def validate_timeout_order(self) -> Self:
+        if self.default_timeout_seconds > self.max_timeout_seconds:
+            raise ValueError("process default timeout exceeds configured maximum")
+        return self
 
 
 class CapabilitySection(ConfigurationValue):

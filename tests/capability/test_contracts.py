@@ -70,17 +70,17 @@ def test_invocation_context_requires_runtime_typed_identity() -> None:
     assert context.invocation_id
 
 
-def test_completed_result_requires_only_safe_bounded_observation() -> None:
+def test_completed_result_allows_real_bounded_process_output() -> None:
     result = CapabilityResult(
         status=CapabilityResultStatus.COMPLETED,
-        observation="bounded observation",
+        observation="https://example.test /tmp/example $ shell-command",
     )
     assert result.error is None
 
     with pytest.raises(ValidationError):
         CapabilityResult(
             status=CapabilityResultStatus.COMPLETED,
-            observation="Bearer canary-value",
+            observation="x" * 1_048_577,
         )
 
 

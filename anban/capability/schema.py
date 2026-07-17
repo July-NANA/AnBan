@@ -114,7 +114,7 @@ def _validate_schema_node(
         if (
             not isinstance(min_length, int)
             or not isinstance(max_length, int)
-            or not 0 <= min_length <= max_length <= 16_384
+            or not 0 <= min_length <= max_length <= 262_144
         ):
             raise SchemaDefinitionError("string schema length bounds are invalid")
     if schema_type in {"integer", "number"}:

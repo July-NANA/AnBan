@@ -76,25 +76,18 @@ class ArtifactReference(CapabilityValue):
 
 class CapabilityResult(CapabilityValue):
     status: CapabilityResultStatus
-    observation: str | None = Field(default=None, max_length=16_384)
+    observation: str | None = Field(default=None, max_length=1_048_576)
     artifacts: tuple[ArtifactReference, ...] = Field(default=(), max_length=32)
     error: ErrorInfo | None = None
     metadata: SafeMetadata = Field(default_factory=SafeMetadata)
-
-    @field_validator("observation")
-    @classmethod
-    def validate_observation(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return validate_safe_text(value, label="Capability observation", max_length=16_384)
 
     @model_validator(mode="after")
     def validate_outcome(self) -> Self:
         if self.status is CapabilityResultStatus.COMPLETED:
             if self.observation is None or self.error is not None:
                 raise ValueError("completed Capability requires an observation and no error")
-        elif self.error is None or self.observation is not None:
-            raise ValueError("non-completed Capability requires an error and no observation")
+        elif self.error is None:
+            raise ValueError("non-completed Capability requires an error")
         return self
 
 

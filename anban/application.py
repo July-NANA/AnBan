@@ -51,6 +51,13 @@ async def build_application() -> Application:
         capabilities = local_capability_registry(
             workspace_root=configuration.workspace,
             process_default_timeout_seconds=configuration.process.default_timeout_seconds,
+            process_max_timeout_seconds=configuration.process.max_timeout_seconds,
+            stdout_max_bytes=configuration.process.stdout_max_bytes,
+            stderr_max_bytes=configuration.process.stderr_max_bytes,
+            stdin_max_bytes=configuration.process.stdin_max_bytes,
+            max_arguments=configuration.process.max_arguments,
+            max_artifacts=configuration.process.max_artifacts,
+            artifact_max_bytes=configuration.process.artifact_max_bytes,
             protected_values=configuration.protected_values(),
         )
         register_workspace_skill(capabilities, workspace_root=configuration.workspace)

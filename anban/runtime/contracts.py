@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from anban.capability import ArtifactReference
 from anban.config import policy
@@ -46,6 +46,13 @@ class AgentLimits(RuntimeValue):
         ge=policy.AGENT_REPEATED_CALL_LIMIT_MIN,
         le=policy.AGENT_REPEATED_CALL_LIMIT_MAX,
     )
+
+    @field_validator("repeated_call_limit")
+    @classmethod
+    def validate_repeated_call_limit(cls, value: int) -> int:
+        if value == 1:
+            raise ValueError("repeated call limit must be zero or at least two")
+        return value
 
 
 class AgentInput(RuntimeValue):

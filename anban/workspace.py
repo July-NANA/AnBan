@@ -36,18 +36,30 @@ transport_retries = {policy.MODEL_TRANSPORT_RETRIES_DEFAULT}
 response_repair_retries = {policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT}
 
 [agent]
-# 单个 Agent Node 最大模型逻辑轮次；不可超过 8，修复请求计入轮次。
+# 单个 Agent Node 最大模型逻辑轮次；不可超过 24，修复请求计入轮次。
 max_model_turns = {policy.AGENT_MAX_MODEL_TURNS_DEFAULT}
-# 单个 Agent Node 最大 Capability 调用次数；不可超过 8。
+# 单个 Agent Node 最大 Capability 调用次数；不可超过 32。
 max_capability_calls = {policy.AGENT_MAX_CAPABILITY_CALLS_DEFAULT}
-# 单次 Agent 执行总超时时间，单位为秒；不可超过 180。
+# 单次 Agent 执行总超时时间，单位为秒；不可超过 1800。
 total_timeout_seconds = {policy.AGENT_TOTAL_TIMEOUT_DEFAULT_SECONDS}
-# 连续相同 Capability 调用达到该次数时终止；允许范围 2–3。
+# 连续相同 Capability 调用达到该次数时终止；0 禁用，1 非法，最大 8。
 repeated_call_limit = {policy.AGENT_REPEATED_CALL_LIMIT_DEFAULT}
 
 [capability.process]
-# process.execute 默认超时时间，单位为秒；允许范围 1–30。
+# process.execute 默认超时时间，单位为秒。
 default_timeout_seconds = {policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS}
+# 单次调用允许请求的最大超时时间，单位为秒。
+max_timeout_seconds = {policy.PROCESS_TIMEOUT_CONFIG_DEFAULT_SECONDS}
+# stdout 和 stderr 分别允许保留的最大字节数。
+stdout_max_bytes = {policy.PROCESS_STDOUT_MAX_BYTES}
+stderr_max_bytes = {policy.PROCESS_STDERR_MAX_BYTES}
+# stdin 文本的最大 UTF-8 字节数。
+stdin_max_bytes = {policy.PROCESS_STDIN_MAX_BYTES}
+# 单次进程参数和声明 Artifact 的最大数量。
+max_arguments = {policy.PROCESS_ARGUMENTS_MAX}
+max_artifacts = {policy.PROCESS_ARTIFACTS_MAX}
+# 单个声明 Artifact 的最大字节数。
+artifact_max_bytes = {policy.PROCESS_ARTIFACT_MAX_BYTES}
 
 [database]
 # 开发数据库只允许从该固定环境变量引用，实际 URL 必须放在 secrets.env。

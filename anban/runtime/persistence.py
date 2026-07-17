@@ -75,16 +75,28 @@ _MODEL_DIAGNOSTIC_METADATA = frozenset(
 )
 _CAPABILITY_EVENT_METADATA = frozenset(
     {
+        "argument_count",
+        "arguments_hash",
+        "artifact_count",
+        "cancelled",
+        "command",
         "content_hash",
+        "cwd_scope",
+        "duration_ms",
         "entry_count",
         "exit_code",
         "method",
         "omitted_line_count",
         "size_bytes",
         "status_code",
+        "stderr_hash",
+        "stderr_size",
         "skill_slug",
         "skill_source",
         "skill_version",
+        "stdout_hash",
+        "stdout_size",
+        "timed_out",
     }
 )
 

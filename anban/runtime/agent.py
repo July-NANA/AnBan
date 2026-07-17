@@ -311,7 +311,10 @@ class FixedGeneralAgent:
                 else:
                     last_signature = signature
                     repeated_calls = 1
-                if repeated_calls >= self._limits.repeated_call_limit:
+                if (
+                    self._limits.repeated_call_limit
+                    and repeated_calls >= self._limits.repeated_call_limit
+                ):
                     return self._limit_outcome(progress, "repeated_call")
                 context = InvocationContext(
                     run_id=agent_input.run_id,

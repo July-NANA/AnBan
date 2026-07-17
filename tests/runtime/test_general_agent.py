@@ -347,11 +347,14 @@ async def test_external_interruption_cancels_active_capability() -> None:
 
 def test_limits_cannot_exceed_v01_bounds() -> None:
     with pytest.raises(ValueError):
-        AgentLimits(max_model_turns=9)
+        AgentLimits(max_model_turns=25)
     with pytest.raises(ValueError):
-        AgentLimits(max_capability_calls=9)
+        AgentLimits(max_capability_calls=33)
     with pytest.raises(ValueError):
-        AgentLimits(total_timeout_seconds=181)
+        AgentLimits(total_timeout_seconds=1801)
+    with pytest.raises(ValueError):
+        AgentLimits(repeated_call_limit=1)
+    assert AgentLimits(repeated_call_limit=0).repeated_call_limit == 0
 
 
 @pytest.mark.parametrize(

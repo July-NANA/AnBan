@@ -1,14 +1,12 @@
-"""Production wiring for v0.1 local and outbound HTTP Capabilities."""
+"""Production wiring for the v0.1 general Process Capability."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
 
-from anban.capability.http import HttpCapability
 from anban.capability.process import ProcessCapability
 from anban.capability.registry import CapabilityRegistry
-from anban.capability.workspace import FileCapability, WorkspaceBoundary
+from anban.capability.workspace import WorkspaceBoundary
 from anban.config import policy
 from scripts.workspace_bootstrap import REPOSITORY, resolve_workspace
 
@@ -16,9 +14,14 @@ from scripts.workspace_bootstrap import REPOSITORY, resolve_workspace
 def local_capability_registry(
     *,
     workspace_root: Path | None = None,
-    allowed_executables: Mapping[str, Path] | None = None,
-    environment: Mapping[str, str] | None = None,
     process_default_timeout_seconds: int = policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS,
+    process_max_timeout_seconds: int = policy.PROCESS_TIMEOUT_CONFIG_DEFAULT_SECONDS,
+    stdout_max_bytes: int = policy.PROCESS_STDOUT_MAX_BYTES,
+    stderr_max_bytes: int = policy.PROCESS_STDERR_MAX_BYTES,
+    stdin_max_bytes: int = policy.PROCESS_STDIN_MAX_BYTES,
+    max_arguments: int = policy.PROCESS_ARGUMENTS_MAX,
+    max_artifacts: int = policy.PROCESS_ARTIFACTS_MAX,
+    artifact_max_bytes: int = policy.PROCESS_ARTIFACT_MAX_BYTES,
     protected_values: tuple[str, ...] = (),
 ) -> CapabilityRegistry:
     """Build the only production Registry wiring for local v0.1 handlers."""
@@ -37,17 +40,14 @@ def local_capability_registry(
     boundary = WorkspaceBoundary(resolved_root)
     process = ProcessCapability(
         boundary,
-        allowed_executables or {},
-        environment=environment,
+        protected_values=protected_values,
         default_timeout_seconds=process_default_timeout_seconds,
+        max_timeout_seconds=process_max_timeout_seconds,
+        stdout_max_bytes=stdout_max_bytes,
+        stderr_max_bytes=stderr_max_bytes,
+        stdin_max_bytes=stdin_max_bytes,
+        max_arguments=max_arguments,
+        max_artifacts=max_artifacts,
+        artifact_max_bytes=artifact_max_bytes,
     )
-    return CapabilityRegistry(
-        (
-            FileCapability("list", boundary),
-            FileCapability("read", boundary),
-            FileCapability("write", boundary),
-            process,
-            HttpCapability(method="GET", protected_values=protected_values),
-            HttpCapability(protected_values=protected_values),
-        )
-    )
+    return CapabilityRegistry((process,))

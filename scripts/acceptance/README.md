@@ -26,6 +26,11 @@ They are not part of `pnpm run doctor` or ordinary CI.
   Artifact, Event, Audit, and Trace facts. The same command probes production model transport and
   timeout classification plus unknown/invalid Capability, traversal, symlink, process timeout,
   missing executable, output limit, and environment isolation failures.
+- `pnpm run acceptance:e2e` invokes the installed `anban` console script against the isolated test
+  PostgreSQL profile. It executes one real Model/Skill/file-Capability task, starts new CLI processes
+  for `runs`, `run show`, `trace`, and `artifacts`, verifies the pinned Skill hash and physical
+  Artifact against safe durable metadata, and proves model, missing-Skill, and database failures are
+  explicit. Its Run records and isolated files are removed.
 
 Run only the helper required by the current Gate. Credentials remain in the managed Workspace
 `secrets.env`; the scripts emit allowlisted status messages and fail with a non-zero exit code.

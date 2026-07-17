@@ -1,34 +1,23 @@
 # Managed Workspace
 
-The managed Workspace is an external local boundary for configuration, approved Skill source, Run
-files, and Artifact bytes. It must not be the repository, a repository child, the user's home root,
-or a filesystem root.
+The external Workspace contains `anban.toml`, mode-0600 `secrets.env`, `skills/`, `runs/`,
+`artifacts/`, `cache/`, `logs/`, and `tmp/`. It is separate from the repository.
 
-```text
-<workspace>/
-├── anban.toml
-├── secrets.env
-├── .clawhub/lock.json
-├── skills/@steipete/weather/SKILL.md
-├── runs/<run-id>/workspace/
-└── artifacts/<run-id>/<artifact-id>
-```
+Workspace Skills are discovered recursively from `skills/**/SKILL.md`. A scoped path such as
+`skills/@owner/name/SKILL.md` has slug `@owner/name`; an unscoped Skill uses
+`@local/<frontmatter-name>`. Missing version frontmatter becomes `unverified`. Invalid UTF-8,
+source over 64 KiB, context over 15,000 characters, invalid identity, symlink escape, protected
+content, or slug conflict produces a safe per-file diagnostic while other valid Skills load.
 
-`anban workspace init` is idempotent. It creates the root, `anban.toml`, and mode-0600
-`secrets.env` when absent; it never replaces existing configuration or Secret content and never
-prints the physical path or a Secret value.
+Instructions are never silently filtered or truncated: URLs, shell examples, absolute paths, and
+resource references remain intact. Activation returns slug, version, content SHA-256, complete
+`SKILL.md`, and the logical Skill root. `scripts/`, `assets/`, `references/`, and templates remain
+on disk until a Skill uses them through `process.execute`.
 
-Workspace resolution uses, in order, `ANBAN_WORKSPACE_DIR`, the repository `.env` bootstrap value,
-or the supported operating-system default. The repository `.env` may contain only the Workspace
-bootstrap location. Runtime model and database values belong in Workspace `secrets.env`.
+`.clawhub/lock.json`, Origin files, `_meta.json`, registry, publisher, and fingerprints are not
+production inputs. Acceptance may inspect them only as external evidence that a CLI installation
+happened. A newly installed `SKILL.md` is discovered only by a newly built Application.
 
-The approved v0.1 Skill is `@steipete/weather@1.0.0`. Discovery requires its exact source file,
-lock record, publisher, pin, version, and approved SHA-256
-`1ca0c8d768ad603ea8d5d47f56a9b435fe575f7f34e719eda85c82003d740e93`. Anban activates at most one
-Skill and loads only the bounded `SKILL.md` projection; references and assets are not loaded by
-default. Anban does not install, update, search, or fetch a Skill.
-
-Each Run receives a contained filesystem root. `file.list`, `file.read`, and `file.write` reject
-absolute paths, `..` traversal, and symlinks that resolve outside that Run root. Artifact snapshots
-use logical `anban://artifact/...` URIs. Physical paths stay inside adapters and do not enter Core,
-model messages, PostgreSQL metadata, CLI output, Event, Audit, or Trace.
+Relative Process cwd values resolve from the Workspace root; absolute cwd is allowed. Declared
+Artifact paths resolve from the effective cwd, are snapshotted under `artifacts/<run-id>/`, and are
+persisted only through Runtime/Persistence.

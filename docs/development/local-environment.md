@@ -39,17 +39,20 @@ Both database values must use the SQLAlchemy `postgresql+asyncpg` driver. Values
 not documentation or fixtures. Apply migrations with `alembic upgrade head`; select the test
 database with `ANBAN_DATABASE_PROFILE=test`.
 
-The Workspace must contain the pinned `@steipete/weather@1.0.0` Skill. Doctor verifies the local
-source and approved hash without installing, updating, or contacting a public service.
+The packaged `@anban/clawhub` Skill is always available. Any valid Workspace `SKILL.md` is loaded
+through the same parser without consulting installer metadata. Use a new Application after adding
+or installing a Skill.
 
 ## Checks and responsibility
 
 - `pnpm check`: Ruff, Pyright strict, pytest, frontend typecheck, and frontend tests.
 - `pnpm build`: deterministic frontend baseline build.
-- `pnpm run doctor`: active toolchain, Workspace, configuration presence, PostgreSQL profiles,
-  pinned Skill files, and local Chromium. It does not call public services.
-- `pnpm run acceptance:model`, `acceptance:skill`, `acceptance:capability`, `acceptance:e2e`, and
-  `acceptance:security`: explicit real/scoped Gate commands; see the acceptance README.
+- `pnpm run doctor`: base toolchain, Workspace/configuration, PostgreSQL migration heads, uniform
+  Skill parsing, and a harmless production Process.
+- `python -m scripts.doctor --online`: npx and current ClawHub CLI.
+- `python -m scripts.doctor --web`: frontend Chromium.
+- `pnpm run acceptance:model`, `acceptance:capability`, `acceptance:runtime`, and
+  `acceptance:security`: explicit real/scoped Gate commands.
 
 Ordinary CI runs deterministic checks, build, and Secret scanning on the exact commit. It does not
-receive real model credentials or call a public model or weather service.
+receive real model credentials or call a public model or third-party Skill service.

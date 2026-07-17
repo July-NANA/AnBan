@@ -1,82 +1,22 @@
 # v0.1 CLI Reference
 
-The `anban` console script is the only v0.1 product interface. It enters through Interaction and
-Runtime; command handlers do not call a Provider or concrete Capability directly.
+The production CLI commands are `workspace init`, `run`, `chat`, `runs`, `trace`, and `artifacts`.
+Every command supports `--json`. Run failures use stable error codes; Trace and Artifact queries
+work from a new database-only Application.
 
-## Workspace
+The Agent sees only `skill.activate` and `process.execute`. The Process input accepts `command`,
+string `args`, optional `cwd`, `env` name/value entries, text `stdin`, `timeout`, and declared
+`artifacts` with path and optional media type. Ordinary names resolve through inherited `PATH`;
+absolute executable paths must be executable regular files; relative executable paths are rejected.
+No implicit shell is used.
 
-```bash
-anban workspace init [--json]
-```
+Default budgets are 12 model turns, 16 Capability calls, 600 seconds total, and repeated-call limit
+3 (`0` disables it; `1` is invalid). Process defaults are 60 seconds with a configurable maximum
+of 300, 64 KiB each for stdout/stderr/stdin, 128 arguments, 8 Artifacts, and 16 MiB per Artifact.
+Hard maxima are 24 turns, 32 calls, 1800 seconds total, 600 seconds Process, 256 KiB streams, 256
+arguments, 32 Artifacts, and 64 MiB per Artifact.
 
-Creates missing Workspace bootstrap files without replacing existing configuration or Secret
-content. Text output contains no physical path. JSON reports only whether the root, configuration,
-and Secret file were newly created.
-
-## Execute
-
-```bash
-anban run "<task>" [--json]
-anban chat [--json]
-```
-
-`run` creates Task, ExecutionRun, and General Agent NodeRun identity before external execution. A
-successful text result prints the final answer and Run ID. JSON returns stable `status`, `run_id`,
-`persisted`, `final`, and `error` fields.
-
-`chat` uses one Task/ExecutionRun and a new General Agent NodeRun for each input. Enter `/exit`,
-`/quit`, or EOF to close it. It accepts at most eight user inputs and lasts at most 15 minutes.
-History exists only for that process; v0.1 does not resume chat or provide long-term memory.
-
-## Inspect
-
-```bash
-anban runs [--limit N] [--json]
-anban run show <run-id> [--json]
-anban trace <run-id> [--json]
-anban artifacts <run-id> [--json]
-```
-
-`runs` returns newest-first summaries; the default limit is 20 and the accepted range is 1–100.
-`run show` rebuilds bounded Task/Run/Node/Invocation/Artifact facts plus Event observability from
-PostgreSQL. It deliberately excludes the original Task request. `trace` returns the ordered,
-correlated Event projection and completeness findings. `artifacts` returns only logical URI,
-SHA-256, size, media type, identity, correlations, and creation time.
-
-These commands open a database-only application composition. They work in a new OS process and do
-not require model or Skill configuration, but still require the external Workspace bootstrap and a
-configured development PostgreSQL profile.
-
-## Exit behavior
-
-| Exit | Meaning |
-| ---: | --- |
-| `0` | Successful command or succeeded persisted execution |
-| `1` | Model, Capability, persistence, Event/Audit/Trace, or other execution failure |
-| `2` | Configuration or validation failure |
-| `124` | Model, Capability, chat, or total execution timeout |
-| `130` | User interruption or cancelled execution |
-
-Failures use stable structured codes and bounded messages. Raw exceptions, Provider responses,
-process stderr/stdout, credentials, database URLs, Authorization data, and physical Workspace paths
-are not failure output. A Run ID is present when durable identity exists and the Runtime can safely
-return it; otherwise only the structured top-level error is emitted.
-
-## Execution limits
-
-- Model turns per Agent Node: 8
-- Model request timeout: 60 seconds by default, configurable from 1–120 seconds
-- Model transport retries: 2 by default, configurable from 0–3; temporary transport/HTTP errors only
-- Model response repair: 3 by default, configurable from 0–3 and shared by the Agent Node
-- Capability calls per Agent Node: 8
-- HTTP requests: `http.get` plus `http.request` for GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS;
-  caller-selected HTTP(S) destinations, no redirects, bounded JSON bodies and text responses
-- Total Agent execution: 180 seconds
-- Repeated identical call limit: failure before the third execution
-- Process timeout: 10 seconds by default, 30 seconds maximum
-- Process stdout and stderr: 16 KiB each
-- Run list: 20 by default, 100 maximum
-- Inspection: 8 Nodes, 64 Invocations, 256 Artifacts, and 512 Events per Run
-
-Exceeding a bound is an explicit failure; Anban does not enlarge a timeout, truncate a successful
-fact silently, or substitute a mock result.
+`python -m scripts.doctor` checks the active Python 3.12 toolchain, Node/pnpm, Workspace,
+configuration, both configured PostgreSQL databases and migration heads, uniform Skill discovery,
+and a harmless real Process through the production Registry. `--online` additionally checks npx
+and the current ClawHub CLI. `--web` additionally launches the locked Chromium check.

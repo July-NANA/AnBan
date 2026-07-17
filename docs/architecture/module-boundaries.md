@@ -21,8 +21,10 @@ Owns the Model Port and its adapters. Model reasoning is deliberately separate f
 
 ## Capability
 
-Owns interfaces and adapters for executable Tools and Skills. A Skill is a specialized Capability.
-MCP and external Agents remain future integration categories, not v0.1 implementations.
+Owns `CapabilityPort`, `CapabilityHandler`, the Registry, uniform `SKILL.md` discovery/activation,
+and the general Process Handler. Production Capability names are exactly `skill.activate` and
+`process.execute`. A concrete tool normally adds a Skill, not a Handler. No Skill source or
+installer receives a special branch. MCP and external Agents remain future categories.
 
 ## Persistence
 
@@ -31,6 +33,10 @@ Event stream. PostgreSQL is the business database; Audit and Trace are Event pro
 than duplicate stores. Checkpoints and memory are not implemented in v0.1.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
+
+`config` is authorized cross-module infrastructure and is not a seventh product module. New Ports,
+Adapters, Handler/Tool names, persistence backends, interaction adapters, or top-level product
+packages require explicit architecture authorization; an ADR alone does not grant it.
 
 For v0.1, Interaction calls the Runtime application entry. Runtime depends on Core contracts,
 ModelPort, CapabilityPort, and Core persistence Protocols. Persistence, provider, Workspace, and

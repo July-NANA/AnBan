@@ -6,6 +6,12 @@ All notable changes are documented here.
 
 ### Added
 
+- Uniform package/Workspace `SKILL.md` discovery and ordinary packaged `@anban/clawhub` Skill;
+  installation metadata is intentionally ignored by production.
+- General PATH/absolute executable Process with inherited environment, env overlays, cwd, stdin,
+  configurable budgets, safe execution summaries, and declared single-file Artifact snapshots.
+- Architecture-surface tests and scoped Doctor online/web modes.
+
 - v0.1 CLI commands for Workspace initialization, durable task execution, bounded temporary chat,
   Run listing/detail, Trace, and Artifact inspection.
 - Typed Task, ExecutionRun, NodeRun, CapabilityInvocation, Artifact, and Event contracts with
@@ -14,7 +20,7 @@ All notable changes are documented here.
   and deterministic ordered Event queries.
 - OpenAI-compatible ModelPort with native Tool Calling, Tool Result pairing, structured output,
   timeout/error classification, bounded responses, and known-Secret response rejection.
-- Governed file/process Capabilities, approved Workspace Skill activation, and the fixed LangGraph
+- General Process Capability, uniform Workspace Skill activation, and the fixed LangGraph
   General Agent with turn, call, time, repetition, and no-progress bounds.
 - Durable Runtime coordination and allowlisted Audit/Trace projections from one Event fact source.
 - Explicit real Model, Skill, Capability, CLI E2E, PostgreSQL restart, and security acceptance
@@ -31,11 +37,11 @@ All notable changes are documented here.
 
 ### Known limitations
 
-- v0.1 is CLI-only with one fixed General Agent and one active Skill.
+- v0.1 is CLI-only with one fixed General Agent; Skills may be activated repeatedly without shared
+  mutable activation state.
 - Chat context is process-local, limited to eight user inputs or 15 minutes, and cannot resume after
   restart.
-- The default CLI has no allowlisted process executable; the process boundary is exercised only by
-  controlled acceptance wiring.
+- Process uses the launching OS user's permissions; program allowlists, sandboxing, approvals,
+  network isolation, and fine-grained file permissions are deferred.
 - Dynamic graphs, multiple Agents, browser, MCP, memory, schedules/webhooks, checkpoint resume,
-  policy/approval systems, strong sandboxing, replay, routing/fallback, and Skill installation are
-  not implemented.
+  policy/approval systems, strong sandboxing, replay, and routing/fallback are not implemented.

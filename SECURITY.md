@@ -1,24 +1,21 @@
 # Security Policy
 
-## Reporting
+Report vulnerabilities privately. Never place credentials, private paths, provider responses, or
+user data in public Issues.
 
-Report suspected vulnerabilities privately to the repository owner. Do not open a public issue containing credentials, exploit details, private paths, provider responses, or user data.
+Secrets belong only in Workspace `secrets.env` or the launching environment. They must not enter
+Git, CLI output, model output, logs, Events, Audit, Trace, Artifacts, fixtures, or documentation.
+Process Metadata stores only command basename, argument count/hash, logical cwd scope, duration,
+exit code, output sizes/hashes, Artifact count, and timeout/cancel flags. Full arguments,
+environment, stdout, stderr, and physical paths are excluded. Known configured Secret values in
+Process output or declared Artifacts fail safely before those bytes are persisted.
 
-## Secret Handling
+Anban v0.1 deliberately uses the permissions of the OS user that started it. There is no program
+allowlist, process sandbox, command approval, network isolation, or fine-grained file permission
+layer. Absolute cwd and Artifact paths are allowed. Operators must use an appropriate OS account
+and isolated Workspace. These governance controls are deferred; this limitation must never be
+hidden by an acceptance-only branch or fake success.
 
-- Never commit `.env`, API keys, database passwords, Authorization headers, or managed Workspace content.
-- Real credentials live in the Workspace `secrets.env` with mode 0600.
-- Logs, audit data, model prompts and responses, documentation, fixtures, and CI output must not contain Secret values.
-- Readiness checks may test whether required values exist and may use them in-process, but must emit only allowlisted, sanitized results.
-- Missing real credentials or unsupported native behavior must fail explicitly; do not add mock or fallback success.
-- Provider content and Tool arguments containing a known configured API key fail before
-  persistence or Capability invocation.
-
-## External Execution
-
-Use bounded, low-risk validation operations. Development readiness may make real model requests, perform isolated local file writes, query dedicated development databases, and execute read-only public weather requests. It must not create uncontrolled production side effects.
-
-The v0.1 process Capability uses no shell, accepts only explicitly mapped executables, filters its
-environment, confines its working directory, terminates the process group on timeout/cancellation,
-and bounds stdout and stderr. This is not a strong container sandbox; the default CLI maps no
-executable.
+Skills are instructions, not trusted persistence writers. All Skills use the same parser,
+activation, Process, and persistence path. Installation metadata does not grant trust or change
+behavior. Runtime remains authoritative for Invocation, Artifact, Event, Audit, and Trace records.

@@ -34,16 +34,16 @@ See the [CLI reference](docs/cli.md) for output, limits, and exit behavior.
 
 ## Clean-checkout setup
 
-1. Install Miniforge, create the `anban` environment from `environment.yml`, and activate it.
-2. Install locked Python/frontend dependencies into the active Conda environment and install the
-   editable console script:
+1. Activate any Python 3.12 environment. Miniforge with the `anban` environment from
+   `environment.yml` is the recommended local option, but is not required.
+2. Install locked Python/frontend dependencies into that same environment and install the editable
+   console script:
 
    ```bash
    uv export --frozen --all-groups --no-emit-project --format requirements-txt \
-     --output-file "$CONDA_PREFIX/anban-requirements.txt"
-   uv pip install --python "$CONDA_PREFIX/bin/python" \
-     -r "$CONDA_PREFIX/anban-requirements.txt"
-   uv pip install --python "$CONDA_PREFIX/bin/python" -e .
+     --output-file /tmp/anban-requirements.txt
+   python -m pip install -r /tmp/anban-requirements.txt
+   python -m pip install --no-deps -e .
    pnpm install --frozen-lockfile
    ```
 

@@ -10,7 +10,7 @@ Anban / 安伴 is a security-governed AI application built around explicit archi
 - Backend: Python + FastAPI
 - Agent/Graph Runtime: LangGraph
 - Database: PostgreSQL
-- Python environment: Miniforge conda environment `anban`, Python 3.12
+- Python environment: any active Python 3.12 environment; Miniforge `anban` is recommended locally
 - Python tooling: uv, Ruff, Pyright, pytest
 - Frontend tooling: pnpm, Vitest, Playwright
 
@@ -40,23 +40,21 @@ Anban / 安伴 is a security-governed AI application built around explicit archi
 
 ## Python Environment
 
-- Distribution: Miniforge
-- Conda environment name: `anban`
-- Required Python version: 3.12
-- Activation:
+- Required Python version: 3.12.
+- Product commands, Doctor, acceptance, and CI use the currently active Python environment.
+- Miniforge with environment name `anban` is the recommended primary-workstation setup, not a
+  product or release requirement. Optional activation:
 
   ```bash
   source "$(conda info --base)/etc/profile.d/conda.sh"
   conda activate anban
   ```
 
-- Verified primary workstation interpreter: `/Users/fanyuhang/miniforge3/envs/anban/bin/python`
-- This path is informational, not a portable runtime requirement. The authoritative requirements are Miniforge, environment `anban`, and Python 3.12.
-- Doctor must use the active environment facts and must not parse AGENTS.md for runtime configuration.
-- Do not use the macOS system Python.
-- Do not create a second virtual environment outside this Miniforge environment.
-- Run uv, Ruff, Pyright, pytest, and project Python commands only after activating this environment or through `conda run -n anban`.
-- Other developers and CI may use a different Miniforge installation path, but the environment name and Python version must remain the same.
+- Doctor must inspect the active interpreter and installed dependencies; it must not infer runtime
+  facts from paths, Conda variables, or AGENTS.md.
+- Do not use a Python version other than 3.12 and do not create an additional environment when an
+  appropriate active environment already exists.
+- Run uv, Ruff, Pyright, pytest, and project Python commands from the same active environment.
 
 ## Workspace and Secrets
 

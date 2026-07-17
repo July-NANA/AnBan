@@ -8,7 +8,9 @@
 
 ## Environment
 
-Use Miniforge, the `anban` Conda environment, Python 3.12, and pnpm. Do not create a repository-local Python virtual environment. Keep the managed Workspace outside the repository and never stage `.env` or Workspace files.
+Use an active Python 3.12 environment and pnpm. Miniforge with the `anban` environment and
+`environment.yml` is the recommended local setup, not a product requirement. Keep the managed
+Workspace outside the repository and never stage `.env` or Workspace files.
 
 ## Changes
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
@@ -86,15 +85,14 @@ def check_repository_surface() -> None:
 
 
 def check_cli_and_migrations() -> None:
-    executable = shutil.which("anban")
-    if executable is None:
-        raise ReleaseClosureError("installed anban console script is unavailable")
     for arguments in CLI_HELP:
-        command(executable, *arguments)
+        command(sys.executable, "-m", "anban.cli", *arguments)
     for profile in ("development", "test"):
         environment = dict(os.environ)
         environment["ANBAN_DATABASE_PROFILE"] = profile
-        if "(head)" not in command("alembic", "current", environment=environment):
+        if "(head)" not in command(
+            sys.executable, "-m", "alembic", "current", environment=environment
+        ):
             raise ReleaseClosureError("a PostgreSQL migration profile is not at head")
 
 
@@ -105,13 +103,21 @@ def installed_version() -> str:
         raise ReleaseClosureError("anban package is not installed") from None
     if installed != EXPECTED_VERSION:
         raise ReleaseClosureError("anban package version is not the release candidate")
+    try:
+        import anban
+
+        source = Path(anban.__file__ or "").resolve()
+    except (ImportError, OSError):
+        raise ReleaseClosureError("anban package cannot be imported") from None
+    if not source.is_relative_to(REPOSITORY.resolve()):
+        raise ReleaseClosureError("anban package does not correspond to this checkout")
     return installed
 
 
 def main() -> int:
     try:
-        if os.environ.get("CONDA_DEFAULT_ENV") != "anban":
-            raise ReleaseClosureError("the required Conda environment is not active")
+        if sys.version_info[:2] != (3, 12):
+            raise ReleaseClosureError("Python 3.12 is required")
         sha = git_facts()
         check_repository_surface()
         check_cli_and_migrations()
@@ -128,7 +134,7 @@ def main() -> int:
     )
     print(
         f"v0.1 release evidence: sha={sha} package={package_version} "
-        f"python={platform.python_version()} platform={sys.platform} conda=anban"
+        f"python={platform.python_version()} platform={sys.platform} interpreter=current"
     )
     return 0
 

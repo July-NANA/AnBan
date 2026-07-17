@@ -31,60 +31,51 @@ def create_workspace(path: Path) -> Path:
     return path
 
 
-def environment_file(path: Path, *, name: str = "anban", python: str = "3.12") -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        f"name: {name}\nchannels:\n  - conda-forge\ndependencies:\n  - python={python}\n  - uv\n",
-        encoding="utf-8",
-    )
-    return path
-
-
 def python_result(
-    tmp_path: Path,
     *,
-    environment_name: str = "anban",
     version: tuple[int, int] = (3, 12),
-    executable_inside_prefix: bool = True,
+    missing_tool: str | None = None,
+    dependencies_available: bool = True,
+    package_source_valid: bool = True,
 ) -> doctor.CheckResult:
-    prefix = tmp_path / "arbitrary-conda-root" / "envs" / "anban"
-    executable = prefix / "bin" / "python"
-    if not executable_inside_prefix:
-        executable = tmp_path / "other" / "bin" / "python"
+    tools: dict[str, str | None] = {
+        "ruff": "ruff 1",
+        "pytest": "pytest 1",
+        "pyright": "pyright 1",
+    }
+    if missing_tool is not None:
+        tools[missing_tool] = None
     return doctor.python_environment_result(
-        {"CONDA_DEFAULT_ENV": environment_name, "CONDA_PREFIX": str(prefix)},
         version,
-        executable,
-        "uv 0.11.29",
-        environment_file(tmp_path / "environment.yml"),
+        tools,
+        dependencies_available=dependencies_available,
+        package_source_valid=package_source_valid,
     )
 
 
-def test_python_312_anban_environment_passes(tmp_path: Path) -> None:
-    assert python_result(tmp_path).status == "PASS"
+def test_python_312_current_environment_passes_without_conda() -> None:
+    assert python_result().status == "PASS"
 
 
-def test_python_version_error_fails(tmp_path: Path) -> None:
-    assert python_result(tmp_path, version=(3, 11)).code == "python_version_invalid"
+def test_python_version_error_fails() -> None:
+    assert python_result(version=(3, 11)).code == "python_version_invalid"
 
 
-def test_conda_environment_name_error_fails(tmp_path: Path) -> None:
-    assert python_result(tmp_path, environment_name="base").code == "conda_environment_invalid"
+def test_missing_project_dependency_fails() -> None:
+    assert python_result(dependencies_available=False).code == "python_dependency_unavailable"
 
 
-def test_interpreter_outside_conda_prefix_fails(tmp_path: Path) -> None:
-    result = python_result(tmp_path, executable_inside_prefix=False)
-    assert result.code == "conda_interpreter_invalid"
+def test_missing_current_environment_tool_fails() -> None:
+    assert python_result(missing_tool="pyright").code == "python_tool_unavailable"
 
 
-def test_environment_yml_requires_anban_and_python_312(tmp_path: Path) -> None:
-    assert doctor.environment_contract_valid(environment_file(tmp_path / "valid.yml"))
-    assert not doctor.environment_contract_valid(
-        environment_file(tmp_path / "wrong-name.yml", name="other")
-    )
-    assert not doctor.environment_contract_valid(
-        environment_file(tmp_path / "wrong-python.yml", python="3.11")
-    )
+def test_installed_package_must_match_checkout() -> None:
+    assert python_result(package_source_valid=False).code == "anban_package_mismatch"
+
+
+def test_package_scripts_do_not_force_conda() -> None:
+    package = (doctor.REPOSITORY / "package.json").read_text(encoding="utf-8")
+    assert "conda run" not in package
 
 
 def test_workspace_environment_variable_has_highest_priority(tmp_path: Path) -> None:

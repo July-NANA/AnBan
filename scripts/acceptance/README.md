@@ -13,7 +13,7 @@ They are not part of `pnpm run doctor` or ordinary CI.
   snapshot, and executes one real allowlisted no-shell process. Its isolated files are removed.
 - `pnpm run acceptance:agent` runs the fixed production LangGraph with the real ModelPort and
   Workspace Skill Capability, requiring a native Skill Tool Call, paired Tool Result, and final.
-- `conda run -n anban python -m scripts.acceptance.check_migration_schema` verifies the migrated
+- `python -m scripts.acceptance.check_migration_schema` verifies the migrated
   PostgreSQL test profile, six-table schema, status and relationship constraints, and ordered Event
   uniqueness. Its probe records are rolled back.
 - `pnpm run acceptance:persistence` verifies real PostgreSQL create/read/locked-update paths, Run

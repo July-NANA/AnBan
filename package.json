@@ -5,19 +5,19 @@
   "packageManager": "pnpm@10.19.0",
   "scripts": {
     "dev:web": "pnpm --dir apps/web dev",
-    "check:python": "conda run -n anban ruff format --check . && conda run -n anban ruff check . && conda run -n anban python scripts/run_pyright.py && conda run -n anban pytest",
+    "check:python": "python -m ruff format --check . && python -m ruff check . && python scripts/run_pyright.py && python -m pytest",
     "check": "pnpm check:python && pnpm --dir apps/web check",
     "build": "pnpm --dir apps/web build",
-    "doctor": "conda run -n anban python -m scripts.doctor",
-    "acceptance:model": "conda run -n anban python -m scripts.acceptance.check_model_gateway",
-    "acceptance:skill": "conda run -n anban python -m scripts.acceptance.check_real_skill",
-    "acceptance:capability": "conda run -n anban python -m scripts.acceptance.check_local_capabilities",
-    "acceptance:agent": "conda run -n anban python -m scripts.acceptance.check_agent_runtime",
-    "acceptance:runtime": "conda run -n anban python -m scripts.acceptance.check_persistent_runtime",
-    "acceptance:p2": "conda run -n anban python -m scripts.acceptance.check_p2_gate",
-    "acceptance:e2e": "conda run -n anban python -m scripts.acceptance.check_cli_e2e",
-    "acceptance:security": "conda run -n anban pytest tests/core/test_metadata.py tests/model/test_adapter.py tests/capability tests/runtime/test_general_agent.py tests/runtime/test_persistent_runtime.py tests/runtime/test_observability.py tests/test_cli.py && conda run -n anban python tests/acceptance/cli_security_probe.py",
-    "acceptance:v0.1": "pnpm check && pnpm build && pnpm run doctor && pnpm run acceptance:persistence && pnpm run acceptance:model && pnpm run acceptance:skill && pnpm run acceptance:capability && pnpm run acceptance:p2 && pnpm run acceptance:e2e && pnpm run acceptance:security && conda run -n anban python -m scripts.acceptance.check_release_closure",
-    "acceptance:persistence": "conda run -n anban python -m scripts.acceptance.check_repositories"
+    "doctor": "python -m scripts.doctor",
+    "acceptance:model": "python -m scripts.acceptance.check_model_gateway",
+    "acceptance:skill": "python -m scripts.acceptance.check_real_skill",
+    "acceptance:capability": "python -m scripts.acceptance.check_local_capabilities",
+    "acceptance:agent": "python -m scripts.acceptance.check_agent_runtime",
+    "acceptance:runtime": "python -m scripts.acceptance.check_persistent_runtime",
+    "acceptance:p2": "python -m scripts.acceptance.check_p2_gate",
+    "acceptance:e2e": "python -m scripts.acceptance.check_cli_e2e",
+    "acceptance:security": "python -m pytest tests/core/test_metadata.py tests/model/test_adapter.py tests/capability tests/runtime/test_general_agent.py tests/runtime/test_persistent_runtime.py tests/runtime/test_observability.py tests/test_cli.py && python tests/acceptance/cli_security_probe.py",
+    "acceptance:v0.1": "pnpm check && pnpm build && pnpm run doctor && pnpm run acceptance:persistence && pnpm run acceptance:model && pnpm run acceptance:skill && pnpm run acceptance:capability && pnpm run acceptance:agent && pnpm run acceptance:runtime && pnpm run acceptance:p2 && pnpm run acceptance:e2e && pnpm run acceptance:security && python -m scripts.acceptance.check_release_closure",
+    "acceptance:persistence": "python -m scripts.acceptance.check_repositories"
   }
 }

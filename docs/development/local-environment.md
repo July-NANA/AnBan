@@ -1,25 +1,24 @@
 # Local Environment
 
-The development environment is portable. Runtime authority comes from the active Miniforge
-environment and Workspace bootstrap, not from a workstation path recorded in documentation.
+The development environment is portable. Runtime authority comes from the active Python 3.12
+environment and Workspace bootstrap, not from an environment manager or workstation path.
 
 ## Toolchain
 
-- Miniforge environment: `anban`
+- Recommended local environment: Miniforge environment `anban`
 - Python: `3.12`
 - Python dependency/tool runner: `uv`
 - JavaScript package manager: the pnpm version declared by the root `packageManager`
 - Business database: PostgreSQL, with separate development and test profiles
 
-Do not use the macOS system Python or create a second repository-local virtual environment. After
-activating `anban`, install locked dependencies and the console script into that environment with:
+Miniforge is optional. After activating any Python 3.12 environment, install locked dependencies
+and the console script into that same environment with:
 
 ```bash
 uv export --frozen --all-groups --no-emit-project --format requirements-txt \
-  --output-file "$CONDA_PREFIX/anban-requirements.txt"
-uv pip install --python "$CONDA_PREFIX/bin/python" \
-  -r "$CONDA_PREFIX/anban-requirements.txt"
-uv pip install --python "$CONDA_PREFIX/bin/python" -e .
+  --output-file /tmp/anban-requirements.txt
+python -m pip install -r /tmp/anban-requirements.txt
+python -m pip install --no-deps -e .
 ```
 
 ## Workspace and configuration

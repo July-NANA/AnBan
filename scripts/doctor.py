@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import hashlib
+import importlib
 import json
 import os
 import re
@@ -13,6 +15,8 @@ import sys
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Literal, cast
 
@@ -91,85 +95,86 @@ def check_repository() -> CheckResult:
     return pass_result("repository", "required development baseline files exist")
 
 
-def environment_contract_valid(path: Path) -> bool:
-    try:
-        content = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    name_valid = re.search(r"(?m)^name:\s*anban\s*(?:#.*)?$", content) is not None
-    python_valid = re.search(r"(?m)^\s*-\s*python\s*=\s*3\.12\s*(?:#.*)?$", content) is not None
-    return name_valid and python_valid
-
-
 def python_environment_result(
-    environ: Mapping[str, str],
     version: tuple[int, int],
-    executable: Path,
-    uv_version: str | None,
-    environment_file: Path,
+    tool_versions: Mapping[str, str | None],
+    *,
+    dependencies_available: bool,
+    package_source_valid: bool,
 ) -> CheckResult:
-    if environ.get("CONDA_DEFAULT_ENV") != "anban":
-        return fail_result(
-            "Python",
-            "conda_environment_invalid",
-            "The active Conda environment is not anban.",
-            "Activate the Miniforge anban environment.",
-        )
     if version != (3, 12):
         return fail_result(
             "Python",
             "python_version_invalid",
             "Python is not version 3.12.",
-            "Recreate the anban environment from environment.yml.",
+            "Run Anban from a Python 3.12 environment.",
         )
-    prefix_value = environ.get("CONDA_PREFIX", "").strip()
-    if not prefix_value:
+    if not dependencies_available:
         return fail_result(
             "Python",
-            "conda_prefix_missing",
-            "CONDA_PREFIX is not available.",
-            "Activate the Miniforge anban environment.",
+            "python_dependency_unavailable",
+            "One or more project dependencies cannot be imported.",
+            "Install the locked project dependencies into the current Python environment.",
         )
-    prefix = Path(prefix_value).expanduser().resolve()
-    resolved_executable = executable.expanduser().resolve()
-    if prefix not in resolved_executable.parents:
+    unavailable = [name for name, value in tool_versions.items() if value is None]
+    if unavailable:
         return fail_result(
             "Python",
-            "conda_interpreter_invalid",
-            "Python does not come from the active CONDA_PREFIX.",
-            "Run doctor with Python from the active anban environment.",
+            "python_tool_unavailable",
+            "Current Python cannot execute: " + ", ".join(sorted(unavailable)) + ".",
+            "Install the locked development dependencies into the current Python environment.",
         )
-    if not environment_contract_valid(environment_file):
+    if not package_source_valid:
         return fail_result(
             "Python",
-            "environment_file_invalid",
-            "environment.yml does not declare anban with Python 3.12.",
-            "Restore the approved environment.yml contract.",
+            "anban_package_mismatch",
+            "The installed anban package does not correspond to this checkout.",
+            "Install this checkout into the current Python environment in editable mode.",
         )
-    if uv_version is None:
-        return fail_result(
-            "Python",
-            "uv_unavailable",
-            "uv is not executable in the active environment.",
-            "Install uv through the approved Miniforge environment.",
-        )
+    tools = ", ".join(f"{name}={value}" for name, value in sorted(tool_versions.items()))
     return pass_result(
         "Python",
-        f"anban, Python {version[0]}.{version[1]}, interpreter inside CONDA_PREFIX, {uv_version}",
+        f"Python {version[0]}.{version[1]}, current interpreter, dependencies importable, {tools}",
     )
 
 
 def check_python() -> CheckResult:
+    tools: dict[str, str | None] = {}
+    for name in ("ruff", "pytest", "pyright"):
+        try:
+            tools[name] = command(sys.executable, "-m", name, "--version").splitlines()[0]
+        except (OSError, subprocess.SubprocessError):
+            tools[name] = None
+    dependencies_available = True
+    for name in (
+        "alembic",
+        "asyncpg",
+        "dotenv",
+        "fastapi",
+        "httpx",
+        "langgraph",
+        "openai",
+        "pydantic",
+        "sqlalchemy",
+    ):
+        try:
+            importlib.import_module(name)
+        except Exception:
+            dependencies_available = False
+            break
     try:
-        uv_version = command("uv", "--version")
-    except (OSError, subprocess.SubprocessError):
-        uv_version = None
+        import anban
+
+        package_source_valid = package_version("anban") == "0.1.0" and Path(
+            anban.__file__
+        ).resolve().is_relative_to(REPOSITORY.resolve())
+    except (ImportError, PackageNotFoundError, OSError):
+        package_source_valid = False
     return python_environment_result(
-        os.environ,
         (sys.version_info.major, sys.version_info.minor),
-        Path(sys.executable),
-        uv_version,
-        REPOSITORY / "environment.yml",
+        tools,
+        dependencies_available=dependencies_available,
+        package_source_valid=package_source_valid,
     )
 
 
@@ -495,7 +500,18 @@ def result_lines(result: CheckResult) -> list[str]:
     return lines
 
 
-def main() -> int:
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog="python -m scripts.doctor")
+    result.add_argument(
+        "--toolchain-only",
+        action="store_true",
+        help="check only repository, Python, and Node toolchains",
+    )
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parser().parse_args(argv)
     os.chdir(REPOSITORY)
     try:
         workspace = resolve_workspace(repository=REPOSITORY).path
@@ -505,6 +521,11 @@ def main() -> int:
     results += run_guarded("repository", check_repository, one)
     results += run_guarded("Python", check_python, one)
     results += run_guarded("Node", check_node, one)
+    if arguments.toolchain_only:
+        for result in results:
+            for line in result_lines(result):
+                print(line)
+        return 1 if any(result.status == "FAIL" for result in results) else 0
     results += run_guarded("Workspace", check_workspace, one)
     results += run_guarded("configuration", lambda: check_configuration(workspace), many)
     results += run_guarded("PostgreSQL", lambda: check_postgresql(workspace), one)

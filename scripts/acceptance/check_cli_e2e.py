@@ -387,12 +387,11 @@ def evidence_facts() -> str:
         timeout=10,
     )
     sha = result.stdout.strip()
-    environment = os.environ.get("CONDA_DEFAULT_ENV", "")
-    if result.returncode != 0 or not SHA_PATTERN.fullmatch(sha) or environment != "anban":
+    if result.returncode != 0 or not SHA_PATTERN.fullmatch(sha) or sys.version_info[:2] != (3, 12):
         raise CliE2EError("CLI E2E environment facts are invalid")
     return (
         f"sha={sha} python={platform.python_version()} platform={sys.platform} "
-        f"conda={environment} database=test skill={WEATHER_SKILL.slug}@{WEATHER_SKILL.version}"
+        f"interpreter=current database=test skill={WEATHER_SKILL.slug}@{WEATHER_SKILL.version}"
     )
 
 

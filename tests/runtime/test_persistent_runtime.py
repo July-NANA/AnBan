@@ -380,6 +380,40 @@ async def test_response_repair_events_are_safe_and_complete() -> None:
     assert raw_canary not in "".join(event.model_dump_json() for event in aggregate.events)
 
 
+async def test_normalized_companion_content_calls_complete_without_repair_or_replay() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    raw_companion = "provider-companion-content-must-not-persist"
+    mixed = tool_turn().model_copy(
+        update={
+            "metadata": SafeMetadata(
+                {"response_variant": "content_with_calls", "content_present": True}
+            )
+        }
+    )
+    capability = TransactionCheckingCapability(factory, completed_capability())
+    result = await PersistentRuntime(
+        TransactionCheckingModel(factory, [mixed, final_turn()]),
+        CapabilityRegistry((capability,)),
+        factory,
+    ).execute("Execute one normalized Tool Call.")
+
+    assert result.outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert capability.calls == 1
+    aggregate = await load_run(factory, result.run_id)
+    event_types = [event.event_type for event in aggregate.events]
+    assert "model.response_invalid" not in event_types
+    assert "model.repair_requested" not in event_types
+    completed = next(
+        event
+        for event in aggregate.events
+        if event.event_type == "model.completed"
+        and event.metadata.root.get("result_kind") == "tool_calls"
+    )
+    assert completed.metadata.root["response_variant"] == "content_with_calls"
+    assert completed.metadata.root["content_present"] is True
+    assert raw_companion not in "".join(event.model_dump_json() for event in aggregate.events)
+
+
 async def test_capability_failure_and_timeout_are_persisted() -> None:
     for capability_status, expected in (
         (CapabilityResultStatus.FAILED, AgentOutcomeStatus.FAILED),

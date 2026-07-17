@@ -182,6 +182,7 @@ def _usage_metadata(
     repair_attempt: int,
     transport_retry_count: int,
     response_variant: str,
+    content_present: bool,
 ) -> SafeMetadata:
     usage = _field(response, "usage")
     prompt_tokens = _field(usage, "prompt_tokens")
@@ -194,6 +195,7 @@ def _usage_metadata(
         "repair_attempt": repair_attempt,
         "transport_retry_count": transport_retry_count,
         "response_variant": response_variant,
+        "content_present": content_present,
     }
     return SafeMetadata(values)
 
@@ -242,12 +244,12 @@ def normalize_response(
     if content is not None and not isinstance(content, str):
         raise _invalid("unsupported_content_type", diagnostic, request, transport_retry_count)
     normalized_content = content.strip() if isinstance(content, str) and content.strip() else None
-    if calls and normalized_content is not None:
-        raise _invalid("ambiguous_content_and_calls", diagnostic, request, transport_retry_count)
     decoded_arguments = any(isinstance(_call_values(call)[3], Mapping) for call in calls)
     whitespace_with_calls = bool(calls) and isinstance(content, str) and not content.strip()
     response_variant = (
-        "whitespace_content_and_decoded_arguments"
+        "content_with_calls"
+        if calls and normalized_content is not None
+        else "whitespace_content_and_decoded_arguments"
         if whitespace_with_calls and decoded_arguments
         else "whitespace_content_with_calls"
         if whitespace_with_calls
@@ -261,6 +263,7 @@ def normalize_response(
         repair_attempt=request.repair_attempt,
         transport_retry_count=transport_retry_count,
         response_variant=response_variant,
+        content_present=content is not None,
     )
     if calls:
         if diagnostic.tool_call_type != "function":
@@ -271,6 +274,9 @@ def normalize_response(
             raise _invalid("missing_function_name", diagnostic, request, transport_retry_count)
         if finish_reason != "tool_calls":
             raise _invalid("invalid_finish_reason", diagnostic, request, transport_retry_count)
+        identifiers = [str(_call_values(call)[1]) for call in calls]
+        if len(identifiers) != len(set(identifiers)):
+            raise _invalid("duplicate_tool_call_id", diagnostic, request, transport_retry_count)
         normalized_calls: list[ToolCall] = []
         for call in calls:
             _, identifier, provider_name, arguments = _call_values(call)

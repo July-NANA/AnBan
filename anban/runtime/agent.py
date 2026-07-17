@@ -43,20 +43,21 @@ _SYSTEM_INSTRUCTIONS = (
     "and package tools. Never invent a Capability or claim an operation ran when it did not. "
     "Treat nonzero exits, timeouts, cancellation, and Artifact collection failures as failures. "
     "Do not replay a completed side effect while repairing a model response. Use Tool Results as "
-    "observations, then return one concise final answer. Return exactly one response form: "
-    "native tool_calls "
-    "with no non-whitespace assistant content, or one non-empty final assistant message with no "
-    "tool_calls. Never narrate a Tool Call in assistant content."
+    "observations, then return one concise final answer. When an action is required, use native "
+    "Tool Calls. Narrated actions are not evidence of execution. Assistant text accompanying "
+    "valid Tool Calls is non-authoritative and may be ignored. A final answer must not contain "
+    "Tool Calls."
 )
 _REPAIR_INSTRUCTION = (
-    "Your previous response violated the response contract. Return exactly one of: "
-    "1. valid native tool_calls with complete IDs, function names, and JSON object arguments; "
-    "or 2. one non-empty final assistant message. Do not describe a Tool Call in plain text."
+    "Your previous response violated the response contract. When an action is required, return "
+    "valid native Tool Calls with complete IDs, function names, and JSON object arguments. "
+    "Otherwise return one non-empty final assistant message. Narrated actions are not evidence of "
+    "execution, and text accompanying valid Tool Calls is non-authoritative."
 )
 _RESPONSE_CONTRACT_REMINDER = (
-    "Response contract reminder: return native tool_calls with no non-whitespace assistant "
-    "content, or one non-empty final assistant message with no tool_calls. Do not replay any "
-    "Capability call that already completed."
+    "Response contract reminder: use native Tool Calls for actions and one non-empty assistant "
+    "message for the final answer. Text accompanying valid Tool Calls is non-authoritative. Do not "
+    "replay any Capability call that already completed."
 )
 
 

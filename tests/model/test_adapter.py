@@ -93,7 +93,7 @@ async def test_native_tool_call_is_parsed_to_structured_arguments() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["tools"][0]["function"]["name"] == "anban_tool_0"
-        assert "file.read" in body["tools"][0]["function"]["description"]
+        assert "test.action" in body["tools"][0]["function"]["description"]
         return response(
             {
                 "role": "assistant",
@@ -117,7 +117,7 @@ async def test_native_tool_call_is_parsed_to_structured_arguments() -> None:
             messages=(ModelMessage(role="user", content="Read a file."),),
             tools=(
                 ToolDefinition(
-                    name="file.read",
+                    name="test.action",
                     description="Read one bounded file.",
                     input_schema={"type": "object", "additionalProperties": False},
                 ),
@@ -133,6 +133,7 @@ async def test_native_tool_call_is_parsed_to_structured_arguments() -> None:
         "repair_attempt": 0,
         "transport_retry_count": 0,
         "response_variant": "canonical",
+        "content_present": False,
     }
 
 
@@ -191,7 +192,7 @@ async def test_unknown_provider_tool_alias_fails_closed() -> None:
                 messages=(ModelMessage(role="user", content="Call."),),
                 tools=(
                     ToolDefinition(
-                        name="file.read",
+                        name="test.action",
                         description="Read.",
                         input_schema={"type": "object", "additionalProperties": False},
                     ),
@@ -228,7 +229,7 @@ async def test_known_secret_in_provider_output_fails_before_projection(surface: 
             messages=(ModelMessage(role="user", content="Write."),),
             tools=(
                 ToolDefinition(
-                    name="file.write",
+                    name="test.action",
                     description="Write a bounded file.",
                     input_schema={"type": "object", "additionalProperties": False},
                 ),
@@ -309,7 +310,7 @@ def tool_request(*, repair_attempt: int = 0) -> ModelRequest:
         messages=(ModelMessage(role="user", content="Call."),),
         tools=(
             ToolDefinition(
-                name="file.read",
+                name="test.action",
                 description="Read.",
                 input_schema={"type": "object", "additionalProperties": False},
             ),
@@ -322,12 +323,6 @@ def tool_request(*, repair_attempt: int = 0) -> ModelRequest:
 @pytest.mark.parametrize(
     ("message", "finish_reason", "reason", "repairable"),
     [
-        (
-            {"role": "assistant", "content": "text", "tool_calls": [native_call()]},
-            "tool_calls",
-            "ambiguous_content_and_calls",
-            True,
-        ),
         ({"role": "assistant", "content": None}, "stop", "empty_response", True),
         (
             {"role": "assistant", "content": None, "tool_calls": [native_call(identifier=None)]},
@@ -379,6 +374,16 @@ def tool_request(*, repair_attempt: int = 0) -> ModelRequest:
             "unsupported_tool_call_type",
             True,
         ),
+        (
+            {
+                "role": "assistant",
+                "content": "ignored",
+                "tool_calls": [native_call(), native_call()],
+            },
+            "tool_calls",
+            "duplicate_tool_call_id",
+            True,
+        ),
     ],
 )
 async def test_invalid_shapes_emit_safe_stable_diagnostics(
@@ -416,6 +421,46 @@ async def test_whitespace_content_with_calls_is_safe_provider_normalization() ->
     assert turn.content is None
     assert turn.tool_calls[0].arguments == {"path": "a.txt"}
     assert turn.metadata.root["response_variant"] == "whitespace_content_and_decoded_arguments"
+    assert turn.metadata.root["content_present"] is True
+
+
+async def test_nonempty_content_with_valid_calls_is_ignored_without_raw_retention() -> None:
+    companion = "I will now execute the requested action."
+    turn = await adapter(
+        lambda request: response(
+            {
+                "role": "assistant",
+                "content": companion,
+                "tool_calls": [native_call(arguments={"path": "a.txt"})],
+            },
+            finish_reason="tool_calls",
+        )
+    ).complete(tool_request())
+
+    assert turn.content is None
+    assert turn.tool_calls[0].arguments == {"path": "a.txt"}
+    assert turn.metadata.root["response_variant"] == "content_with_calls"
+    assert turn.metadata.root["content_present"] is True
+    assert companion not in turn.model_dump_json()
+
+
+async def test_protected_companion_content_with_calls_still_fails_closed() -> None:
+    companion = "protected-companion-canary"
+    with pytest.raises(AnbanError) as failure:
+        await adapter(
+            lambda request: response(
+                {
+                    "role": "assistant",
+                    "content": companion,
+                    "tool_calls": [native_call()],
+                },
+                finish_reason="tool_calls",
+            ),
+            protected_values=(companion,),
+        ).complete(tool_request())
+
+    assert failure.value.info.code is ErrorCode.MODEL_RESPONSE_INVALID
+    assert companion not in str(failure.value.as_dict())
 
 
 @pytest.mark.parametrize("status", [408, 409, 429, 500, 502, 503])

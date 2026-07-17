@@ -48,6 +48,7 @@ _MODEL_EVENT_METADATA = frozenset(
         "output_tokens",
         "repair_attempt",
         "response_variant",
+        "content_present",
         "transport_retry_count",
     }
 )

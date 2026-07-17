@@ -8,7 +8,8 @@ The Agent sees only `skill.activate` and `process.execute`. The Process input ac
 string `args`, optional `cwd`, `env` name/value entries, text `stdin`, `timeout`, and declared
 `artifacts` with path and optional media type. Ordinary names resolve through inherited `PATH`;
 absolute executable paths must be executable regular files; relative executable paths are rejected.
-No implicit shell is used.
+No implicit shell is used. Multiple Artifact declarations are validated together and duplicate
+resolved paths are rejected before managed snapshots are created.
 
 Default budgets are 12 model turns, 16 Capability calls, 600 seconds total, and repeated-call limit
 3 (`0` disables it; `1` is invalid). Process defaults are 60 seconds with a configurable maximum

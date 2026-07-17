@@ -49,9 +49,10 @@ are deferred to later versions.
 
 Programs are launched without an implicit shell. A Skill must explicitly call `bash`, `sh`,
 PowerShell, or another installed shell when it needs pipelines or expansion. Process output,
-stdin, time, arguments, and declared single-file Artifacts are bounded by `anban.toml`. Full
-arguments, environment, stdout, stderr, and physical paths never enter Event Metadata; safe hashes,
-sizes, counts, status, duration, and a logical cwd scope do.
+stdin, time, arguments, and explicitly declared single-file Artifacts are bounded by `anban.toml`.
+One Process invocation may collect multiple declared files only after all validate successfully.
+Full arguments, environment, stdout, stderr, and physical paths never enter Event Metadata; safe
+hashes, sizes, counts, status, duration, and a logical cwd scope do.
 
 See [architecture](docs/architecture/overview.md), [Workspace](docs/architecture/workspace.md),
 [CLI](docs/cli.md), [security](SECURITY.md), and [real acceptance](scripts/acceptance/README.md).

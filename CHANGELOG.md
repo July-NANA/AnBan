@@ -9,8 +9,12 @@ All notable changes are documented here.
 - Uniform package/Workspace `SKILL.md` discovery and ordinary packaged `@anban/clawhub` Skill;
   installation metadata is intentionally ignored by production.
 - General PATH/absolute executable Process with inherited environment, env overlays, cwd, stdin,
-  configurable budgets, safe execution summaries, and declared single-file Artifact snapshots.
+  configurable budgets, safe execution summaries, and atomic multi-file Artifact snapshots.
 - Architecture-surface tests and scoped Doctor online/web modes.
+- Provider-compatible native Tool Call normalization that ignores non-authoritative companion text
+  without weakening Tool identity, arguments, finish-reason, or Secret validation.
+- Deterministic Skill conflicts: Workspace `@anban/*` is reserved and ordinary duplicate slugs are
+  all excluded; version and installer metadata are not production identity.
 
 - v0.1 CLI commands for Workspace initialization, durable task execution, bounded temporary chat,
   Run listing/detail, Trace, and Artifact inspection.

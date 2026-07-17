@@ -70,6 +70,9 @@ production loading or trust boundary.
 
 ## Acceptance Integrity
 
+- A structurally valid, executable Provider response must not be rejected solely for a non-critical
+  formatting preference. Native Tool Calls are authoritative when present and valid; companion
+  assistant text is non-authoritative and must not become another execution channel.
 - Production behavior must never recognize or branch on a fixed acceptance Prompt, Skill slug,
   Weather, Sydney, URL, Run ID, test filename, expected output, CI marker, local machine path, or
   model name.

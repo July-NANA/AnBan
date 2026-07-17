@@ -9,6 +9,8 @@ Process Metadata stores only command basename, argument count/hash, logical cwd 
 exit code, output sizes/hashes, Artifact count, and timeout/cancel flags. Full arguments,
 environment, stdout, stderr, and physical paths are excluded. Known configured Secret values in
 Process output or declared Artifacts fail safely before those bytes are persisted.
+When multiple Artifacts are declared, validation and bounded reads complete before snapshots begin;
+snapshot failure removes files created by that collection attempt.
 
 Anban v0.1 deliberately uses the permissions of the OS user that started it. There is no program
 allowlist, process sandbox, command approval, network isolation, or fine-grained file permission

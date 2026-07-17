@@ -24,7 +24,8 @@ them.
 
 `process.execute` understands only general process concepts: executable resolution, arguments,
 environment overlays, cwd, stdin, bounded output, timeout/cancellation, process-group cleanup, and
-declared single-file Artifacts. It has no HTTP, ClawHub, Git, Weather, PDF, or tool-specific branch.
+declared single-file Artifacts. One invocation may collect multiple files atomically at the
+snapshot layer. It has no HTTP, ClawHub, Git, Weather, PDF, or tool-specific branch.
 
 PostgreSQL stores lifecycle and ordered Event facts. Managed Artifact bytes use logical
 `anban://artifact/...` URIs. Audit and Trace are projections of the same Event stream. Database or

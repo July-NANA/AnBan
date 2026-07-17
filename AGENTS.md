@@ -76,6 +76,12 @@ production loading or trust boundary.
 - Production behavior must never recognize or branch on a fixed acceptance Prompt, Skill slug,
   Weather, Sydney, URL, Run ID, test filename, expected output, CI marker, local machine path, or
   model name.
+- This rule applies to every future requirement: production behavior must not special-case a
+  Prompt, input value, cwd, path, filename, extension, directory, command, argument, argument
+  order, executable, Skill, Provider, URL, Run ID, Artifact ID, test name, expected output, error
+  text, call count, Tool order, or environment merely to pass a test, Demo, CI, or acceptance.
+  Decisions must follow a general domain meaning, protocol contract, or stable error category and
+  must be verified with different literal values and previously unseen cases.
 - Production Agent prompts must not prescribe an acceptance-specific Tool order.
 - Invocation, Artifact, Event, HTTP result, file, execution result, and success state must never be
   fabricated. A real failure must not be converted into ordinary success.

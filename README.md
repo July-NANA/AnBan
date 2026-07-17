@@ -59,6 +59,11 @@ hashes, sizes, counts, status, duration, and a logical cwd scope do.
 An ordinary failed Process Invocation remains durably failed. When it has a bounded safe
 observation, the Agent may use that Tool Result to choose another valid approach; timeout,
 cancellation, protected output, missing observations, and persistence failures remain terminal.
+Stable pre-execution argument and availability failures are also persisted as failed before a
+minimal safe Tool Result is returned for model replanning. Runtime never edits arguments or
+replays the Capability. If terminal persistence fails, Runtime confirms the transaction state,
+attempts one failed-Invocation compensation, and removes only uncommitted managed Artifact
+snapshots whose ownership is certain.
 User-visible final answers may report result paths, while Metadata and errors retain the stricter
 physical-path prohibition.
 

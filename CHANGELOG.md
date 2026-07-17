@@ -19,6 +19,10 @@ All notable changes are documented here.
   frontmatter display names, without installer-specific branches.
 - Recoverable failed Tool observations return to the model without rewriting the failed Invocation;
   user-visible results may report legitimate paths while Metadata keeps its stricter path boundary.
+- Stable pre-execution argument and availability failures are persisted as failed and returned as
+  minimal safe Tool Results for model replanning, without Runtime argument mutation or replay.
+- Capability terminal writes now confirm ambiguous commits, compensate confirmed uncommitted
+  Invocations once, and clean only the current result's uncommitted managed Artifact snapshots.
 
 - v0.1 CLI commands for Workspace initialization, durable task execution, bounded temporary chat,
   Run listing/detail, Trace, and Artifact inspection.
@@ -41,7 +45,8 @@ All notable changes are documented here.
   and interruption.
 - Logical Artifact URIs and allowlisted metadata prevent physical paths, credentials, database
   URLs, raw Provider responses, and unbounded process output from entering CLI/Audit/Trace output.
-- Ambiguous post-side-effect Event failure never triggers automatic Capability replay.
+- Ambiguous post-side-effect persistence never triggers Capability replay; committed state is
+  confirmed, while uncommitted state is compensated or reported explicitly if compensation fails.
 
 ### Known limitations
 

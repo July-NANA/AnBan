@@ -38,10 +38,20 @@ success result. Timeout and interruption also remain distinct terminal semantics
 
 An ordinary Capability failure with a bounded safe observation is returned to the model as the
 paired Tool Result so it can adapt instead of being blocked by a recoverable command choice. The
-CapabilityInvocation remains `failed` and its Event remains `capability.failed`; a later successful
-Run does not rewrite that fact. Timeout, cancellation, protected or missing observations, Registry
-and Schema failures, and Persistence/Event failures remain terminal. Completed calls remain in the
-anti-replay set during any later response repair.
+same applies to complete pre-execution argument-validation and availability categories when they
+carry a stable safe reason. The CapabilityInvocation is persisted as `failed` before the Tool
+Result is exposed; a later successful Run does not rewrite that fact. Unknown Capabilities,
+unexpected execution exceptions, unsafe or missing observations, timeout, cancellation, and
+Persistence/Event failures remain terminal. Completed calls remain in the anti-replay set during
+any later response repair.
+
+If a Capability has returned but its terminal transaction reports failure, Runtime first reads the
+authoritative Invocation, Event, and Artifact facts. An actually committed transaction is accepted
+without replay. A confirmed uncommitted transaction receives one independent `failed` compensation
+and one `capability.failed` Event. Managed snapshots belonging to that result are deleted before
+compensation, while source files and other Invocation snapshots are untouched. Unknown commit
+state prevents deletion; compensation or cleanup failure remains explicit and never becomes
+ordinary success.
 
 Physical host paths remain forbidden in Error and Event Metadata. A user-visible final answer may
 report a legitimate result path because the Model Adapter has already rejected configured Secret

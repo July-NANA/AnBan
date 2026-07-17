@@ -36,6 +36,12 @@ They are not part of `pnpm run doctor` or ordinary CI.
   process interruption return non-success, persist cancellation, survive restart inspection, and
   exclude a Canary Secret, database configuration, and physical Workspace path from CLI,
   Event/Audit, and Trace output. The probe uses the test PostgreSQL profile and removes its records.
+- `pnpm run acceptance:v0.1` is the final release-candidate Gate. It runs deterministic checks,
+  build, Doctor, repository/P2 checks, and the required real/security commands, then requires a
+  clean synchronized `anban`, package version 0.1.0, both migrations at head, all CLI help surfaces,
+  required release documentation, and no tracked Secret bootstrap or documented physical host
+  path. It does not
+  modify `main`, create a tag or Release, or close the version Gate.
 
 Run only the helper required by the current Gate. Credentials remain in the managed Workspace
 `secrets.env`; the scripts emit allowlisted status messages and fail with a non-zero exit code.

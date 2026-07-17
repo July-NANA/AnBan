@@ -48,6 +48,10 @@ _REPAIR_INSTRUCTION = (
     "1. valid native tool_calls with complete IDs, function names, and JSON object arguments; "
     "or 2. one non-empty final assistant message. Do not describe a Tool Call in plain text."
 )
+_RESPONSE_CONTRACT_REMINDER = (
+    "Response contract reminder: return native tool_calls with no non-whitespace assistant "
+    "content, or one non-empty final assistant message with no tool_calls."
+)
 
 
 @dataclass
@@ -341,6 +345,7 @@ class FixedGeneralAgent:
             if round_fingerprint in completed_rounds:
                 return self._limit_outcome(progress, "no_progress")
             completed_rounds.add(round_fingerprint)
+            messages.append(ModelMessage(role="system", content=_RESPONSE_CONTRACT_REMINDER))
 
         return self._limit_outcome(progress, "model_turn_budget")
 

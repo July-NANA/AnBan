@@ -161,10 +161,15 @@ async def test_tool_call_result_pairing_across_model_turns() -> None:
     assert outcome.model_turn_count == 2
     assert outcome.capability_call_count == 1
     assert len(model.requests) == 2
-    paired = model.requests[1].messages[-1].tool_result
+    paired = next(
+        message.tool_result
+        for message in reversed(model.requests[1].messages)
+        if message.role == "tool"
+    )
     assert paired is not None
     assert paired.tool_call_id == "call-1"
     assert paired.content == "observed"
+    assert "Response contract reminder" in (model.requests[1].messages[-1].content or "")
     _, invocation_context = handler.calls[0]
     assert invocation_context.run_id == execution_input.run_id
     assert invocation_context.node_run_id == execution_input.node_run_id

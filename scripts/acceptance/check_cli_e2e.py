@@ -73,7 +73,7 @@ def isolated_environment(root: Path, source: AnbanConfiguration) -> Generator[No
     model = source.require_model()
     values = {
         "ANBAN_WORKSPACE_DIR": str(root),
-        "HOME": str(root / "home"),
+        "CLAWHUB_CONFIG_PATH": str(root / "home" / "clawhub-config.json"),
         "OPENAI_COMPATIBLE_BASE_URL": model.base_url.get_secret_value(),
         "OPENAI_COMPATIBLE_API_KEY": model.api_key.get_secret_value(),
         "OPENAI_COMPATIBLE_MODEL": model.model,
@@ -198,10 +198,12 @@ async def gate_bcd(root: Path) -> dict[str, object]:
         raise RuntimeGateError("Gate B Workspace was not initially empty")
     install = await submit(
         "Use the available Skill for ClawHub to search public Skills without logging in. Compare "
-        "a bounded set of candidates and explain compatibility before selection. Choose and "
+        "candidates from no more than two successful search commands and explain compatibility "
+        "before selection. Then choose and "
         "install one low-risk Skill that needs no credentials, Browser, MCP, database, or special "
         "service and whose real behavior can be verified with ordinary process execution. The "
-        "request explicitly authorizes searching and installing exactly one suitable Skill."
+        "request explicitly authorizes searching and installing exactly one suitable Skill. Keep "
+        "assistant content empty whenever making a Tool Call."
     )
     require_success(install, "Gate B")
     install_trace = await trace(install.run_id)
@@ -251,18 +253,21 @@ async def gate_bcd(root: Path) -> dict[str, object]:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
-    result.add_argument("--gate-a-only", action="store_true")
+    mode = result.add_mutually_exclusive_group()
+    mode.add_argument("--gate-a-only", action="store_true")
+    mode.add_argument("--gate-bcd-only", action="store_true")
     return result
 
 
-async def accept_runtime(gate_a_only: bool) -> dict[str, object]:
+async def accept_runtime(gate_a_only: bool, gate_bcd_only: bool) -> dict[str, object]:
     source = load_configuration(workspace=resolve_workspace().path)
     parent = source.workspace / "tmp"
     marker = hashlib.sha256(os.urandom(32)).hexdigest()[:12]
-    gate_a_root = prepare_workspace(parent, f"gate28-a-{marker}")
     evidence: dict[str, object] = {}
-    with isolated_environment(gate_a_root, source):
-        evidence["gate_a"] = await gate_a()
+    if not gate_bcd_only:
+        gate_a_root = prepare_workspace(parent, f"gate28-a-{marker}")
+        with isolated_environment(gate_a_root, source):
+            evidence["gate_a"] = await gate_a()
     if not gate_a_only:
         gate_b_root = prepare_workspace(parent, f"gate28-b-{marker}")
         with isolated_environment(gate_b_root, source):
@@ -273,7 +278,7 @@ async def accept_runtime(gate_a_only: bool) -> dict[str, object]:
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
-        evidence = asyncio.run(accept_runtime(arguments.gate_a_only))
+        evidence = asyncio.run(accept_runtime(arguments.gate_a_only, arguments.gate_bcd_only))
     except RuntimeGateError as exc:
         print(f"runtime Gate acceptance: FAIL [{exc}]", file=sys.stderr)
         return 1

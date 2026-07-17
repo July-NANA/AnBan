@@ -14,7 +14,9 @@ from anban.model import (
     ModelMessage,
     ModelRequest,
     OpenAICompatibleAdapter,
+    ToolCall,
     ToolDefinition,
+    ToolResult,
 )
 
 
@@ -80,7 +82,8 @@ FAILURE_CASES: list[tuple[Callable[[httpx.Request], httpx.Response], ErrorCode]]
 async def test_native_tool_call_is_parsed_to_structured_arguments() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        assert body["tools"][0]["function"]["name"] == "file.read"
+        assert body["tools"][0]["function"]["name"] == "anban_tool_0"
+        assert "file.read" in body["tools"][0]["function"]["description"]
         return response(
             {
                 "role": "assistant",
@@ -89,7 +92,10 @@ async def test_native_tool_call_is_parsed_to_structured_arguments() -> None:
                     {
                         "id": "call-1",
                         "type": "function",
-                        "function": {"name": "file.read", "arguments": '{"path":"a.txt"}'},
+                        "function": {
+                            "name": "anban_tool_0",
+                            "arguments": '{"path":"a.txt"}',
+                        },
                     }
                 ],
             },
@@ -115,6 +121,71 @@ async def test_native_tool_call_is_parsed_to_structured_arguments() -> None:
         "input_tokens": 3,
         "output_tokens": 2,
     }
+
+
+@pytest.mark.asyncio
+async def test_semantic_tool_name_is_mapped_in_assistant_history() -> None:
+    semantic_call = ToolCall(id="call-1", name="skill.activate", arguments={"name": "weather"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assistant = body["messages"][-2]
+        assert assistant["tool_calls"][0]["function"]["name"] == "anban_tool_0"
+        return response({"role": "assistant", "content": "done"})
+
+    turn = await adapter(handler).complete(
+        ModelRequest(
+            messages=(
+                ModelMessage(role="user", content="Activate."),
+                ModelMessage(role="assistant", tool_calls=(semantic_call,)),
+                ModelMessage(
+                    role="tool",
+                    tool_result=ToolResult(tool_call_id="call-1", content="activated"),
+                ),
+            ),
+            tools=(
+                ToolDefinition(
+                    name="skill.activate",
+                    description="Activate one Skill.",
+                    input_schema={"type": "object", "additionalProperties": False},
+                ),
+            ),
+        )
+    )
+    assert turn.content == "done"
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_tool_alias_fails_closed() -> None:
+    with pytest.raises(AnbanError) as failure:
+        await adapter(
+            lambda _request: response(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "unknown_alias", "arguments": "{}"},
+                        }
+                    ],
+                },
+                finish_reason="tool_calls",
+            )
+        ).complete(
+            ModelRequest(
+                messages=(ModelMessage(role="user", content="Call."),),
+                tools=(
+                    ToolDefinition(
+                        name="file.read",
+                        description="Read.",
+                        input_schema={"type": "object", "additionalProperties": False},
+                    ),
+                ),
+            )
+        )
+    assert failure.value.info.code is ErrorCode.MODEL_RESPONSE_INVALID
 
 
 @pytest.mark.asyncio

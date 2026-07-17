@@ -12,6 +12,7 @@
     "acceptance:model": "conda run -n anban python -m scripts.acceptance.check_model_gateway",
     "acceptance:skill": "conda run -n anban python -m scripts.acceptance.check_real_skill",
     "acceptance:capability": "conda run -n anban python -m scripts.acceptance.check_local_capabilities",
+    "acceptance:agent": "conda run -n anban python -m scripts.acceptance.check_agent_runtime",
     "acceptance:persistence": "conda run -n anban python -m scripts.acceptance.check_repositories"
   }
 }

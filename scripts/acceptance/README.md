@@ -11,6 +11,8 @@ They are not part of `pnpm run doctor` or ordinary CI.
 - `pnpm run acceptance:capability` invokes the production Registry against the managed Workspace,
   performs real run-scoped file write/read/list operations, creates and verifies a logical Artifact
   snapshot, and executes one real allowlisted no-shell process. Its isolated files are removed.
+- `pnpm run acceptance:agent` runs the fixed production LangGraph with the real ModelPort and
+  Workspace Skill Capability, requiring a native Skill Tool Call, paired Tool Result, and final.
 - `conda run -n anban python -m scripts.acceptance.check_migration_schema` verifies the migrated
   PostgreSQL test profile, six-table schema, status and relationship constraints, and ordered Event
   uniqueness. Its probe records are rolled back.

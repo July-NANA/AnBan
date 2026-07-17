@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from anban.model import ModelMessage, ModelRequest, ModelTurn, ToolCall, ToolResult
+from anban.model import ModelMessage, ModelRequest, ModelTurn, ToolCall, ToolDefinition, ToolResult
 
 
 def test_tool_call_and_result_pairing_passes() -> None:
@@ -43,3 +43,16 @@ def test_unpaired_tool_result_fails(result_id: str) -> None:
 def test_turn_requires_exactly_one_result_shape() -> None:
     with pytest.raises(ValidationError):
         ModelTurn(content="text", structured_output={"value": 1}, finish_reason="stop")
+
+
+def test_tool_names_must_be_unique() -> None:
+    tool = ToolDefinition(
+        name="file.read",
+        description="Read a file.",
+        input_schema={"type": "object", "additionalProperties": False},
+    )
+    with pytest.raises(ValidationError, match="unique"):
+        ModelRequest(
+            messages=(ModelMessage(role="user", content="Read."),),
+            tools=(tool, tool),
+        )

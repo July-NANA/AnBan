@@ -70,7 +70,9 @@ def validate_structured_output(value: dict[str, Any], schema: dict[str, Any]) ->
             )
 
 
-def provider_message(message: ModelMessage) -> ChatCompletionMessageParam:
+def provider_message(
+    message: ModelMessage, provider_names: dict[str, str]
+) -> ChatCompletionMessageParam:
     if message.role in {"system", "user"}:
         return cast(ChatCompletionMessageParam, {"role": message.role, "content": message.content})
     if message.role == "tool":
@@ -82,12 +84,17 @@ def provider_message(message: ModelMessage) -> ChatCompletionMessageParam:
             "tool_call_id": result.tool_call_id,
             "content": result.content,
         }
+    if any(call.name not in provider_names for call in message.tool_calls):
+        raise model_failure(
+            ErrorCode.VALIDATION_FAILED,
+            "Model message references an unavailable Tool",
+        )
     calls = [
         {
             "id": call.id,
             "type": "function",
             "function": {
-                "name": call.name,
+                "name": provider_names[call.name],
                 "arguments": json.dumps(call.arguments, separators=(",", ":")),
             },
         }
@@ -121,12 +128,16 @@ class OpenAICompatibleAdapter:
         await self._client.close()
 
     async def complete(self, request: ModelRequest) -> ModelTurn:
+        provider_names = {
+            tool.name: f"anban_tool_{index}" for index, tool in enumerate(request.tools)
+        }
+        semantic_names = {provider: semantic for semantic, provider in provider_names.items()}
         tools = [
             {
                 "type": "function",
                 "function": {
-                    "name": tool.name,
-                    "description": tool.description,
+                    "name": provider_names[tool.name],
+                    "description": (f"Anban Capability {tool.name}: {tool.description}")[:1024],
                     "strict": True,
                     "parameters": tool.input_schema,
                 },
@@ -134,7 +145,7 @@ class OpenAICompatibleAdapter:
             for tool in request.tools
         ]
         response_format: object | None = None
-        messages = [provider_message(message) for message in request.messages]
+        messages = [provider_message(message, provider_names) for message in request.messages]
         if request.response_schema is not None:
             response_format = {"type": "json_object"}
             instruction = "Return only a JSON object matching this closed schema: " + json.dumps(
@@ -180,6 +191,12 @@ class OpenAICompatibleAdapter:
                 raise model_failure(
                     ErrorCode.MODEL_RESPONSE_INVALID, "model returned an unsupported Tool Call"
                 )
+            semantic_name = semantic_names.get(provider_call.function.name)
+            if semantic_name is None:
+                raise model_failure(
+                    ErrorCode.MODEL_RESPONSE_INVALID,
+                    "model returned an unknown Tool Call",
+                )
             try:
                 parsed: object = json.loads(provider_call.function.arguments)
             except json.JSONDecodeError as exc:
@@ -194,7 +211,7 @@ class OpenAICompatibleAdapter:
                 ToolCall.model_validate(
                     {
                         "id": provider_call.id,
-                        "name": provider_call.function.name,
+                        "name": semantic_name,
                         "arguments": parsed,
                     }
                 )

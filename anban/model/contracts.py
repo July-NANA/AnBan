@@ -59,6 +59,9 @@ class ModelRequest(ModelValue):
 
     @model_validator(mode="after")
     def validate_exchange(self) -> Self:
+        tool_names = [tool.name for tool in self.tools]
+        if len(tool_names) != len(set(tool_names)):
+            raise ValueError("Model tools must have unique names")
         if self.tools and self.response_schema is not None:
             raise ValueError("Tool Calling and structured output cannot share a v0.1 request")
         if self.response_schema is not None:

@@ -36,6 +36,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
+stubPath = "typings"
 include = ["anban", "scripts", "tests"]
 exclude = ["node_modules"]
 

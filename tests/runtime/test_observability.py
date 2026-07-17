@@ -54,6 +54,43 @@ async def test_success_trace_and_audit_are_stable_after_new_service_instance() -
     assert "task.created" not in audit_types
 
 
+async def test_run_count_mismatch_is_reported_from_authoritative_facts() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    result = await PersistentRuntime(
+        TransactionCheckingModel(factory, [tool_turn(), final_turn()]),
+        CapabilityRegistry(
+            (TransactionCheckingCapability(factory, completed_capability(artifact_count=2)),)
+        ),
+        factory,
+    ).execute("Persist count facts.")
+    terminal = next(
+        event
+        for event in factory.store.events.values()
+        if event.run_id == result.run_id and event.event_type == "run.final"
+    )
+    factory.store.events[terminal.id] = terminal.model_copy(
+        update={
+            "metadata": SafeMetadata(
+                {
+                    **terminal.metadata.root,
+                    "model_turn_count": 99,
+                    "capability_call_count": 99,
+                    "artifact_count": 99,
+                }
+            )
+        }
+    )
+
+    observation = await ExecutionQueryService(factory).trace(result.run_id)
+
+    assert observation.complete is False
+    assert observation.inconsistencies == (
+        "artifact_count_mismatch",
+        "capability_call_count_mismatch",
+        "model_turn_count_mismatch",
+    )
+
+
 @pytest.mark.parametrize(
     ("capability_status", "expected_status"),
     [

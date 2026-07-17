@@ -415,7 +415,14 @@ class RunPersistence:
             CapabilityResult(status=status, error=error),
         )
 
-    async def finish(self, outcome: AgentOutcome) -> None:
+    async def finish(
+        self,
+        outcome: AgentOutcome,
+        *,
+        model_turn_count: int | None = None,
+        capability_call_count: int | None = None,
+        artifact_count: int | None = None,
+    ) -> None:
         finished_at = now_utc()
         task_status, run_status, node_status = terminal_statuses(outcome.status)
         error_code = None if outcome.error is None else outcome.error.code
@@ -441,12 +448,11 @@ class RunPersistence:
             await repository.update_run(run)
             await repository.update_task(task)
 
-        metadata = SafeMetadata(
-            {
-                "model_turn_count": outcome.model_turn_count,
-                "capability_call_count": outcome.capability_call_count,
-                **({} if outcome.error is None else error_metadata(outcome.error).root),
-            }
+        metadata = outcome_metadata(
+            outcome,
+            model_turn_count=model_turn_count,
+            capability_call_count=capability_call_count,
+            artifact_count=artifact_count,
         )
         terminal = outcome.status.value
         facts = (
@@ -480,7 +486,14 @@ class RunPersistence:
         )
         self.node = node
 
-    async def finish_run(self, outcome: AgentOutcome) -> None:
+    async def finish_run(
+        self,
+        outcome: AgentOutcome,
+        *,
+        model_turn_count: int | None = None,
+        capability_call_count: int | None = None,
+        artifact_count: int | None = None,
+    ) -> None:
         task_status, run_status, _ = terminal_statuses(outcome.status)
         error_code = None if outcome.error is None else outcome.error.code
         task = self.task.model_copy(update={"status": task_status, "error_code": error_code})
@@ -497,7 +510,12 @@ class RunPersistence:
             await repository.update_run(run)
             await repository.update_task(task)
 
-        metadata = outcome_metadata(outcome)
+        metadata = outcome_metadata(
+            outcome,
+            model_turn_count=model_turn_count,
+            capability_call_count=capability_call_count,
+            artifact_count=artifact_count,
+        )
         terminal = outcome.status.value
         await self._write(
             "run_finished",
@@ -685,11 +703,24 @@ def terminal_statuses(
     )
 
 
-def outcome_metadata(outcome: AgentOutcome) -> SafeMetadata:
+def outcome_metadata(
+    outcome: AgentOutcome,
+    *,
+    model_turn_count: int | None = None,
+    capability_call_count: int | None = None,
+    artifact_count: int | None = None,
+) -> SafeMetadata:
     return SafeMetadata(
         {
-            "model_turn_count": outcome.model_turn_count,
-            "capability_call_count": outcome.capability_call_count,
+            "model_turn_count": (
+                outcome.model_turn_count if model_turn_count is None else model_turn_count
+            ),
+            "capability_call_count": (
+                outcome.capability_call_count
+                if capability_call_count is None
+                else capability_call_count
+            ),
+            "artifact_count": len(outcome.artifacts) if artifact_count is None else artifact_count,
             **({} if outcome.error is None else error_metadata(outcome.error).root),
         }
     )

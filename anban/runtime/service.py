@@ -164,6 +164,9 @@ class PersistentChatSession:
         self._persistence: RunPersistence | None = None
         self._history: list[tuple[str, str]] = []
         self._last_outcome: AgentOutcome | None = None
+        self._model_turn_count = 0
+        self._capability_call_count = 0
+        self._artifact_count = 0
         self._closed = False
         self._terminal_result: ExecutionResult | None = None
 
@@ -251,6 +254,9 @@ class PersistentChatSession:
                 node_run_id=persistence.node.id,
             )
         )
+        self._model_turn_count += outcome.model_turn_count
+        self._capability_call_count += outcome.capability_call_count
+        self._artifact_count += len(outcome.artifacts)
         try:
             await persistence.finish_node(outcome)
         except AnbanError as exc:
@@ -280,7 +286,12 @@ class PersistentChatSession:
             self._closed = True
             return None
         try:
-            await persistence.finish_run(outcome)
+            await persistence.finish_run(
+                outcome,
+                model_turn_count=self._model_turn_count,
+                capability_call_count=self._capability_call_count,
+                artifact_count=self._artifact_count,
+            )
         except AnbanError as exc:
             if await PersistentRuntime.matches_terminal(persistence, outcome):
                 persisted = True
@@ -338,7 +349,12 @@ class PersistentChatSession:
         self, persistence: RunPersistence, outcome: AgentOutcome
     ) -> bool:
         try:
-            await persistence.finish(outcome)
+            await persistence.finish(
+                outcome,
+                model_turn_count=self._model_turn_count,
+                capability_call_count=self._capability_call_count,
+                artifact_count=self._artifact_count,
+            )
             return True
         except AnbanError:
             return await self._finish_run_failure(persistence, outcome)
@@ -365,7 +381,12 @@ class PersistentChatSession:
 
     async def _finish_run_failure(self, persistence: RunPersistence, outcome: AgentOutcome) -> bool:
         try:
-            await persistence.finish_run(outcome)
+            await persistence.finish_run(
+                outcome,
+                model_turn_count=self._model_turn_count,
+                capability_call_count=self._capability_call_count,
+                artifact_count=self._artifact_count,
+            )
             return True
         except AnbanError:
             return await PersistentRuntime.matches_terminal(persistence, outcome)

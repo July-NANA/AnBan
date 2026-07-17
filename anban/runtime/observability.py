@@ -24,6 +24,9 @@ _AUDIT_EVENT_PREFIXES = (
     "run.final",
     "run.error",
 )
+_CAPABILITY_TERMINAL_EVENTS = frozenset(
+    {"capability.completed", "capability.failed", "capability.cancelled", "capability.timed_out"}
+)
 _EVENT_METADATA_ALLOWLIST = frozenset(
     {
         "argument_count",
@@ -195,6 +198,36 @@ def inspect_consistency(
             elif artifact.run_id != aggregate.run.id:
                 issues.add("event_artifact_mismatch")
 
+    artifact_events = [event for event in events if event.event_type == "artifact.created"]
+    if len(artifact_events) != len(artifacts) or {
+        event.artifact_id for event in artifact_events
+    } != set(artifacts):
+        issues.add("artifact_event_count_mismatch")
+    for event in events:
+        if event.event_type not in _CAPABILITY_TERMINAL_EVENTS:
+            continue
+        invocation_artifact_count = sum(
+            artifact.invocation_id == event.invocation_id for artifact in artifacts.values()
+        )
+        if not metadata_count_matches(event, "artifact_count", invocation_artifact_count):
+            issues.add("capability_artifact_count_mismatch")
+
+    terminal_events = [event for event in events if event.event_type in {"run.final", "run.error"}]
+    if len(terminal_events) == 1:
+        terminal = terminal_events[0]
+        if not metadata_count_matches(
+            terminal,
+            "model_turn_count",
+            sum(event.event_type == "model.requested" for event in events),
+        ):
+            issues.add("model_turn_count_mismatch")
+        if not metadata_count_matches(terminal, "capability_call_count", len(invocations)):
+            issues.add("capability_call_count_mismatch")
+        if not metadata_count_matches(terminal, "artifact_count", len(artifacts)):
+            issues.add("artifact_count_mismatch")
+    else:
+        issues.add("terminal_event_count_invalid")
+
     if aggregate.task.status.value not in _TERMINAL:
         issues.add("task_incomplete")
     if aggregate.run.status.value not in _TERMINAL:
@@ -207,3 +240,8 @@ def inspect_consistency(
     if not any(event.event_type == final_type for event in events):
         issues.add("terminal_event_missing")
     return tuple(sorted(issues))
+
+
+def metadata_count_matches(event: Event, name: str, expected: int) -> bool:
+    value = event.metadata.root.get(name)
+    return isinstance(value, int) and not isinstance(value, bool) and value == expected

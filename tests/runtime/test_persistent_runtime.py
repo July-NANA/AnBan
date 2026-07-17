@@ -323,6 +323,10 @@ async def test_success_is_durable_and_external_calls_have_no_open_transaction() 
     assert len(aggregate.artifacts) == 2
     assert len({artifact.invocation_id for artifact in aggregate.artifacts}) == 1
     assert sum(event.event_type == "artifact.created" for event in aggregate.events) == 2
+    terminal = next(event for event in aggregate.events if event.event_type == "run.final")
+    assert terminal.metadata.root["model_turn_count"] == 2
+    assert terminal.metadata.root["capability_call_count"] == 1
+    assert terminal.metadata.root["artifact_count"] == 2
     assert tuple(event.sequence for event in aggregate.events) == tuple(
         range(1, len(aggregate.events) + 1)
     )
@@ -538,9 +542,38 @@ async def test_chat_uses_one_run_and_one_node_per_bounded_input() -> None:
     assert len(aggregate.nodes) == 2
     assert all(node.status.value == "succeeded" for node in aggregate.nodes)
     assert session.user_input_count == 2
+    terminal = next(event for event in aggregate.events if event.event_type == "run.final")
+    assert terminal.metadata.root["model_turn_count"] == 2
+    assert terminal.metadata.root["capability_call_count"] == 0
+    assert terminal.metadata.root["artifact_count"] == 0
     assert "Previous user: First temporary message." in (
         model.requests[1].messages[1].content or ""
     )
+
+
+async def test_chat_run_terminal_counts_accumulate_capability_calls_across_nodes() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    model = TransactionCheckingModel(
+        factory,
+        [tool_turn(), final_turn("First."), tool_turn(), final_turn("Second.")],
+    )
+    capability = TransactionCheckingCapability(factory, completed_capability())
+    session = PersistentRuntime(
+        model,
+        CapabilityRegistry((capability,)),
+        factory,
+    ).chat()
+
+    first = await session.submit("First action.")
+    await session.submit("Second action.")
+    await session.close()
+
+    aggregate = await load_run(factory, first.run_id)
+    terminal = next(event for event in aggregate.events if event.event_type == "run.final")
+    assert terminal.metadata.root["model_turn_count"] == 4
+    assert terminal.metadata.root["capability_call_count"] == 2
+    assert terminal.metadata.root["artifact_count"] == 0
+    assert capability.calls == 2
 
 
 async def test_chat_limit_closes_without_creating_another_run() -> None:

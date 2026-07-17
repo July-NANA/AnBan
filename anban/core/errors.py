@@ -34,6 +34,7 @@ class ErrorCode(StrEnum):
     MODEL_REJECTED = "model_rejected"
     MODEL_RESPONSE_INVALID = "model_response_invalid"
     CAPABILITY_UNKNOWN = "capability_unknown"
+    CAPABILITY_UNAVAILABLE = "capability_unavailable"
     CAPABILITY_ARGUMENTS_INVALID = "capability_arguments_invalid"
     CAPABILITY_EXECUTION_FAILED = "capability_execution_failed"
     PERSISTENCE_UNAVAILABLE = "persistence_unavailable"
@@ -53,6 +54,7 @@ _ERROR_CATEGORIES: dict[ErrorCode, ErrorCategory] = {
     ErrorCode.MODEL_REJECTED: ErrorCategory.MODEL,
     ErrorCode.MODEL_RESPONSE_INVALID: ErrorCategory.MODEL,
     ErrorCode.CAPABILITY_UNKNOWN: ErrorCategory.CAPABILITY,
+    ErrorCode.CAPABILITY_UNAVAILABLE: ErrorCategory.CAPABILITY,
     ErrorCode.CAPABILITY_ARGUMENTS_INVALID: ErrorCategory.CAPABILITY,
     ErrorCode.CAPABILITY_EXECUTION_FAILED: ErrorCategory.CAPABILITY,
     ErrorCode.PERSISTENCE_UNAVAILABLE: ErrorCategory.PERSISTENCE,

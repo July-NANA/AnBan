@@ -56,7 +56,7 @@ async def accept_schema() -> None:
             revision = (
                 await connection.execute(text("SELECT version_num FROM alembic_version"))
             ).scalar_one()
-            if revision != "0002_model_errors":
+            if revision != "0003_capability_error":
                 raise MigrationAcceptanceError("migration head mismatch")
             rows = await connection.execute(
                 text(

@@ -106,7 +106,7 @@ async def accept_repositories() -> None:
             revision = (
                 await connection.execute(text("SELECT version_num FROM alembic_version"))
             ).scalar_one()
-            if identity != "anban_test" or revision != "0002_model_errors":
+            if identity != "anban_test" or revision != "0003_capability_error":
                 raise RepositoryAcceptanceError("test database or migration identity mismatch")
 
         async with factory() as unit:

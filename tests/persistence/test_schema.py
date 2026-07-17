@@ -49,13 +49,13 @@ def test_event_order_and_run_detail_indexes_exist() -> None:
         )
 
 
-def test_alembic_has_one_reversible_initial_revision() -> None:
+def test_alembic_has_one_reversible_head_revision() -> None:
     repository = Path(__file__).resolve().parents[2]
     configuration = Config(repository / "alembic.ini")
     scripts = ScriptDirectory.from_config(configuration)
     head = scripts.get_current_head()
-    assert head == "0002_model_errors"
+    assert head == "0003_capability_error"
     revision = scripts.get_revision(head)
     assert revision is not None
-    assert revision.down_revision == "0001_v01_runtime"
+    assert revision.down_revision == "0002_model_errors"
     assert callable(revision.module.downgrade)

@@ -14,6 +14,7 @@
     "acceptance:capability": "conda run -n anban python -m scripts.acceptance.check_local_capabilities",
     "acceptance:agent": "conda run -n anban python -m scripts.acceptance.check_agent_runtime",
     "acceptance:runtime": "conda run -n anban python -m scripts.acceptance.check_persistent_runtime",
+    "acceptance:p2": "conda run -n anban python -m scripts.acceptance.check_p2_gate",
     "acceptance:persistence": "conda run -n anban python -m scripts.acceptance.check_repositories"
   }
 }

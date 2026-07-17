@@ -19,6 +19,13 @@ They are not part of `pnpm run doctor` or ordinary CI.
 - `pnpm run acceptance:persistence` verifies real PostgreSQL create/read/locked-update paths, Run
   reconstruction, deterministic Event order, atomic rollback, and deterministic cleanup against
   `anban_test`.
+- `pnpm run acceptance:runtime` runs the real Model and governed file Capability through the
+  persistent Runtime, then rebuilds its Run and safe Audit/Trace in a new process.
+- `pnpm run acceptance:p2` is the P2 Gate: one real persisted Run activates the approved Weather
+  Skill and performs a governed file write before final output; a new process verifies PostgreSQL,
+  Artifact, Event, Audit, and Trace facts. The same command probes production model transport and
+  timeout classification plus unknown/invalid Capability, traversal, symlink, process timeout,
+  missing executable, output limit, and environment isolation failures.
 
 Run only the helper required by the current Gate. Credentials remain in the managed Workspace
 `secrets.env`; the scripts emit allowlisted status messages and fail with a non-zero exit code.

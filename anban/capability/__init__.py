@@ -2,13 +2,23 @@
 
 from anban.capability.contracts import (
     ArtifactReference,
+    AvailabilityStatus,
     CapabilityDescriptor,
     CapabilityHandler,
+    CapabilityInventoryItem,
+    CapabilityInventoryPort,
+    CapabilityInventoryQuery,
+    CapabilityInventorySnapshot,
     CapabilityKind,
     CapabilityPort,
     CapabilityResult,
     CapabilityResultStatus,
+    CostLevel,
+    InventoryBoundary,
+    InventoryKind,
     InvocationContext,
+    RiskLevel,
+    SideEffectLevel,
 )
 from anban.capability.local import local_capability_registry
 from anban.capability.registry import CapabilityRegistry
@@ -21,14 +31,24 @@ from anban.capability.skill import (
 
 __all__ = [
     "ArtifactReference",
+    "AvailabilityStatus",
     "CapabilityDescriptor",
     "CapabilityHandler",
+    "CapabilityInventoryItem",
+    "CapabilityInventoryPort",
+    "CapabilityInventoryQuery",
+    "CapabilityInventorySnapshot",
     "CapabilityKind",
     "CapabilityPort",
     "CapabilityRegistry",
     "CapabilityResult",
     "CapabilityResultStatus",
+    "CostLevel",
+    "InventoryBoundary",
+    "InventoryKind",
     "InvocationContext",
+    "RiskLevel",
+    "SideEffectLevel",
     "SkillActivationCapability",
     "SkillDiagnostic",
     "SkillPackage",

@@ -26,6 +26,7 @@ APPROVED_PRODUCT_MODULES = {
 APPROVED_INFRASTRUCTURE_MODULES = {"config"}
 APPROVED_PROTOCOLS = {
     "CapabilityHandler",
+    "CapabilityInventoryPort",
     "CapabilityPort",
     "ExecutionRepository",
     "ModelPort",

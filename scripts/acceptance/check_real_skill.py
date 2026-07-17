@@ -6,14 +6,14 @@ import asyncio
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from anban.capability import (
-    CapabilityRegistry,
     CapabilityResultStatus,
     InvocationContext,
+    local_capability_registry,
     register_workspace_skill,
 )
+from anban.config import load_configuration
 from anban.core.errors import AnbanError
 from anban.core.ids import (
     new_capability_invocation_id,
@@ -22,6 +22,42 @@ from anban.core.ids import (
 )
 from scripts.doctor import CLAW_CLI, REPOSITORY, command, skill_baseline_result
 from scripts.workspace_bootstrap import WorkspaceResolutionError, resolve_workspace
+
+
+async def accept_live_skill() -> None:
+    workspace = resolve_workspace(repository=REPOSITORY).path
+    configuration = load_configuration(workspace=workspace)
+    registry = local_capability_registry(
+        workspace_root=workspace,
+        protected_values=configuration.protected_values(),
+    )
+    packages = register_workspace_skill(registry, workspace_root=workspace)
+    context = InvocationContext(
+        run_id=new_execution_run_id(),
+        node_run_id=new_node_run_id(),
+        invocation_id=new_capability_invocation_id(),
+        deadline_at=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    activation = await registry.invoke("skill.activate", {"name": "@steipete/weather"}, context)
+    if (
+        len(packages) != 1
+        or activation.status is not CapabilityResultStatus.COMPLETED
+        or "wttr.in" not in (activation.observation or "")
+        or str(workspace) in str(activation.model_dump(mode="json"))
+        or "/tmp/" in (activation.observation or "")
+    ):
+        raise RuntimeError("skill_activation_invalid")
+    weather = await registry.invoke(
+        "http.get",
+        {"url": "https://wttr.in/Sydney?format=3", "timeout": 30},
+        context.model_copy(update={"invocation_id": new_capability_invocation_id()}),
+    )
+    if (
+        weather.status is not CapabilityResultStatus.COMPLETED
+        or "Sydney" not in (weather.observation or "")
+        or weather.metadata.root.get("status_code") != 200
+    ):
+        raise RuntimeError("real_skill_response_invalid")
 
 
 def main() -> int:
@@ -42,50 +78,15 @@ def main() -> int:
         return 1
 
     try:
-        registry = CapabilityRegistry()
-        packages = register_workspace_skill(registry, workspace_root=workspace)
-        context = InvocationContext(
-            run_id=new_execution_run_id(),
-            node_run_id=new_node_run_id(),
-            invocation_id=new_capability_invocation_id(),
-            deadline_at=datetime.now(UTC) + timedelta(seconds=30),
-        )
-        activation = asyncio.run(
-            registry.invoke("skill.activate", {"name": "@steipete/weather"}, context)
-        )
+        asyncio.run(accept_live_skill())
     except AnbanError as exc:
-        print(f"real Skill: FAIL [{exc.info.code.value}] activation failed")
+        print(f"real Skill: FAIL [{exc.info.code.value}] governed execution failed")
         return 1
-    if (
-        len(packages) != 1
-        or activation.status is not CapabilityResultStatus.COMPLETED
-        or "wttr.in" not in (activation.observation or "")
-        or str(workspace) in str(activation.model_dump(mode="json"))
-        or "/tmp/" in (activation.observation or "")
-    ):
-        print("real Skill: FAIL [skill_activation_invalid] safe activation mismatch")
+    except Exception as exc:
+        print(f"real Skill: FAIL [real_skill_failed] {type(exc).__name__}")
         return 1
 
-    try:
-        response = command(
-            "curl",
-            "-fsS",
-            "--max-time",
-            "30",
-            "https://wttr.in/Sydney?format=3",
-            cwd=Path.cwd(),
-            timeout=40,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        print(f"real Skill: FAIL [real_skill_network_failed] {type(exc).__name__}")
-        return 1
-    if "Sydney" not in response:
-        print("real Skill: FAIL [real_skill_response_invalid] City identity missing.")
-        return 1
-
-    print(
-        "real Skill: PASS discovery, version, pin, hash, safe activation, and live weather request"
-    )
+    print("real Skill: PASS discovery, pin, activation, and production http.get weather request")
     return 0
 
 

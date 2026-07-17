@@ -176,8 +176,9 @@ async def accept_vertical_slice(
         (
             "run",
             "First call skill.activate for @steipete/weather. After its Tool Result, call "
+            "http.get exactly once for https://wttr.in/Sydney?format=3. After that Tool Result, "
             "file.write exactly once with path acceptance/cli-e2e.txt and content "
-            "cli-e2e-accepted. After both Tool Results, return one short final sentence.",
+            "cli-e2e-accepted. After all Tool Results, return one short final sentence.",
             "--json",
         ),
         environment,
@@ -211,7 +212,8 @@ async def accept_vertical_slice(
         or show.run.status.value != "succeeded"
         or len(show.nodes) != 1
         or show.nodes[0].status.value != "succeeded"
-        or [item.capability_name for item in show.invocations] != ["skill.activate", "file.write"]
+        or [item.capability_name for item in show.invocations]
+        != ["skill.activate", "http.get", "file.write"]
         or any(item.status.value != "succeeded" for item in show.invocations)
         or not show.observability.complete
         or not trace.complete
@@ -224,6 +226,12 @@ async def accept_vertical_slice(
     sequences = [entry.sequence for entry in trace.trace]
     event_types = {entry.event_type for entry in trace.trace}
     skill_events = [entry for entry in trace.trace if entry.event_type == "skill.activated"]
+    http_events = [
+        entry
+        for entry in trace.trace
+        if entry.event_type == "capability.completed"
+        and entry.metadata.root.get("capability_name") == "http.get"
+    ]
     skill_metadata = skill_events[0].metadata.root if len(skill_events) == 1 else None
     artifact = artifacts[0]
     if (
@@ -241,6 +249,8 @@ async def accept_vertical_slice(
         or skill_metadata.get("skill_version") != WEATHER_SKILL.version
         or skill_metadata.get("content_hash") != WEATHER_SKILL.sha256
         or skill_metadata.get("skill_source") != "anban://skill/@steipete/weather@1.0.0"
+        or len(http_events) != 1
+        or http_events[0].metadata.root.get("status_code") != 200
         or not artifact.uri.startswith("anban://artifact/")
         or artifact.size_bytes != len(b"cli-e2e-accepted")
     ):

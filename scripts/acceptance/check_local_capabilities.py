@@ -43,7 +43,14 @@ async def accept_local_capabilities(workspace: Path) -> None:
     run_storage = workspace / "runs" / str(context.run_id)
     artifact_storage = workspace / "artifacts" / str(context.run_id)
     try:
-        expected = ("file.list", "file.read", "file.write", "process.execute")
+        expected = (
+            "file.list",
+            "file.read",
+            "file.write",
+            "http.get",
+            "http.request",
+            "process.execute",
+        )
         if tuple(item.name for item in registry.search()) != expected:
             raise CapabilityAcceptanceError("registered Capability set mismatch")
         content = "real governed Capability acceptance"

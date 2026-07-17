@@ -50,6 +50,7 @@ async def build_application() -> Application:
         capabilities = local_capability_registry(
             workspace_root=configuration.workspace,
             process_default_timeout_seconds=configuration.process.default_timeout_seconds,
+            protected_values=configuration.protected_values(),
         )
         register_workspace_skill(capabilities, workspace_root=configuration.workspace)
         runtime = PersistentRuntime(

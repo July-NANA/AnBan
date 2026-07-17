@@ -1,10 +1,11 @@
-"""Production wiring for the four v0.1 local Capabilities."""
+"""Production wiring for v0.1 local and outbound HTTP Capabilities."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
 
+from anban.capability.http import HttpCapability
 from anban.capability.process import ProcessCapability
 from anban.capability.registry import CapabilityRegistry
 from anban.capability.workspace import FileCapability, WorkspaceBoundary
@@ -18,6 +19,7 @@ def local_capability_registry(
     allowed_executables: Mapping[str, Path] | None = None,
     environment: Mapping[str, str] | None = None,
     process_default_timeout_seconds: int = policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS,
+    protected_values: tuple[str, ...] = (),
 ) -> CapabilityRegistry:
     """Build the only production Registry wiring for local v0.1 handlers."""
 
@@ -45,5 +47,7 @@ def local_capability_registry(
             FileCapability("read", boundary),
             FileCapability("write", boundary),
             process,
+            HttpCapability(method="GET", protected_values=protected_values),
+            HttpCapability(protected_values=protected_values),
         )
     )

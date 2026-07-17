@@ -10,6 +10,7 @@ from anban.capability.contracts import (
     CapabilityResultStatus,
     InvocationContext,
 )
+from anban.capability.http import HttpCapability
 from anban.capability.local import local_capability_registry
 from anban.capability.registry import CapabilityRegistry
 from anban.capability.skill import (
@@ -30,6 +31,7 @@ __all__ = [
     "CapabilityRegistry",
     "CapabilityResult",
     "CapabilityResultStatus",
+    "HttpCapability",
     "InvocationContext",
     "SkillActivationCapability",
     "SkillPackage",

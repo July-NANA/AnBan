@@ -25,7 +25,9 @@ flowchart LR
   execution discipline, persistence coordination, and restart-safe query projections.
 - **Model** owns the independent ModelPort and OpenAI-compatible Adapter. It is not a Capability.
 - **Capability** owns Registry, schema validation, Runtime-generated invocation context, governed
-  file/process adapters, and Workspace Skill activation. A Skill is a specialized Capability.
+  file/process adapters, bounded multi-method HTTP requests, and Workspace Skill activation. A
+  Skill is a specialized Capability. HTTP destinations are caller-selected without a host
+  allowlist; ADR-0004 records the resulting SSRF tradeoff and fixed safety bounds.
 - **Persistence** maps Core contracts to SQLAlchemy/PostgreSQL and implements short Unit of Work
   transactions and aggregate reconstruction.
 

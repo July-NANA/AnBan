@@ -33,7 +33,14 @@ def registry(root: Path) -> CapabilityRegistry:
 
 async def test_all_local_handlers_are_registered_through_registry(tmp_path: Path) -> None:
     names = tuple(item.name for item in registry(tmp_path).search())
-    assert names == ("file.list", "file.read", "file.write", "process.execute")
+    assert names == (
+        "file.list",
+        "file.read",
+        "file.write",
+        "http.get",
+        "http.request",
+        "process.execute",
+    )
 
 
 async def test_write_read_list_and_logical_artifact_are_real(tmp_path: Path) -> None:

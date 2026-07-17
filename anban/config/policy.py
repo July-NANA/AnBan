@@ -63,9 +63,17 @@ PROCESS_STDERR_MAX_BYTES = 16_384
 # process.execute 允许的最大参数数量；固定硬上限防止命令放大。
 PROCESS_ARGUMENTS_MAX = 64
 
-# 受治理 HTTP GET 的固定最长执行时间，单位为秒；不可由 Workspace 放宽。
-HTTP_GET_TIMEOUT_MAX_SECONDS = 30
-# 受治理 HTTP GET 的固定最大响应字节数；避免下载和模型上下文放大。
-HTTP_GET_RESPONSE_MAX_BYTES = 16_384
-# 受治理 HTTP GET 的最大 URL 长度；限制解析和请求表面积。
-HTTP_GET_URL_MAX_LENGTH = 2_048
+# HTTP Capability 的固定最长执行时间，单位为秒；不可由 Workspace 放宽并受 Agent 剩余时间约束。
+HTTP_TIMEOUT_MAX_SECONDS = 30
+# HTTP Capability 的固定最大响应字节数；避免下载、解压和模型上下文放大。
+HTTP_RESPONSE_MAX_BYTES = 16_384
+# HTTP Capability 的最大 JSON 请求体字节数；限制外部副作用和内存放大。
+HTTP_REQUEST_BODY_MAX_BYTES = 16_384
+# HTTP Capability 的最大 URL 长度；不限制主机，但限制解析和请求表面积。
+HTTP_URL_MAX_LENGTH = 2_048
+# HTTP Capability 的最大自定义请求头数量；只允许非敏感、定长头部。
+HTTP_HEADER_MAX_ITEMS = 16
+# HTTP Capability 单个请求头名称的最大字符数；固定上限防止头部放大。
+HTTP_HEADER_NAME_MAX_LENGTH = 128
+# HTTP Capability 单个请求头值的最大字符数；固定上限防止头部放大和泄漏面扩张。
+HTTP_HEADER_VALUE_MAX_LENGTH = 1_024

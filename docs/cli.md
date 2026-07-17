@@ -66,6 +66,8 @@ return it; otherwise only the structured top-level error is emitted.
 
 - Model turns per Agent Node: 8
 - Capability calls per Agent Node: 8
+- HTTP requests: `http.get` plus `http.request` for GET, POST, PUT, PATCH, DELETE, HEAD, and OPTIONS;
+  caller-selected HTTP(S) destinations, no redirects, bounded JSON bodies and text responses
 - Total Agent execution: 180 seconds
 - Repeated identical call limit: failure before the third execution
 - Process timeout: 10 seconds by default, 30 seconds maximum

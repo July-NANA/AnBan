@@ -241,7 +241,7 @@ async def inspect_gate_run(run_id: ExecutionRunId, workspace: Path) -> None:
             aggregate.run.status.value != "succeeded"
             or len(aggregate.nodes) != 1
             or aggregate.nodes[0].status.value != "succeeded"
-            or invocation_names != ("skill.activate", "file.write")
+            or invocation_names != ("skill.activate", "http.get", "file.write")
             or any(item.status.value != "succeeded" for item in aggregate.invocations)
             or len(aggregate.artifacts) != 1
             or not observability.complete
@@ -301,19 +301,21 @@ async def accept_real_vertical_slice(workspace: Path) -> tuple[TaskId, Execution
             workspace_root=workspace,
             allowed_executables={"python": Path(sys.executable)},
             environment={"PYTHONUTF8": "1"},
+            protected_values=configuration.protected_values(),
         )
         register_workspace_skill(registry, workspace_root=workspace)
         runtime = PersistentRuntime(model, registry, SQLAlchemyUnitOfWorkFactory(engine))
         result = await runtime.execute(
             "First call skill.activate for @steipete/weather. After its Tool Result, call "
+            "http.get exactly once for https://wttr.in/Sydney?format=3. After that Tool Result, "
             "file.write exactly once with path p2/result.txt and content p2-runtime-accepted. "
-            "After both Tool Results, return one short final sentence."
+            "After all Tool Results, return one short final sentence."
         )
         if (
             not result.persisted
             or result.outcome.status is not AgentOutcomeStatus.SUCCEEDED
             or result.outcome.model_turn_count < 2
-            or result.outcome.capability_call_count != 2
+            or result.outcome.capability_call_count != 3
             or len(result.outcome.artifacts) != 1
         ):
             raise P2GateError("P2 real vertical slice did not complete")

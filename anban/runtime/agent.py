@@ -250,11 +250,19 @@ class FixedGeneralAgent:
                 stripped_content = turn.content.strip()
                 try:
                     final_text = validate_safe_text(
-                        stripped_content, label="Agent final text", max_length=32_768
+                        stripped_content,
+                        label="Agent final text",
+                        max_length=32_768,
+                        allow_absolute_paths=True,
                     )
                 except ValueError:
                     violation = (
-                        safe_text_violation_reason(stripped_content, max_length=32_768) or "unknown"
+                        safe_text_violation_reason(
+                            stripped_content,
+                            max_length=32_768,
+                            allow_absolute_paths=True,
+                        )
+                        or "unknown"
                     )
                     return self._outcome(
                         AgentOutcomeStatus.FAILED,

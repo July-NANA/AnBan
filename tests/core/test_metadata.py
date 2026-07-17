@@ -26,6 +26,20 @@ def test_standalone_slash_is_punctuation_but_absolute_host_path_is_rejected() ->
     assert validate_safe_text("18 C / 64 F", label="weather") == "18 C / 64 F"
     with pytest.raises(ValueError, match="absolute_host_path"):
         validate_safe_text("stored at /private/result.txt", label="unsafe")
+    assert (
+        validate_safe_text(
+            "stored at /private/result.txt",
+            label="user-visible result",
+            allow_absolute_paths=True,
+        )
+        == "stored at /private/result.txt"
+    )
+    with pytest.raises(ValueError, match="forbidden_sensitive_form"):
+        validate_safe_text(
+            "Bearer canary-value",
+            label="user-visible result",
+            allow_absolute_paths=True,
+        )
 
 
 @pytest.mark.parametrize(

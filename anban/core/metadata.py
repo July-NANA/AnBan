@@ -41,27 +41,40 @@ _ALLOWED_KEY_PARTS = {
 _VALUE_TOKEN_SEPARATOR = re.compile(r"[\s=,;()\[\]{}]+")
 
 
-def safe_text_violation_reason(value: str, *, max_length: int = 512) -> str | None:
+def safe_text_violation_reason(
+    value: str, *, max_length: int = 512, allow_absolute_paths: bool = False
+) -> str | None:
     """Return one non-sensitive reason without retaining or reproducing the inspected text."""
     if len(value) > max_length:
         return "length_limit"
     lowered = value.lower()
     if any(part in lowered for part in _FORBIDDEN_VALUE_PARTS):
         return "forbidden_sensitive_form"
-    for candidate in _VALUE_TOKEN_SEPARATOR.split(value):
-        token = candidate.strip("'\"")
-        # 独立斜杠常用于单位或二选一分隔，不包含主机路径事实；更长的绝对路径继续拒绝。
-        if token == "/":
-            continue
-        if token and (Path(token).is_absolute() or PureWindowsPath(token).is_absolute()):
-            return "absolute_host_path"
+    if not allow_absolute_paths:
+        for candidate in _VALUE_TOKEN_SEPARATOR.split(value):
+            token = candidate.strip("'\"")
+            # 独立斜杠常用于单位或二选一分隔，不包含主机路径事实；更长的绝对路径继续拒绝。
+            if token == "/":
+                continue
+            if token and (Path(token).is_absolute() or PureWindowsPath(token).is_absolute()):
+                return "absolute_host_path"
     return None
 
 
-def validate_safe_text(value: str, *, label: str, max_length: int = 512) -> str:
+def validate_safe_text(
+    value: str,
+    *,
+    label: str,
+    max_length: int = 512,
+    allow_absolute_paths: bool = False,
+) -> str:
     """Reject bounded text containing credential forms, URLs, or physical host paths."""
 
-    reason = safe_text_violation_reason(value, max_length=max_length)
+    reason = safe_text_violation_reason(
+        value,
+        max_length=max_length,
+        allow_absolute_paths=allow_absolute_paths,
+    )
     if reason is not None:
         raise ValueError(f"{label} violates safe text policy: {reason}")
     return value

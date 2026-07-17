@@ -74,7 +74,12 @@ class AgentOutcome(RuntimeValue):
         if self.status is AgentOutcomeStatus.SUCCEEDED:
             if self.final_text is None or self.error is not None:
                 raise ValueError("successful Agent outcome requires final text and no error")
-            validate_safe_text(self.final_text, label="Agent final text", max_length=32_768)
+            validate_safe_text(
+                self.final_text,
+                label="Agent final text",
+                max_length=32_768,
+                allow_absolute_paths=True,
+            )
         elif self.error is None or self.final_text is not None:
             raise ValueError("non-successful Agent outcome requires an error and no final text")
         return self

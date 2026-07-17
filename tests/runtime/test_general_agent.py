@@ -152,6 +152,16 @@ async def test_valid_model_final_is_the_only_success_path() -> None:
     assert "file operations, network operations" in system_contract
 
 
+async def test_user_visible_final_may_report_an_absolute_result_path() -> None:
+    final_text = "Installed result at /private/workspace/skills/example/SKILL.md."
+    outcome = await FixedGeneralAgent(
+        ScriptedModel([final_turn(final_text)]), CapabilityRegistry()
+    ).execute(agent_input())
+
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert outcome.final_text == final_text
+
+
 async def test_tool_call_result_pairing_across_model_turns() -> None:
     model = ScriptedModel([tool_turn(call()), final_turn()])
     handler = RecordingHandler()
@@ -274,7 +284,7 @@ async def test_model_failures_are_safe_terminal_outcomes(
         tool_turn(call(), finish_reason="stop"),
         final_turn(finish_reason="length"),
         ModelTurn(structured_output={"answer": "unexpected"}, finish_reason="stop"),
-        final_turn("/private/host/result.txt"),
+        final_turn("Bearer canary-value"),
     ],
 )
 async def test_invalid_or_unsafe_model_turn_never_succeeds(turn: ModelTurn) -> None:

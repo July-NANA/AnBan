@@ -1,5 +1,12 @@
 """Thin, authoritative domain vocabulary and structured specifications."""
 
+from anban.core.errors import (
+    AnbanError,
+    ErrorCategory,
+    ErrorCode,
+    ErrorInfo,
+    InvalidTransitionError,
+)
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
@@ -15,6 +22,16 @@ from anban.core.ids import (
     new_graph_revision_id,
     new_node_run_id,
     new_task_id,
+)
+from anban.core.lifecycle import (
+    CAPABILITY_INVOCATION_TRANSITIONS,
+    EXECUTION_RUN_TRANSITIONS,
+    NODE_RUN_TRANSITIONS,
+    TASK_TRANSITIONS,
+    ensure_capability_invocation_transition,
+    ensure_execution_run_transition,
+    ensure_node_run_transition,
+    ensure_task_transition,
 )
 from anban.core.metadata import SafeMetadata
 from anban.core.models import (
@@ -32,24 +49,37 @@ from anban.core.models import (
 )
 
 __all__ = [
+    "AnbanError",
     "Artifact",
     "ArtifactId",
     "CapabilityInvocation",
     "CapabilityInvocationId",
     "CapabilityInvocationStatus",
+    "CAPABILITY_INVOCATION_TRANSITIONS",
     "Event",
     "EventId",
+    "ErrorCategory",
+    "ErrorCode",
+    "ErrorInfo",
     "ExecutionRun",
     "ExecutionRunId",
     "ExecutionRunStatus",
+    "EXECUTION_RUN_TRANSITIONS",
     "GraphRevisionId",
+    "InvalidTransitionError",
     "NodeRun",
     "NodeRunId",
     "NodeRunStatus",
+    "NODE_RUN_TRANSITIONS",
     "SafeMetadata",
     "Task",
     "TaskId",
     "TaskStatus",
+    "TASK_TRANSITIONS",
+    "ensure_capability_invocation_transition",
+    "ensure_execution_run_transition",
+    "ensure_node_run_transition",
+    "ensure_task_transition",
     "new_artifact_id",
     "new_capability_invocation_id",
     "new_event_id",

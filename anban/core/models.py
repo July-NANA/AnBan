@@ -9,6 +9,7 @@ from typing import Annotated, Self
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
+from anban.core.errors import ErrorCode
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
@@ -86,6 +87,7 @@ class Task(DomainModel):
     id: TaskId
     request: str = Field(min_length=1, max_length=32_768)
     status: TaskStatus = TaskStatus.CREATED
+    error_code: ErrorCode | None = None
     created_at: UtcDateTime = Field(default_factory=now_utc)
     metadata: SafeMetadata = Field(default_factory=SafeMetadata)
 
@@ -99,7 +101,7 @@ class ExecutionRun(DomainModel):
     started_at: UtcDateTime | None = None
     finished_at: UtcDateTime | None = None
     final_text: str | None = Field(default=None, max_length=32_768)
-    error_code: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    error_code: ErrorCode | None = None
     metadata: SafeMetadata = Field(default_factory=SafeMetadata)
 
 
@@ -111,6 +113,7 @@ class NodeRun(DomainModel):
     created_at: UtcDateTime = Field(default_factory=now_utc)
     started_at: UtcDateTime | None = None
     finished_at: UtcDateTime | None = None
+    error_code: ErrorCode | None = None
     metadata: SafeMetadata = Field(default_factory=SafeMetadata)
 
 
@@ -127,6 +130,7 @@ class CapabilityInvocation(DomainModel):
     requested_at: UtcDateTime = Field(default_factory=now_utc)
     started_at: UtcDateTime | None = None
     finished_at: UtcDateTime | None = None
+    error_code: ErrorCode | None = None
     metadata: SafeMetadata = Field(default_factory=SafeMetadata)
 
 

@@ -38,6 +38,51 @@ Anban / 安伴 is a security-governed AI application built around explicit archi
 11. Secrets must never enter Git, APIs, logs, model output, audit output, or documentation.
 12. A Codex task may execute a complete delivery, but it must use phases, focused commits, and repeated acceptance.
 
+## Architecture Authorization
+
+- The six product modules are fixed as `interaction`, `core`, `runtime`, `model`, `capability`, and
+  `persistence`. `config` is an authorized cross-cutting infrastructure package, not a seventh
+  product module.
+- Adding a Port, Protocol, Adapter type, Capability Handler, Tool name, provider, persistence
+  backend, Interaction Adapter, top-level product package, or plugin interface requires explicit
+  user authorization. An ADR records an already-authorized decision and does not grant authority.
+- Architecture allowlist tests must not be updated merely to make a test pass. Any allowlist change
+  requires explicit architecture authorization.
+- Every delivery must report an Architecture Delta. When there is no architecture change, report
+  `Architecture delta: none`.
+
+## Capability Reuse
+
+Capability Handlers are scarce architecture extension points. When an existing Capability can
+perform a task with reasonable reliability, cost, latency, and complexity, a Skill must describe
+how to use that Capability instead of adding a Handler. Convenience, a prettier schema, shorter
+prompts, or easier tests are not sufficient reasons to add a Capability.
+
+A new Capability is allowed only when an existing Capability cannot express the need; measured
+reliability, latency, cost, or context use is unacceptable; a newly approved Anban domain entity is
+required; a single process cannot correctly own required persistent interaction, streaming,
+credential lifecycle, or cancellation; or the user explicitly authorizes it.
+
+All Skills use the same discovery, parsing, activation, execution, and persistence path. Production
+Runtime code must not special-case a Skill by source, installer, registry, publisher, slug, metadata
+format, or installation record. Skill installation metadata such as Lock or Origin files is not a
+production loading or trust boundary.
+
+## Acceptance Integrity
+
+- Production behavior must never recognize or branch on a fixed acceptance Prompt, Skill slug,
+  Weather, Sydney, URL, Run ID, test filename, expected output, CI marker, local machine path, or
+  model name.
+- Production Agent prompts must not prescribe an acceptance-specific Tool order.
+- Invocation, Artifact, Event, HTTP result, file, execution result, and success state must never be
+  fabricated. A real failure must not be converted into ordinary success.
+- Fake Models, Fake Capabilities, Mock Success, Placeholder Executors, and fallback success are
+  forbidden in production and black-box acceptance.
+- Deterministic test fixtures may supply controlled inputs but must not alter the production
+  execution path. Black-box acceptance must use the ordinary production Composition Root.
+- When a scenario cannot be reproduced reliably, retain diagnostics and report the limitation; do
+  not add a production scenario branch.
+
 ## Python Environment
 
 - Required Python version: 3.12.

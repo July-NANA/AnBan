@@ -55,23 +55,30 @@ async def accept_capabilities() -> None:
                     "-c",
                     "import os,sys;from pathlib import Path;"
                     "Path('result.txt').write_text(sys.stdin.read()+'-'+os.environ['ANBAN_ACCEPTANCE_VALUE']);"
+                    "Path('summary.json').write_text('{\"ok\":true}');"
                     "print('completed')",
                 ],
-                "artifacts": [{"path": "result.txt", "media_type": "text/plain"}],
+                "artifacts": [
+                    {"path": "result.txt", "media_type": "text/plain"},
+                    {"path": "summary.json", "media_type": "application/json"},
+                ],
             },
             invocation,
         )
         if (
             completed.status is not CapabilityResultStatus.COMPLETED
-            or len(completed.artifacts) != 1
+            or len(completed.artifacts) != 2
         ):
             raise CapabilityAcceptanceError("real Process or Artifact did not complete")
         payload = json.loads(completed.observation or "{}")
         if payload.get("stdout") != "completed\n":
             raise CapabilityAcceptanceError("real Process output mismatch")
-        artifact = completed.artifacts[0]
-        snapshot = configuration.workspace / "artifacts" / str(invocation.run_id) / str(artifact.id)
-        if snapshot.read_text(encoding="utf-8") != "stdin-value-overridden":
+        artifact_root = configuration.workspace / "artifacts" / str(invocation.run_id)
+        snapshots = [
+            (artifact_root / str(artifact.id)).read_text(encoding="utf-8")
+            for artifact in completed.artifacts
+        ]
+        if snapshots != ["stdin-value-overridden", '{"ok":true}']:
             raise CapabilityAcceptanceError("Artifact snapshot mismatch")
 
         nonzero = await registry.invoke(
@@ -83,8 +90,9 @@ async def accept_capabilities() -> None:
             "process.execute",
             {
                 "command": sys.executable,
+                "cwd": str(work),
                 "args": ["-c", "pass"],
-                "artifacts": [{"path": "missing.txt"}],
+                "artifacts": [{"path": "result.txt"}, {"path": "missing.txt"}],
             },
             context(),
         )
@@ -110,7 +118,9 @@ def main() -> int:
     except Exception as exc:
         print(f"local Capability acceptance: FAIL ({type(exc).__name__})", file=sys.stderr)
         return 1
-    print("local Capability acceptance: PASS - surface, process, stdin, env, Artifact, failures")
+    print(
+        "local Capability acceptance: PASS - surface, process, stdin, env, multi-Artifact, failures"
+    )
     return 0
 
 

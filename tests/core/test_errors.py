@@ -35,13 +35,13 @@ def test_error_is_machine_readable_and_safe_to_render() -> None:
         ErrorInfo(
             code=ErrorCode.CAPABILITY_ARGUMENTS_INVALID,
             message="capability arguments did not match the declared schema",
-            details=SafeMetadata({"capability": "file.read"}),
+            details=SafeMetadata({"capability": "test.action"}),
         )
     )
     assert error.as_dict() == {
         "code": "capability_arguments_invalid",
         "message": "capability arguments did not match the declared schema",
-        "details": {"capability": "file.read"},
+        "details": {"capability": "test.action"},
         "category": "capability",
     }
     assert str(error) == "capability arguments did not match the declared schema"

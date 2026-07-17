@@ -151,7 +151,7 @@ async def accept_schema() -> None:
                         id=uuid4(),
                         run_id=run_two,
                         node_run_id=node_one,
-                        capability_name="file.read",
+                        capability_name="process.execute",
                         status="requested",
                         requested_at=now,
                         safe_metadata={},

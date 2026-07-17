@@ -356,6 +356,28 @@ async def test_duplicate_declared_artifact_path_fails_without_snapshot(tmp_path:
     assert not (tmp_path / "artifacts" / str(invocation_context.run_id)).exists()
 
 
+async def test_unreadable_declared_artifact_fails_without_snapshot(tmp_path: Path) -> None:
+    invocation_context = context()
+    result = await registry(tmp_path).invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": [
+                "-c",
+                "import os;open('unreadable.txt','w').write('data');os.chmod('unreadable.txt',0)",
+            ],
+            "artifacts": [{"path": "unreadable.txt"}],
+        },
+        invocation_context,
+    )
+    (tmp_path / "unreadable.txt").chmod(0o600)
+
+    assert result.status is CapabilityResultStatus.FAILED
+    assert result.error is not None
+    assert result.error.details.root["reason"] == "artifact_collection_failed"
+    assert not (tmp_path / "artifacts" / str(invocation_context.run_id)).exists()
+
+
 async def test_snapshot_failure_cleans_current_and_previous_artifact_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

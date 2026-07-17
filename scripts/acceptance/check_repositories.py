@@ -48,8 +48,8 @@ def records() -> tuple[
     ExecutionRun,
     NodeRun,
     CapabilityInvocation,
-    Artifact,
-    tuple[Event, Event],
+    tuple[Artifact, Artifact],
+    tuple[Event, Event, Event],
 ]:
     task = Task(
         id=new_task_id(),
@@ -64,15 +64,25 @@ def records() -> tuple[
         node_run_id=node.id,
         capability_name="process.execute",
     )
-    artifact = Artifact(
+    artifact_one = Artifact(
         id=new_artifact_id(),
         run_id=run.id,
         node_run_id=node.id,
         invocation_id=invocation.id,
-        uri=f"anban://artifact/{run.id}/acceptance",
+        uri=f"anban://artifact/{run.id}/acceptance-one",
         sha256="b" * 64,
         size_bytes=10,
         media_type="text/plain",
+    )
+    artifact_two = Artifact(
+        id=new_artifact_id(),
+        run_id=run.id,
+        node_run_id=node.id,
+        invocation_id=invocation.id,
+        uri=f"anban://artifact/{run.id}/acceptance-two",
+        sha256="c" * 64,
+        size_bytes=11,
+        media_type="application/json",
     )
     event_one = Event(
         id=new_event_id(),
@@ -85,17 +95,33 @@ def records() -> tuple[
         run_id=run.id,
         node_run_id=node.id,
         invocation_id=invocation.id,
-        artifact_id=artifact.id,
+        artifact_id=artifact_one.id,
         sequence=2,
         event_type="artifact.created",
     )
-    return task, run, node, invocation, artifact, (event_one, event_two)
+    event_three = Event(
+        id=new_event_id(),
+        run_id=run.id,
+        node_run_id=node.id,
+        invocation_id=invocation.id,
+        artifact_id=artifact_two.id,
+        sequence=3,
+        event_type="artifact.created",
+    )
+    return (
+        task,
+        run,
+        node,
+        invocation,
+        (artifact_one, artifact_two),
+        (event_one, event_two, event_three),
+    )
 
 
 async def accept_repositories() -> None:
     engine = create_database_engine(load_configuration().database.require("test"))
     factory = SQLAlchemyUnitOfWorkFactory(engine)
-    task, run, node, invocation, artifact, events = records()
+    task, run, node, invocation, artifacts, events = records()
     failed_task = Task(id=new_task_id(), request="must roll back")
     failed_run = ExecutionRun(id=new_execution_run_id(), task_id=failed_task.id)
     cleanup_ids = (task.id, failed_task.id)
@@ -113,9 +139,10 @@ async def accept_repositories() -> None:
             await unit.executions.add_run(run)
             await unit.executions.add_node_run(node)
             await unit.executions.add_invocation(invocation)
-            await unit.executions.add_artifact(artifact)
-            await unit.executions.add_event(events[1])
-            await unit.executions.add_event(events[0])
+            for artifact in artifacts:
+                await unit.executions.add_artifact(artifact)
+            for event in reversed(events):
+                await unit.executions.add_event(event)
             await unit.commit()
 
         async with factory() as unit:
@@ -127,7 +154,7 @@ async def accept_repositories() -> None:
                 raise RepositoryAcceptanceError("Task or Run reconstruction mismatch")
             if aggregate.nodes != (node,) or aggregate.invocations != (invocation,):
                 raise RepositoryAcceptanceError("Node or Invocation reconstruction mismatch")
-            if aggregate.artifacts != (artifact,) or aggregate.events != events:
+            if aggregate.artifacts != artifacts or aggregate.events != events:
                 raise RepositoryAcceptanceError("Artifact or Event reconstruction mismatch")
             if ordered != events:
                 raise RepositoryAcceptanceError("Event order is not deterministic")
@@ -160,8 +187,9 @@ async def accept_repositories() -> None:
                 raise RepositoryAcceptanceError("Node update was not durable")
             if await unit.executions.get_invocation(invocation.id) != running_invocation:
                 raise RepositoryAcceptanceError("Invocation update was not durable")
-            if await unit.executions.get_artifact(artifact.id) != artifact:
-                raise RepositoryAcceptanceError("Artifact read mismatch")
+            for artifact in artifacts:
+                if await unit.executions.get_artifact(artifact.id) != artifact:
+                    raise RepositoryAcceptanceError("Artifact read mismatch")
             if await unit.executions.get_event(events[0].id) != events[0]:
                 raise RepositoryAcceptanceError("Event read mismatch")
 

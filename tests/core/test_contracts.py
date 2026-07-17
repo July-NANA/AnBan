@@ -49,7 +49,7 @@ def domain_records() -> tuple[
         id=new_capability_invocation_id(),
         run_id=run.id,
         node_run_id=node.id,
-        capability_name="file.write",
+        capability_name="process.execute",
     )
     artifact = Artifact(
         id=new_artifact_id(),

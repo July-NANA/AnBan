@@ -228,8 +228,8 @@ class TransactionCheckingCapability:
         self.result = result
         self.calls = 0
         self.descriptor = CapabilityDescriptor(
-            name="file.write",
-            description="Write one bounded Workspace file.",
+            name="test.action",
+            description="Perform one bounded test action.",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -257,7 +257,7 @@ def tool_turn() -> ModelTurn:
         tool_calls=(
             ToolCall(
                 id="call-1",
-                name="file.write",
+                name="test.action",
                 arguments={"path": "result.txt", "content": "bounded"},
             ),
         ),

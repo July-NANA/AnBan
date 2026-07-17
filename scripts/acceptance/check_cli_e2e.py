@@ -126,9 +126,11 @@ async def gate_a() -> dict[str, object]:
             "temporary text file, make one real HTTP GET to the provided deterministic validation "
             f"endpoint {endpoint} using an available command-line or Python program and verify its "
             "gate-http-ok response, demonstrate stdin or an environment override, and generate "
-            "gate-a-result.txt as a declared text Artifact. Do not claim completion unless every "
-            "operation really ran. Once those operations and Artifact collection have succeeded, "
-            "stop executing commands and summarize; do not add redundant verification commands."
+            "gate-a-result.txt and gate-a-summary.json, collecting both together as declared "
+            "Artifacts from one successful process execution. Do not claim completion unless "
+            "every operation really ran. Once those operations and Artifact collection have "
+            "succeeded, stop executing commands and summarize; do not add redundant verification "
+            "commands."
         )
     require_success(result, "Gate A")
     observation = await trace(result.run_id)
@@ -157,13 +159,21 @@ async def gate_a() -> dict[str, object]:
     }
     if not any(summary_keys <= set(entry.metadata.root) for entry in capability_events):
         raise RuntimeGateError("Gate A Process summary is incomplete")
+    if not any(entry.metadata.root.get("artifact_count") == 2 for entry in capability_events):
+        raise RuntimeGateError("Gate A did not collect two Artifacts in one Process invocation")
     application = await build_query_application()
     try:
         artifacts = await application.interactions.artifacts(result.run_id)
         detail = await application.interactions.show_run(result.run_id)
     finally:
         await application.close()
-    if not artifacts or not detail.observability.complete:
+    if (
+        len(artifacts) != 2
+        or len({artifact.invocation_id for artifact in artifacts}) != 1
+        or artifacts[0].invocation_id is None
+        or not detail.observability.complete
+        or detail.observability.inconsistencies
+    ):
         raise RuntimeGateError("Gate A restart query is incomplete")
     return {"run_id": str(result.run_id), "artifact_ids": [str(item.id) for item in artifacts]}
 
@@ -185,12 +195,12 @@ async def gate_bcd(root: Path) -> dict[str, object]:
         raise RuntimeGateError("Gate B Workspace was not initially empty")
     install = await submit(
         "Use the available Skill for ClawHub to search public Skills without logging in. Compare "
-        "candidates from no more than two successful search commands and explain compatibility "
+        "candidates from no more than three successful, semantically distinct search commands and "
+        "explain compatibility "
         "before selection. Then choose and "
         "install one low-risk Skill that needs no credentials, Browser, MCP, database, or special "
         "service and whose real behavior can be verified with ordinary process execution. The "
-        "request explicitly authorizes searching and installing exactly one suitable Skill. Keep "
-        "assistant content empty whenever making a Tool Call."
+        "request explicitly authorizes searching and installing exactly one suitable Skill."
     )
     require_success(install, "Gate B")
     install_trace = await trace(install.run_id)
@@ -199,14 +209,35 @@ async def gate_bcd(root: Path) -> dict[str, object]:
         for entry in install_trace.trace
         if entry.event_type in {"capability.completed", "skill.activated"}
     ]
-    if "skill.activate" not in names or names.count("process.execute") < 2:
+    npx_calls = [
+        entry
+        for entry in install_trace.trace
+        if entry.event_type == "capability.completed"
+        and entry.metadata.root.get("capability_name") == "process.execute"
+        and entry.metadata.root.get("command") == "npx"
+        and entry.metadata.root.get("exit_code") == 0
+    ]
+    if (
+        not install_trace.complete
+        or install_trace.inconsistencies
+        or "skill.activate" not in names
+        or len(npx_calls) < 2
+    ):
         raise RuntimeGateError("Gate B did not trace Skill activation, search, and install")
     packages = workspace_packages(root)
     if len(packages) != 1:
         raise RuntimeGateError("Gate B did not install exactly one valid SKILL.md")
     slug = packages[0]
+    skill_files = tuple(sorted((root / "skills").rglob("SKILL.md")))
+    if len(skill_files) != 1:
+        raise RuntimeGateError("Gate B installed Skill files are ambiguous")
+    skill_file = skill_files[0]
+    skill_path = skill_file.relative_to(root).as_posix()
+    content_hash = hashlib.sha256(skill_file.read_bytes()).hexdigest()
     run_ids: list[str] = []
     for index in range(3):
+        if hashlib.sha256(skill_file.read_bytes()).hexdigest() != content_hash:
+            raise RuntimeGateError("Gate C/D Skill content changed before execution")
         result = await submit(
             f"Use the discovered Skill {slug} for a fresh low-risk validation task number "
             f"{index + 1}. Follow its actual instructions, use real process execution, and report "
@@ -226,12 +257,14 @@ async def gate_bcd(root: Path) -> dict[str, object]:
             or "process.execute" not in event_names
         ):
             raise RuntimeGateError("Gate C/D Trace is incomplete")
+        if hashlib.sha256(skill_file.read_bytes()).hexdigest() != content_hash:
+            raise RuntimeGateError("Gate C/D Skill content changed during execution")
         run_ids.append(str(result.run_id))
-    skill_file = next((root / "skills").rglob("SKILL.md"))
     return {
         "install_run_id": str(install.run_id),
         "slug": slug,
-        "content_hash": hashlib.sha256(skill_file.read_bytes()).hexdigest(),
+        "skill_path": skill_path,
+        "content_hash": content_hash,
         "execution_run_ids": run_ids,
     }
 

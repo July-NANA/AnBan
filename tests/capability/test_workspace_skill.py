@@ -224,6 +224,26 @@ def test_three_conflicts_are_excluded_while_unrelated_skill_loads_deterministica
     ]
 
 
+def test_conflict_result_does_not_depend_on_file_creation_order(tmp_path: Path) -> None:
+    results: list[tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = []
+    for label, order in (("forward", ("alpha", "beta")), ("reverse", ("beta", "alpha"))):
+        package_root = tmp_path / label / "package"
+        package_root.mkdir(parents=True)
+        workspace = tmp_path / label / "workspace"
+        for relative in order:
+            write_skill(workspace / "skills", relative)
+        discovered = catalog(workspace, package_root)
+        packages = discovered.discover()
+        results.append(
+            (
+                tuple(package.slug for package in packages),
+                tuple((item.path, item.reason) for item in discovered.diagnostics),
+            )
+        )
+
+    assert results[0] == results[1]
+
+
 @pytest.mark.parametrize(
     "metadata_content",
     [

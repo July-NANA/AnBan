@@ -53,7 +53,7 @@ class RecordingHandler:
         result: CapabilityResult | None = None,
         observation: Callable[[int], str] | None = None,
         blocking: bool = False,
-        capability_name: str = "file.read",
+        capability_name: str = "test.action",
         argument_name: str = "path",
     ) -> None:
         self.descriptor = CapabilityDescriptor(
@@ -103,7 +103,7 @@ def agent_input() -> AgentInput:
 
 
 def call(identifier: str = "call-1", path: str = "result.txt") -> ToolCall:
-    return ToolCall(id=identifier, name="file.read", arguments={"path": path})
+    return ToolCall(id=identifier, name="test.action", arguments={"path": path})
 
 
 def tool_turn(tool_call: ToolCall, *, finish_reason: str = "tool_calls") -> ModelTurn:
@@ -150,7 +150,6 @@ async def test_valid_model_final_is_the_only_success_path() -> None:
     assert "final answer must not contain Tool Calls" in system_contract
     assert "Use process.execute" in system_contract
     assert "file operations, network operations" in system_contract
-    assert "http.get" not in system_contract
 
 
 async def test_tool_call_result_pairing_across_model_turns() -> None:
@@ -184,7 +183,7 @@ async def test_tool_call_result_pairing_across_model_turns() -> None:
     [
         (ToolCall(id="unknown", name="unknown.tool", arguments={}), ErrorCode.CAPABILITY_UNKNOWN),
         (
-            ToolCall(id="invalid", name="file.read", arguments={}),
+            ToolCall(id="invalid", name="test.action", arguments={}),
             ErrorCode.CAPABILITY_ARGUMENTS_INVALID,
         ),
     ],

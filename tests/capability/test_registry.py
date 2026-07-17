@@ -29,8 +29,8 @@ class RecordingHandler:
         self, *, available: bool = True, blocking: bool = False, fail_with: str | None = None
     ) -> None:
         self.descriptor = CapabilityDescriptor(
-            name="file.read",
-            description="Read one bounded Workspace file.",
+            name="test.action",
+            description="Perform one bounded test action.",
             available=available,
             input_schema={
                 "type": "object",
@@ -85,9 +85,9 @@ async def test_registry_search_describe_validate_and_invoke() -> None:
     gateway = port(registry)
     invocation_context = context()
 
-    assert gateway.search("workspace") == (handler.descriptor,)
-    assert gateway.describe("file.read") == handler.descriptor
-    result = await gateway.invoke("file.read", {"path": "result.txt"}, invocation_context)
+    assert gateway.search("action") == (handler.descriptor,)
+    assert gateway.describe("test.action") == handler.descriptor
+    result = await gateway.invoke("test.action", {"path": "result.txt"}, invocation_context)
 
     assert result.status is CapabilityResultStatus.COMPLETED
     assert handler.received_context == invocation_context
@@ -97,9 +97,9 @@ async def test_registry_search_describe_validate_and_invoke() -> None:
     ("name", "arguments", "code"),
     [
         ("missing", {}, ErrorCode.CAPABILITY_UNKNOWN),
-        ("file.read", {}, ErrorCode.CAPABILITY_ARGUMENTS_INVALID),
+        ("test.action", {}, ErrorCode.CAPABILITY_ARGUMENTS_INVALID),
         (
-            "file.read",
+            "test.action",
             {"path": "result.txt", "invocation_id": "model"},
             ErrorCode.CAPABILITY_ARGUMENTS_INVALID,
         ),
@@ -117,7 +117,7 @@ async def test_unknown_or_invalid_invocation_fails_explicitly(
 async def test_unavailable_capability_fails_explicitly() -> None:
     registry = CapabilityRegistry((RecordingHandler(available=False),))
     with pytest.raises(AnbanError) as failure:
-        await registry.invoke("file.read", {"path": "result.txt"}, context())
+        await registry.invoke("test.action", {"path": "result.txt"}, context())
     assert failure.value.info.code is ErrorCode.CAPABILITY_UNAVAILABLE
 
 
@@ -125,7 +125,7 @@ async def test_unexpected_handler_error_is_replaced_with_safe_error() -> None:
     canary = "provider-secret-canary"
     registry = CapabilityRegistry((RecordingHandler(fail_with=canary),))
     with pytest.raises(AnbanError) as failure:
-        await registry.invoke("file.read", {"path": "result.txt"}, context())
+        await registry.invoke("test.action", {"path": "result.txt"}, context())
     assert failure.value.info.code is ErrorCode.CAPABILITY_EXECUTION_FAILED
     assert canary not in str(failure.value)
     assert canary not in str(failure.value.as_dict())
@@ -136,7 +136,7 @@ async def test_cancel_uses_the_authoritative_active_context() -> None:
     registry = CapabilityRegistry((handler,))
     invocation_context = context()
     invocation = asyncio.create_task(
-        registry.invoke("file.read", {"path": "result.txt"}, invocation_context)
+        registry.invoke("test.action", {"path": "result.txt"}, invocation_context)
     )
     await handler.started.wait()
 

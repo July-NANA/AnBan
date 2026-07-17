@@ -153,3 +153,11 @@ Authored Python and frontend source under `anban/`, `apps/`, `packages/`, `scrip
 - Relevant architecture and development documentation is current.
 - No secret is tracked or emitted.
 - The exact pushed `anban` SHA passes all applicable remote CI.
+
+## v0.5 Acceptance Change Evidence
+
+Every v0.5 delivery must identify covered S01-S12 scenario IDs, list new Audit Events, explain
+persistence and restart effects, and document side-effect/retry safety. Production and acceptance
+must not add scenario-specific branches, fixed Skill-ID behavior, mock-success, or fallback-success.
+Applicable v0.1 deterministic regression must run before delivery; real integration evidence is
+required by the owning Phase or Final Gate.

@@ -19,7 +19,6 @@ from anban.runtime.inspection import (
 )
 from anban.runtime.observability import (
     AuditEntry,
-    EventProjectionService,
     RunObservability,
     TraceEntry,
 )
@@ -32,7 +31,6 @@ __all__ = [
     "AgentOutcomeStatus",
     "AuditEntry",
     "ArtifactDetail",
-    "EventProjectionService",
     "ExecutionQueryService",
     "ExecutionResult",
     "FixedGeneralAgent",

@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from anban.config import load_configuration
 from anban.core import AnbanError, ErrorCode
-from anban.persistence import DatabaseProfile, database_profile, database_url
+from anban.persistence import DatabaseProfile, database_profile
 from anban.workspace import default_configuration_text
 
 
@@ -22,8 +23,9 @@ def test_development_and_test_profiles_use_separate_keys(tmp_path: Path) -> None
         "DATABASE_URL": "postgresql+asyncpg://localhost/anban",
         "ANBAN_TEST_DATABASE_URL": "postgresql+asyncpg://localhost/anban_test",
     }
-    development = database_url(DatabaseProfile.DEVELOPMENT, environ=environment, workspace=tmp_path)
-    test = database_url(DatabaseProfile.TEST, environ=environment, workspace=tmp_path)
+    configuration = load_configuration(workspace=tmp_path, environ=environment)
+    development = configuration.database.require("development")
+    test = configuration.database.require("test")
     assert development != test
     assert development.endswith("/anban")
     assert test.endswith("/anban_test")
@@ -41,15 +43,14 @@ def test_database_profile_defaults_to_development_and_rejects_unknown() -> None:
 def test_missing_or_wrong_driver_fails_without_echoing_value(tmp_path: Path) -> None:
     prepare_workspace(tmp_path)
     with pytest.raises(AnbanError) as missing:
-        database_url(DatabaseProfile.TEST, environ={}, workspace=tmp_path)
+        load_configuration(workspace=tmp_path, environ={}).database.require("test")
     assert missing.value.info.code is ErrorCode.CONFIGURATION_MISSING
 
     unsafe_value = "sqlite:///local.db"
     with pytest.raises(AnbanError) as wrong_driver:
-        database_url(
-            DatabaseProfile.TEST,
-            environ={"ANBAN_TEST_DATABASE_URL": unsafe_value},
+        load_configuration(
             workspace=tmp_path,
-        )
+            environ={"ANBAN_TEST_DATABASE_URL": unsafe_value},
+        ).database.require("test")
     assert wrong_driver.value.info.code is ErrorCode.VALIDATION_FAILED
     assert unsafe_value not in str(wrong_driver.value)

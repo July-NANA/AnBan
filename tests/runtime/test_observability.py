@@ -14,7 +14,7 @@ from anban.capability import (
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.metadata import SafeMetadata
 from anban.model import ModelTurn, ToolCall
-from anban.runtime import AgentOutcomeStatus, EventProjectionService, PersistentRuntime
+from anban.runtime import AgentOutcomeStatus, ExecutionQueryService, PersistentRuntime
 from tests.runtime.test_persistent_runtime import (
     MemoryUnitOfWorkFactory,
     TransactionCheckingCapability,
@@ -35,8 +35,8 @@ async def test_success_trace_and_audit_are_stable_after_new_service_instance() -
         factory,
     ).execute("Persist one governed result.")
 
-    first = await EventProjectionService(factory).inspect(result.run_id)
-    restarted = await EventProjectionService(factory).inspect(result.run_id)
+    first = await ExecutionQueryService(factory).trace(result.run_id)
+    restarted = await ExecutionQueryService(factory).trace(result.run_id)
 
     assert first == restarted
     assert first.complete is True
@@ -84,7 +84,7 @@ async def test_failed_and_timed_out_runs_have_complete_explainable_trace(
         factory,
     ).execute("Record a terminal failure.")
 
-    observation = await EventProjectionService(factory).inspect(result.run_id)
+    observation = await ExecutionQueryService(factory).trace(result.run_id)
     assert result.outcome.status is expected_status
     assert observation.complete is True
     assert "run.error" in {entry.event_type for entry in observation.audit}
@@ -101,7 +101,7 @@ async def test_incomplete_invocation_is_detected_after_event_write_failure() -> 
         factory,
     ).execute("Do not retry the uncertain side effect.")
 
-    observation = await EventProjectionService(factory).inspect(result.run_id)
+    observation = await ExecutionQueryService(factory).trace(result.run_id)
     assert result.outcome.status is AgentOutcomeStatus.FAILED
     assert result.outcome.error is not None
     assert result.outcome.error.code is ErrorCode.AUDIT_TRACE_WRITE_FAILED
@@ -139,7 +139,7 @@ async def test_projection_metadata_uses_allowlist_even_for_safe_event_values() -
         }
     )
 
-    observation = await EventProjectionService(factory).inspect(result.run_id)
+    observation = await ExecutionQueryService(factory).trace(result.run_id)
     model_event = next(
         entry for entry in observation.audit if entry.event_type == "model.completed"
     )
@@ -198,7 +198,7 @@ async def test_skill_activation_is_distinct_and_uses_logical_reference() -> None
         factory,
     ).execute("Activate the approved Skill.")
 
-    observation = await EventProjectionService(factory).inspect(result.run_id)
+    observation = await ExecutionQueryService(factory).trace(result.run_id)
     skill_event = next(
         entry for entry in observation.audit if entry.event_type == "skill.activated"
     )
@@ -216,5 +216,5 @@ async def test_observability_read_failure_never_returns_partial_success() -> Non
     factory.fail_load = True
 
     with pytest.raises(AnbanError) as raised:
-        await EventProjectionService(factory).inspect(result.run_id)
+        await ExecutionQueryService(factory).trace(result.run_id)
     assert raised.value.info.code is ErrorCode.PERSISTENCE_UNAVAILABLE

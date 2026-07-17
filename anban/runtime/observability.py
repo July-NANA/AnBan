@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
@@ -13,7 +12,7 @@ from anban.core.ids import (
 )
 from anban.core.metadata import SafeMetadata
 from anban.core.models import Event, UtcDateTime
-from anban.core.persistence import ExecutionRunAggregate, UnitOfWorkFactory
+from anban.core.persistence import ExecutionRunAggregate
 from anban.runtime.contracts import RuntimeValue
 
 _TERMINAL = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
@@ -104,31 +103,6 @@ class RunObservability(RuntimeValue):
     audit: tuple[AuditEntry, ...]
     complete: bool
     inconsistencies: tuple[str, ...]
-
-
-class EventProjectionService:
-    """Rebuild deterministic Audit and Trace views in a fresh read transaction."""
-
-    def __init__(self, unit_of_work: UnitOfWorkFactory) -> None:
-        self._unit_of_work = unit_of_work
-
-    async def inspect(self, run_id: ExecutionRunId) -> RunObservability:
-        try:
-            async with self._unit_of_work() as unit:
-                aggregate = await unit.executions.load_run(run_id)
-        except AnbanError:
-            raise
-        except Exception:
-            raise observability_read_error() from None
-        if aggregate is None:
-            raise AnbanError(
-                ErrorInfo(
-                    code=ErrorCode.VALIDATION_FAILED,
-                    message="Run does not exist",
-                    details=SafeMetadata({"run_id": str(run_id)}),
-                )
-            )
-        return project_observability(aggregate)
 
 
 def project_observability(aggregate: ExecutionRunAggregate) -> RunObservability:
@@ -234,12 +208,3 @@ def inspect_consistency(
     if not any(event.event_type == final_type for event in events):
         issues.add("terminal_event_missing")
     return tuple(sorted(issues))
-
-
-def observability_read_error() -> AnbanError:
-    return AnbanError(
-        ErrorInfo(
-            code=ErrorCode.PERSISTENCE_UNAVAILABLE,
-            message="Run observability data is unavailable",
-        )
-    )

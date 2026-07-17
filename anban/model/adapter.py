@@ -15,9 +15,9 @@ from openai import (
 )
 from openai.types.chat import ChatCompletionMessageParam
 
+from anban.config import ModelConfiguration
 from anban.core import AnbanError, ErrorCode, ErrorInfo, SafeMetadata
 from anban.core.metadata import SafeScalar
-from anban.model.config import ModelConfiguration
 from anban.model.contracts import ModelMessage, ModelRequest, ModelTurn
 from anban.model.response import normalize_response
 

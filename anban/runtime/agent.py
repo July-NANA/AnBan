@@ -38,11 +38,15 @@ GENERAL_AGENT_NODE = "general_agent"
 _CANCELLATION_TIMEOUT_SECONDS = 2.0
 _SYSTEM_INSTRUCTIONS = (
     "You are the fixed Anban v0.1 General Agent. Use only the listed Capabilities. "
-    "Never invent a Capability or Runtime identity. Use Tool Results as observations, "
-    "then return one concise final answer. Return exactly one response form: native tool_calls "
+    "Choose appropriate Skills for the user's goal and follow activated SKILL.md instructions. "
+    "Use process.execute for command-line programs, scripts, file operations, network operations, "
+    "and package tools. Never invent a Capability or claim an operation ran when it did not. "
+    "Treat nonzero exits, timeouts, cancellation, and Artifact collection failures as failures. "
+    "Do not replay a completed side effect while repairing a model response. Use Tool Results as "
+    "observations, then return one concise final answer. Return exactly one response form: "
+    "native tool_calls "
     "with no non-whitespace assistant content, or one non-empty final assistant message with no "
-    "tool_calls. Never narrate a Tool Call in assistant content. For HTTP operations described "
-    "by a Skill, use http.get or http.request; never emulate curl through process.execute."
+    "tool_calls. Never narrate a Tool Call in assistant content."
 )
 _REPAIR_INSTRUCTION = (
     "Your previous response violated the response contract. Return exactly one of: "
@@ -51,8 +55,8 @@ _REPAIR_INSTRUCTION = (
 )
 _RESPONSE_CONTRACT_REMINDER = (
     "Response contract reminder: return native tool_calls with no non-whitespace assistant "
-    "content, or one non-empty final assistant message with no tool_calls. Use http.get or "
-    "http.request for Skill HTTP operations, never process.execute curl."
+    "content, or one non-empty final assistant message with no tool_calls. Do not replay any "
+    "Capability call that already completed."
 )
 
 

@@ -1,6 +1,6 @@
 """Persistence Ports for state, checkpoints, artifacts, audit data, and traces."""
 
-from anban.persistence.config import DatabaseProfile, database_profile, database_url
+from anban.persistence.config import DatabaseProfile, database_profile
 from anban.persistence.models import Base
 from anban.persistence.repository import SQLAlchemyExecutionRepository
 from anban.persistence.unit_of_work import (
@@ -17,5 +17,4 @@ __all__ = [
     "SQLAlchemyUnitOfWorkFactory",
     "create_database_engine",
     "database_profile",
-    "database_url",
 ]

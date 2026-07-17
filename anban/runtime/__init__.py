@@ -8,6 +8,7 @@ from anban.runtime.contracts import (
     AgentObservation,
     AgentOutcome,
     AgentOutcomeStatus,
+    CapabilitySufficiencyAssessment,
     CompletionAssessment,
     ExecutionResult,
     ExecutionStrategy,
@@ -15,6 +16,8 @@ from anban.runtime.contracts import (
     MainAgentState,
     ObservationStatus,
     ReplanDecision,
+    SkillAcquisitionJustification,
+    SufficiencyCandidate,
 )
 from anban.runtime.inspection import (
     ArtifactDetail,
@@ -41,6 +44,7 @@ __all__ = [
     "AgentOutcomeStatus",
     "AuditEntry",
     "ArtifactDetail",
+    "CapabilitySufficiencyAssessment",
     "CompletionAssessment",
     "ExecutionQueryService",
     "ExecutionResult",
@@ -57,6 +61,8 @@ __all__ = [
     "RunDetail",
     "RunSummary",
     "ReplanDecision",
+    "SkillAcquisitionJustification",
+    "SufficiencyCandidate",
     "TaskDetail",
     "TraceEntry",
 ]

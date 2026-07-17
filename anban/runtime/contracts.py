@@ -88,6 +88,129 @@ class AgentDecision(RuntimeValue):
         return self
 
 
+class SufficiencyCandidate(RuntimeValue):
+    """One generic strategy path considered against the current inventory."""
+
+    strategy: ExecutionStrategy
+    target: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z@][a-z0-9_.@:/-]*$",
+    )
+    available: bool
+    rationale: str = Field(min_length=1, max_length=1024)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    missing_conditions: tuple[str, ...] = Field(default=(), max_length=16)
+    risk_summary: str = Field(min_length=1, max_length=512)
+    side_effect_summary: str = Field(min_length=1, max_length=512)
+
+    @field_validator("rationale", "risk_summary", "side_effect_summary")
+    @classmethod
+    def validate_candidate_text(cls, value: str) -> str:
+        return validate_safe_text(value, label="Sufficiency candidate text", max_length=1024)
+
+    @field_validator("missing_conditions")
+    @classmethod
+    def validate_candidate_missing(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            validate_safe_text(value, label="Candidate missing condition", max_length=256)
+            for value in values
+        )
+
+    @model_validator(mode="after")
+    def validate_availability(self) -> Self:
+        if self.available == bool(self.missing_conditions):
+            raise ValueError("candidate availability and missing conditions disagree")
+        return self
+
+
+class SkillAcquisitionJustification(RuntimeValue):
+    """General reasons that may justify acquisition; a missing matching Skill is insufficient."""
+
+    substantial_temporary_code: bool = False
+    complex_domain_workflow: bool = False
+    high_improvisation_risk: bool = False
+    low_implementation_confidence: bool = False
+    repeated_reusable_need: bool = False
+    existing_process_path_unreasonable: bool = False
+
+    @property
+    def justified(self) -> bool:
+        return any(self.model_dump().values())
+
+
+class CapabilitySufficiencyAssessment(RuntimeValue):
+    """Truthful selection over all capability paths known at assessment time."""
+
+    sufficient: bool
+    candidates: tuple[SufficiencyCandidate, ...] = Field(min_length=1, max_length=32)
+    selected: AgentDecision
+    rationale: str = Field(min_length=1, max_length=2048)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    uncertainties: tuple[str, ...] = Field(default=(), max_length=16)
+    missing_conditions: tuple[str, ...] = Field(default=(), max_length=32)
+    risk_summary: str = Field(min_length=1, max_length=1024)
+    side_effect_summary: str = Field(min_length=1, max_length=1024)
+    acquisition: SkillAcquisitionJustification = Field(
+        default_factory=SkillAcquisitionJustification
+    )
+    should_acquire_skill: bool = False
+    requires_clarification: bool = False
+    must_fail: bool = False
+    assessed_at: UtcDateTime = Field(default_factory=now_utc)
+
+    @field_validator("rationale", "risk_summary", "side_effect_summary")
+    @classmethod
+    def validate_assessment_text(cls, value: str) -> str:
+        return validate_safe_text(value, label="Sufficiency assessment text", max_length=2048)
+
+    @field_validator("uncertainties", "missing_conditions")
+    @classmethod
+    def validate_assessment_lists(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            validate_safe_text(value, label="Sufficiency condition", max_length=512)
+            for value in values
+        )
+
+    @model_validator(mode="after")
+    def validate_resolution(self) -> Self:
+        candidate_keys = [(candidate.strategy, candidate.target) for candidate in self.candidates]
+        if len(candidate_keys) != len(set(candidate_keys)):
+            raise ValueError("sufficiency candidates must be unique")
+        resolutions = (
+            int(self.should_acquire_skill) + int(self.requires_clarification) + int(self.must_fail)
+        )
+        if self.sufficient:
+            if resolutions or self.missing_conditions:
+                raise ValueError("sufficient assessment cannot request a fallback resolution")
+            if self.selected.strategy in {
+                ExecutionStrategy.ACQUIRE_SKILL,
+                ExecutionStrategy.CLARIFY,
+                ExecutionStrategy.FAIL,
+            }:
+                raise ValueError("sufficient assessment must select an executable existing path")
+            if (self.selected.strategy, self.selected.target) not in candidate_keys:
+                raise ValueError("selected strategy must be one of the assessed candidates")
+        else:
+            if resolutions != 1 or not self.missing_conditions:
+                raise ValueError("insufficient assessment requires one explicit resolution")
+            expected = (
+                ExecutionStrategy.ACQUIRE_SKILL
+                if self.should_acquire_skill
+                else ExecutionStrategy.CLARIFY
+                if self.requires_clarification
+                else ExecutionStrategy.FAIL
+            )
+            if self.selected.strategy is not expected:
+                raise ValueError("insufficient resolution and selected strategy disagree")
+        if self.should_acquire_skill and not self.acquisition.justified:
+            raise ValueError("Skill acquisition requires a general insufficiency justification")
+        if not self.should_acquire_skill and self.acquisition.justified:
+            raise ValueError("acquisition justification cannot be set for another resolution")
+        return self
+
+
 class AgentObservation(RuntimeValue):
     """Safe observation returned from a real strategy attempt."""
 

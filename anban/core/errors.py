@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
-from anban.core.metadata import SafeMetadata
+from anban.core.metadata import SafeMetadata, validate_safe_text
 
 
 class ErrorCategory(StrEnum):
@@ -65,6 +65,11 @@ class ErrorInfo(BaseModel):
     code: ErrorCode
     message: str = Field(min_length=1, max_length=512)
     details: SafeMetadata = Field(default_factory=SafeMetadata)
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, value: str) -> str:
+        return validate_safe_text(value, label="error message")
 
     @computed_field
     @property

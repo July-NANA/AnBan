@@ -23,6 +23,29 @@ _FORBIDDEN_KEY_PARTS = (
     "stdout",
     "token",
 )
+_FORBIDDEN_VALUE_PARTS = (
+    "authorization:",
+    "bearer ",
+    "file://",
+    "postgresql://",
+    "postgresql+asyncpg://",
+)
+_VALUE_TOKEN_SEPARATOR = re.compile(r"[\s=,;()\[\]{}]+")
+
+
+def validate_safe_text(value: str, *, label: str, max_length: int = 512) -> str:
+    """Reject bounded text containing credential forms, URLs, or physical host paths."""
+
+    if len(value) > max_length:
+        raise ValueError(f"{label} is too long")
+    lowered = value.lower()
+    if any(part in lowered for part in _FORBIDDEN_VALUE_PARTS):
+        raise ValueError(f"{label} contains a forbidden sensitive value")
+    for candidate in _VALUE_TOKEN_SEPARATOR.split(value):
+        token = candidate.strip("'\"")
+        if token and (Path(token).is_absolute() or PureWindowsPath(token).is_absolute()):
+            raise ValueError(f"{label} cannot contain an absolute host path")
+    return value
 
 
 class SafeMetadata(RootModel[dict[str, SafeScalar]]):
@@ -40,8 +63,5 @@ class SafeMetadata(RootModel[dict[str, SafeScalar]]):
             if any(part in key for part in _FORBIDDEN_KEY_PARTS):
                 raise ValueError(f"metadata key is not allowed: {key}")
             if isinstance(value, str):
-                if len(value) > 512:
-                    raise ValueError(f"metadata value is too long: {key}")
-                if Path(value).is_absolute() or PureWindowsPath(value).is_absolute():
-                    raise ValueError(f"metadata value cannot be an absolute host path: {key}")
+                validate_safe_text(value, label=f"metadata value: {key}")
         return self

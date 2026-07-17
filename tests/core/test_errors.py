@@ -54,3 +54,11 @@ def test_error_details_reuse_safe_metadata_boundary() -> None:
             message="model request failed",
             details=SafeMetadata.model_validate({"provider_response": "raw"}),
         )
+
+
+def test_error_message_rejects_host_path() -> None:
+    with pytest.raises(ValidationError):
+        ErrorInfo(
+            code=ErrorCode.PERSISTENCE_WRITE_FAILED,
+            message="failed at /Users/example/private.txt",
+        )

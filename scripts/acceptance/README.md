@@ -3,8 +3,8 @@
 These fail-closed scripts are invoked explicitly by a scoped Codex Phase Gate or Version Gate.
 They are not part of `pnpm run doctor` or ordinary CI.
 
-- `pnpm run acceptance:model` performs a real model request, native Tool Calling, an isolated
-  real file operation, Tool Result return, and a final model response.
+- `pnpm run acceptance:model` uses the production ModelPort Adapter for a real model request,
+  native Tool Calling, Tool Result pairing, final response, and structured output.
 - `pnpm run acceptance:skill` verifies the approved local Weather Skill baseline, reads its real
   instructions, and performs the documented bounded live weather request.
 - `conda run -n anban python -m scripts.acceptance.check_migration_schema` verifies the migrated

@@ -54,8 +54,8 @@ def test_alembic_has_one_reversible_initial_revision() -> None:
     configuration = Config(repository / "alembic.ini")
     scripts = ScriptDirectory.from_config(configuration)
     head = scripts.get_current_head()
-    assert head == "0001_v01_runtime"
+    assert head == "0002_model_errors"
     revision = scripts.get_revision(head)
     assert revision is not None
-    assert revision.down_revision is None
+    assert revision.down_revision == "0001_v01_runtime"
     assert callable(revision.module.downgrade)

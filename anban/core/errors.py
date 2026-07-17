@@ -29,6 +29,9 @@ class ErrorCode(StrEnum):
     VALIDATION_FAILED = "validation_failed"
     INVALID_TRANSITION = "invalid_transition"
     MODEL_REQUEST_FAILED = "model_request_failed"
+    MODEL_TIMEOUT = "model_timeout"
+    MODEL_TRANSPORT_FAILED = "model_transport_failed"
+    MODEL_REJECTED = "model_rejected"
     MODEL_RESPONSE_INVALID = "model_response_invalid"
     CAPABILITY_UNKNOWN = "capability_unknown"
     CAPABILITY_ARGUMENTS_INVALID = "capability_arguments_invalid"
@@ -45,6 +48,9 @@ _ERROR_CATEGORIES: dict[ErrorCode, ErrorCategory] = {
     ErrorCode.VALIDATION_FAILED: ErrorCategory.VALIDATION,
     ErrorCode.INVALID_TRANSITION: ErrorCategory.VALIDATION,
     ErrorCode.MODEL_REQUEST_FAILED: ErrorCategory.MODEL,
+    ErrorCode.MODEL_TIMEOUT: ErrorCategory.MODEL,
+    ErrorCode.MODEL_TRANSPORT_FAILED: ErrorCategory.MODEL,
+    ErrorCode.MODEL_REJECTED: ErrorCategory.MODEL,
     ErrorCode.MODEL_RESPONSE_INVALID: ErrorCategory.MODEL,
     ErrorCode.CAPABILITY_UNKNOWN: ErrorCategory.CAPABILITY,
     ErrorCode.CAPABILITY_ARGUMENTS_INVALID: ErrorCategory.CAPABILITY,

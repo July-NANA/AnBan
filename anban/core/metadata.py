@@ -30,6 +30,7 @@ _FORBIDDEN_VALUE_PARTS = (
     "postgresql://",
     "postgresql+asyncpg://",
 )
+_ALLOWED_TOKEN_METRICS = {"input_tokens", "output_tokens"}
 _VALUE_TOKEN_SEPARATOR = re.compile(r"[\s=,;()\[\]{}]+")
 
 
@@ -60,7 +61,12 @@ class SafeMetadata(RootModel[dict[str, SafeScalar]]):
         for key, value in self.root.items():
             if not _KEY_PATTERN.fullmatch(key):
                 raise ValueError(f"metadata key is invalid: {key}")
-            if any(part in key for part in _FORBIDDEN_KEY_PARTS):
+            forbidden_parts = (
+                tuple(part for part in _FORBIDDEN_KEY_PARTS if part != "token")
+                if key in _ALLOWED_TOKEN_METRICS
+                else _FORBIDDEN_KEY_PARTS
+            )
+            if any(part in key for part in forbidden_parts):
                 raise ValueError(f"metadata key is not allowed: {key}")
             if isinstance(value, str):
                 validate_safe_text(value, label=f"metadata value: {key}")

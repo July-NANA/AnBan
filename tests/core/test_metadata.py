@@ -9,7 +9,15 @@ from anban.core import SafeMetadata
 
 
 def test_safe_scalar_metadata_passes() -> None:
-    metadata = SafeMetadata({"attempt": 1, "cached": False, "provider": "openai-compatible"})
+    metadata = SafeMetadata(
+        {
+            "attempt": 1,
+            "cached": False,
+            "provider": "openai-compatible",
+            "input_tokens": 3,
+            "output_tokens": 2,
+        }
+    )
     assert metadata.root["attempt"] == 1
 
 
@@ -17,6 +25,7 @@ def test_safe_scalar_metadata_passes() -> None:
     "metadata",
     [
         {"api_key": "canary"},
+        {"auth_token": "canary"},
         {"database_url": "configured"},
         {"output": "/Users/example/private.txt"},
         {"output": "failed at /Users/example/private.txt"},

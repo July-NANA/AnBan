@@ -10,7 +10,6 @@ import pytest
 from sqlalchemy.sql.elements import TextClause
 
 import scripts.doctor as doctor
-from scripts.acceptance.check_real_model import ReadinessError, validate_tool_arguments
 from scripts.workspace_bootstrap import (
     WorkspaceResolutionError,
     default_workspace_value,
@@ -315,20 +314,6 @@ def test_doctor_repository_check_ignores_branch_and_worktree(
 
     monkeypatch.setattr(doctor, "command", forbidden_git)
     assert doctor.check_repository().status == "PASS"
-
-
-def test_tool_arguments_require_exact_closed_schema() -> None:
-    assert validate_tool_arguments('{"filename":"validation.txt","content":"nonce"}', "nonce") == {
-        "filename": "validation.txt",
-        "content": "nonce",
-    }
-
-
-def test_tool_arguments_reject_additional_properties() -> None:
-    with pytest.raises(ReadinessError, match="closed argument schema"):
-        validate_tool_arguments(
-            '{"filename":"validation.txt","content":"nonce","extra":true}', "nonce"
-        )
 
 
 def test_workspace_configuration_is_read_as_toml(tmp_path: Path) -> None:

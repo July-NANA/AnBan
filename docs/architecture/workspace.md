@@ -4,8 +4,10 @@ The external Workspace contains `anban.toml`, mode-0600 `secrets.env`, `skills/`
 `artifacts/`, `cache/`, `logs/`, and `tmp/`. It is separate from the repository.
 
 Workspace Skills are discovered recursively from `skills/**/SKILL.md`. A scoped path such as
-`skills/@owner/name/SKILL.md` has slug `@owner/name`; an unscoped Skill uses
-`@local/<frontmatter-name>`. Version and installation-source metadata are not production identity.
+`skills/@owner/name/SKILL.md` has slug `@owner/name`; its path supplies identity whether the file
+uses YAML frontmatter or ordinary Markdown. An unscoped Skill uses a deterministic lowercase,
+hyphenated `@local/<frontmatter-name>` derived from its frontmatter display name. Version and
+installation-source metadata are not production identity.
 Invalid UTF-8, source over 64 KiB, context over 15,000 characters, invalid identity, symlink escape,
 protected content, reserved namespace use, or slug conflict produces a safe per-file diagnostic
 while other valid Skills load. Workspace Skills cannot claim `@anban/*`; all candidates for any

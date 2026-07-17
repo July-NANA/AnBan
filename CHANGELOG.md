@@ -15,6 +15,10 @@ All notable changes are documented here.
   without weakening Tool identity, arguments, finish-reason, or Secret validation.
 - Deterministic Skill conflicts: Workspace `@anban/*` is reserved and ordinary duplicate slugs are
   all excluded; version and installer metadata are not production identity.
+- Uniform parsing of scoped plain-Markdown Skills and deterministic normalization of unscoped
+  frontmatter display names, without installer-specific branches.
+- Recoverable failed Tool observations return to the model without rewriting the failed Invocation;
+  user-visible results may report legitimate paths while Metadata keeps its stricter path boundary.
 
 - v0.1 CLI commands for Workspace initialization, durable task execution, bounded temporary chat,
   Run listing/detail, Trace, and Artifact inspection.

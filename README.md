@@ -17,9 +17,11 @@ concrete tool normally means adding a Skill, not adding a Capability Handler.
 
 All Skills use the same architecture regardless of whether they ship in the Anban package, were
 installed by ClawHub, were copied, or were created by a user. Production discovers `SKILL.md`,
-derives identity from its path/frontmatter, and does not read installation Lock, Origin, registry,
-publisher, or fingerprint metadata. The packaged `@anban/clawhub` is an ordinary Skill whose
-instructions use `process.execute` to call the real CLI.
+derives identity from its path and content, and does not read installation Lock, Origin, registry,
+publisher, or fingerprint metadata. Scoped paths supply their `@owner/name` identity even when the
+document is plain Markdown; unscoped frontmatter display names are normalized into `@local/*`.
+The packaged `@anban/clawhub` is an ordinary Skill whose instructions use `process.execute` to call
+the real CLI.
 
 ## Commands
 
@@ -53,6 +55,12 @@ stdin, time, arguments, and explicitly declared single-file Artifacts are bounde
 One Process invocation may collect multiple declared files only after all validate successfully.
 Full arguments, environment, stdout, stderr, and physical paths never enter Event Metadata; safe
 hashes, sizes, counts, status, duration, and a logical cwd scope do.
+
+An ordinary failed Process Invocation remains durably failed. When it has a bounded safe
+observation, the Agent may use that Tool Result to choose another valid approach; timeout,
+cancellation, protected output, missing observations, and persistence failures remain terminal.
+User-visible final answers may report result paths, while Metadata and errors retain the stricter
+physical-path prohibition.
 
 See [architecture](docs/architecture/overview.md), [Workspace](docs/architecture/workspace.md),
 [CLI](docs/cli.md), [security](SECURITY.md), and [real acceptance](scripts/acceptance/README.md).

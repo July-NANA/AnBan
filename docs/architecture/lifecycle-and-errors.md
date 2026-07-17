@@ -36,6 +36,17 @@ details.
 Persistence and audit/trace failures have separate codes because either one invalidates a normal
 success result. Timeout and interruption also remain distinct terminal semantics.
 
+An ordinary Capability failure with a bounded safe observation is returned to the model as the
+paired Tool Result so it can adapt instead of being blocked by a recoverable command choice. The
+CapabilityInvocation remains `failed` and its Event remains `capability.failed`; a later successful
+Run does not rewrite that fact. Timeout, cancellation, protected or missing observations, Registry
+and Schema failures, and Persistence/Event failures remain terminal. Completed calls remain in the
+anti-replay set during any later response repair.
+
+Physical host paths remain forbidden in Error and Event Metadata. A user-visible final answer may
+report a legitimate result path because the Model Adapter has already rejected configured Secret
+values on the response surface; sensitive credential forms and output length remain validated.
+
 The v0.1 retry surface is deliberately narrow. The model SDK may retry temporary transport errors
 up to the configured limit; this never replays a Capability. Separately, a transported but invalid
 model response may trigger at most three contract-only repair requests shared by one Agent Node.

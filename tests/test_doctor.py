@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import os
-import tomllib
 from pathlib import Path, PureWindowsPath
 
 import pytest
 from sqlalchemy.sql.elements import TextClause
 
 import scripts.doctor as doctor
+from anban.config import load_configuration
+from anban.core import AnbanError
+from anban.workspace import default_configuration_text
 from scripts.workspace_bootstrap import (
     WorkspaceResolutionError,
     default_workspace_value,
@@ -151,10 +153,16 @@ def test_secrets_permissions_error_fails(tmp_path: Path) -> None:
 def test_configuration_presence_only_outputs_configured(tmp_path: Path) -> None:
     workspace = create_workspace(tmp_path / "workspace")
     secret_value = "must-never-appear"
-    (workspace / "secrets.env").write_text(
-        "OPENAI_COMPATIBLE_API_KEY=" + secret_value + "\n", encoding="utf-8"
+    (workspace / "anban.toml").write_text(default_configuration_text(), encoding="utf-8")
+    configuration = load_configuration(
+        workspace=workspace,
+        environ={
+            "OPENAI_COMPATIBLE_BASE_URL": "https://provider.invalid/v1",
+            "OPENAI_COMPATIBLE_API_KEY": secret_value,
+            "OPENAI_COMPATIBLE_MODEL": "test-model",
+        },
     )
-    presence = doctor.load_configuration_presence(workspace, {})
+    presence = doctor.configuration_presence(configuration)
     result = next(
         item
         for item in doctor.configuration_results(presence)
@@ -307,20 +315,11 @@ def test_doctor_repository_check_ignores_branch_and_worktree(
     assert doctor.check_repository().status == "PASS"
 
 
-def test_workspace_configuration_is_read_as_toml(tmp_path: Path) -> None:
-    (tmp_path / "anban.toml").write_text(
-        'schema_version = 1\nworkspace_id = "local-main"\n', encoding="utf-8"
-    )
-    assert doctor.load_workspace_config(tmp_path) == {
-        "schema_version": 1,
-        "workspace_id": "local-main",
-    }
-
-
 def test_invalid_workspace_configuration_fails_closed(tmp_path: Path) -> None:
     (tmp_path / "anban.toml").write_text("not = [valid", encoding="utf-8")
-    with pytest.raises(tomllib.TOMLDecodeError):
-        doctor.load_workspace_config(tmp_path)
+    (tmp_path / "secrets.env").write_text("", encoding="utf-8")
+    with pytest.raises(AnbanError):
+        load_configuration(workspace=tmp_path, environ={})
 
 
 def test_dotenv_shell_content_is_not_executed(tmp_path: Path) -> None:

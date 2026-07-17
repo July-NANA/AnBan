@@ -8,6 +8,7 @@ from pathlib import Path
 from anban.capability.process import ProcessCapability
 from anban.capability.registry import CapabilityRegistry
 from anban.capability.workspace import FileCapability, WorkspaceBoundary
+from anban.config import policy
 from scripts.workspace_bootstrap import REPOSITORY, resolve_workspace
 
 
@@ -16,6 +17,7 @@ def local_capability_registry(
     workspace_root: Path | None = None,
     allowed_executables: Mapping[str, Path] | None = None,
     environment: Mapping[str, str] | None = None,
+    process_default_timeout_seconds: int = policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS,
 ) -> CapabilityRegistry:
     """Build the only production Registry wiring for local v0.1 handlers."""
 
@@ -35,6 +37,7 @@ def local_capability_registry(
         boundary,
         allowed_executables or {},
         environment=environment,
+        default_timeout_seconds=process_default_timeout_seconds,
     )
     return CapabilityRegistry(
         (

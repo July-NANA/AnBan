@@ -7,6 +7,7 @@ import json
 import sys
 from uuid import uuid4
 
+from anban.config import load_configuration
 from anban.core import AnbanError
 from anban.model import (
     ModelMessage,
@@ -22,7 +23,10 @@ class ModelAcceptanceError(RuntimeError):
 
 
 async def accept_model_gateway() -> None:
-    adapter = OpenAICompatibleAdapter.configured()
+    configuration = load_configuration()
+    adapter = OpenAICompatibleAdapter.configured(
+        configuration.require_model(), protected_values=configuration.protected_values()
+    )
     nonce = uuid4().hex
     try:
         normal = await adapter.complete(

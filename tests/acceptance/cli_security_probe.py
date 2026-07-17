@@ -39,7 +39,7 @@ class SecurityProbeError(RuntimeError):
 
 
 async def snapshot_runs() -> dict[UUID, UUID]:
-    engine = create_database_engine(DatabaseProfile.TEST)
+    engine = create_database_engine(database_url(DatabaseProfile.TEST))
     try:
         async with engine.connect() as connection:
             rows = await connection.execute(
@@ -55,7 +55,7 @@ async def cleanup_new_runs(workspace: Path, before: Mapping[UUID, UUID]) -> None
     new_runs = set(after).difference(before)
     task_ids = {after[run_id] for run_id in new_runs}
     if task_ids:
-        engine = create_database_engine(DatabaseProfile.TEST)
+        engine = create_database_engine(database_url(DatabaseProfile.TEST))
         try:
             async with engine.begin() as connection:
                 await connection.execute(delete(TaskRecord).where(TaskRecord.id.in_(task_ids)))

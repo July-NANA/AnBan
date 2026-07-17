@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
-from anban.persistence.config import DatabaseProfile, database_url
 from anban.persistence.repository import SQLAlchemyExecutionRepository
 
 
@@ -27,8 +26,8 @@ def persistence_failure() -> AnbanError:
     )
 
 
-def create_database_engine(profile: DatabaseProfile) -> AsyncEngine:
-    return create_async_engine(database_url(profile), echo=False, pool_pre_ping=True)
+def create_database_engine(url: str) -> AsyncEngine:
+    return create_async_engine(url, echo=False, pool_pre_ping=True)
 
 
 class SQLAlchemyUnitOfWork:

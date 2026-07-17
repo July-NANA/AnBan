@@ -9,7 +9,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from anban.persistence.config import database_profile, database_url
+from anban.config import load_configuration
+from anban.persistence.config import database_profile
 from anban.persistence.models import Base
 
 config = context.config
@@ -21,7 +22,8 @@ target_metadata = Base.metadata
 
 def configured_url() -> str:
     profile = database_profile(os.environ.get("ANBAN_DATABASE_PROFILE"))
-    return database_url(profile)
+    configuration = load_configuration()
+    return configuration.database.require(profile.value)
 
 
 def run_migrations_offline() -> None:

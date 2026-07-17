@@ -16,7 +16,7 @@ from openai import (
 from openai.types.chat import ChatCompletionMessageFunctionToolCall, ChatCompletionMessageParam
 
 from anban.core import AnbanError, ErrorCode, ErrorInfo, SafeMetadata
-from anban.model.config import ModelConfiguration, load_model_configuration
+from anban.model.config import ModelConfiguration
 from anban.model.contracts import (
     ModelMessage,
     ModelRequest,
@@ -121,18 +121,22 @@ class OpenAICompatibleAdapter:
         self._protected_values = tuple(value for value in protected_values if value)
 
     @classmethod
-    def configured(cls, configuration: ModelConfiguration | None = None) -> OpenAICompatibleAdapter:
-        configuration = configuration or load_model_configuration()
+    def configured(
+        cls,
+        configuration: ModelConfiguration,
+        *,
+        protected_values: tuple[str, ...] = (),
+    ) -> OpenAICompatibleAdapter:
         client = AsyncOpenAI(
-            api_key=configuration.api_key,
-            base_url=configuration.base_url,
-            timeout=60.0,
-            max_retries=0,
+            api_key=configuration.api_key.get_secret_value(),
+            base_url=configuration.base_url.get_secret_value(),
+            timeout=float(configuration.request_timeout_seconds),
+            max_retries=configuration.transport_retries,
         )
         return cls(
             client,
             configuration.model,
-            protected_values=(configuration.api_key,),
+            protected_values=protected_values,
         )
 
     async def aclose(self) -> None:

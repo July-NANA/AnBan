@@ -7,14 +7,11 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from anban.capability import local_capability_registry, register_workspace_skill
+from anban.config import load_configuration
 from anban.interaction import InteractionService
 from anban.model import OpenAICompatibleAdapter
-from anban.persistence import (
-    DatabaseProfile,
-    SQLAlchemyUnitOfWorkFactory,
-    create_database_engine,
-)
-from anban.runtime import ExecutionQueryService, PersistentRuntime
+from anban.persistence import SQLAlchemyUnitOfWorkFactory, create_database_engine
+from anban.runtime import AgentLimits, ExecutionQueryService, PersistentRuntime
 
 
 @dataclass
@@ -44,15 +41,22 @@ class QueryApplication:
 async def build_application() -> Application:
     """Compose real Adapters without exposing them to the CLI command handlers."""
 
-    model = OpenAICompatibleAdapter.configured()
-    engine = create_database_engine(DatabaseProfile.DEVELOPMENT)
+    configuration = load_configuration()
+    model = OpenAICompatibleAdapter.configured(
+        configuration.require_model(), protected_values=configuration.protected_values()
+    )
+    engine = create_database_engine(configuration.database.require("development"))
     try:
-        capabilities = local_capability_registry()
-        register_workspace_skill(capabilities)
+        capabilities = local_capability_registry(
+            workspace_root=configuration.workspace,
+            process_default_timeout_seconds=configuration.process.default_timeout_seconds,
+        )
+        register_workspace_skill(capabilities, workspace_root=configuration.workspace)
         runtime = PersistentRuntime(
             model,
             capabilities,
             SQLAlchemyUnitOfWorkFactory(engine),
+            limits=AgentLimits(**configuration.agent.model_dump()),
         )
         queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
         return Application(InteractionService(runtime, queries), model, engine)
@@ -63,6 +67,7 @@ async def build_application() -> Application:
 
 
 async def build_query_application() -> QueryApplication:
-    engine = create_database_engine(DatabaseProfile.DEVELOPMENT)
+    configuration = load_configuration()
+    engine = create_database_engine(configuration.database.require("development"))
     queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
     return QueryApplication(InteractionService(None, queries), engine)

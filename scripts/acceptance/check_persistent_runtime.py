@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import delete
 
 from anban.capability import local_capability_registry
+from anban.config import load_configuration
 from anban.core.errors import AnbanError
 from anban.core.ids import ExecutionRunId, TaskId
 from anban.model import OpenAICompatibleAdapter
@@ -19,6 +20,7 @@ from anban.persistence import (
     DatabaseProfile,
     SQLAlchemyUnitOfWorkFactory,
     create_database_engine,
+    database_url,
 )
 from anban.persistence.models import TaskRecord
 from anban.runtime import AgentOutcomeStatus, EventProjectionService, PersistentRuntime
@@ -30,7 +32,7 @@ class RuntimeAcceptanceError(RuntimeError):
 
 
 async def inspect_persisted_run(run_id: ExecutionRunId) -> None:
-    engine = create_database_engine(DatabaseProfile.TEST)
+    engine = create_database_engine(database_url(DatabaseProfile.TEST))
     try:
         factory = SQLAlchemyUnitOfWorkFactory(engine)
         async with factory() as unit:
@@ -97,8 +99,11 @@ async def inspect_in_new_process(run_id: ExecutionRunId) -> None:
 
 
 async def accept_persistent_runtime(workspace: Path) -> None:
-    engine = create_database_engine(DatabaseProfile.TEST)
-    model = OpenAICompatibleAdapter.configured()
+    configuration = load_configuration(workspace=workspace)
+    engine = create_database_engine(configuration.database.require("test"))
+    model = OpenAICompatibleAdapter.configured(
+        configuration.require_model(), protected_values=configuration.protected_values()
+    )
     task_id: TaskId | None = None
     run_id: ExecutionRunId | None = None
     try:

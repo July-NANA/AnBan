@@ -332,7 +332,7 @@ async def accept_failure_paths(
 
 
 async def cleanup(workspace: Path, run_ids: Sequence[ExecutionRunId]) -> None:
-    engine = create_database_engine(DatabaseProfile.TEST)
+    engine = create_database_engine(database_url(DatabaseProfile.TEST))
     try:
         factory = SQLAlchemyUnitOfWorkFactory(engine)
         task_ids: list[TaskId] = []
@@ -364,8 +364,8 @@ async def accept_cli_e2e(workspace: Path) -> None:
         {
             "ANBAN_WORKSPACE_DIR": str(workspace),
             "DATABASE_URL": test_database_url,
-            "OPENAI_COMPATIBLE_BASE_URL": model.base_url,
-            "OPENAI_COMPATIBLE_API_KEY": model.api_key,
+            "OPENAI_COMPATIBLE_BASE_URL": model.base_url.get_secret_value(),
+            "OPENAI_COMPATIBLE_API_KEY": model.api_key.get_secret_value(),
             "OPENAI_COMPATIBLE_MODEL": model.model,
         }
     )

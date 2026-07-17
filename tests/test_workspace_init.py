@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from anban.workspace import initialize_workspace
+from anban.config import load_configuration, policy
+from anban.workspace import default_configuration_text, initialize_workspace
 from scripts.workspace_bootstrap import REPOSITORY, WorkspaceResolutionError
 
 
@@ -58,3 +59,19 @@ def test_workspace_init_rejects_repository_before_mutation(
         initialize_workspace()
     assert raised.value.code == "workspace_path_unsafe"
     assert os.stat(REPOSITORY).st_mode == original_mode
+
+
+def test_workspace_template_uses_policy_defaults_and_chinese_comments(tmp_path: Path) -> None:
+    workspace = tmp_path / "managed-workspace"
+    text = default_configuration_text()
+    assert "单次模型请求超时时间" in text
+    assert "process.execute 默认超时时间" in text
+    workspace.mkdir()
+    (workspace / "anban.toml").write_text(text, encoding="utf-8")
+    (workspace / "secrets.env").write_text("", encoding="utf-8")
+    configuration = load_configuration(workspace=workspace, environ={})
+    assert configuration.agent.max_model_turns == policy.AGENT_MAX_MODEL_TURNS_DEFAULT
+    assert (
+        configuration.process.default_timeout_seconds
+        == policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS
+    )

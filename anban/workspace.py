@@ -7,20 +7,52 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from anban.config import policy
 from scripts.workspace_bootstrap import REPOSITORY, WorkspaceResolutionError, resolve_workspace
 
 _DIRECTORIES = ("skills", "runs", "artifacts", "cache", "logs", "tmp")
-_CONFIG = """schema_version = 1
+
+
+def default_configuration_text() -> str:
+    return f"""# 配置结构版本；由安伴维护，不应手工更改。
+schema_version = 1
+# Workspace 逻辑标识；可调整，但不得包含物理路径或敏感信息。
 workspace_id = "local-main"
 
 [model.default]
+# v0.1 固定使用 OpenAI-compatible Provider Adapter。
 provider = "openai-compatible"
+# 模型端点只允许从该固定环境变量引用，实际值必须放在 secrets.env。
 base_url_env = "OPENAI_COMPATIBLE_BASE_URL"
+# API Key 只允许从该固定环境变量引用，实际值必须放在 secrets.env。
 api_key_env = "OPENAI_COMPATIBLE_API_KEY"
+# 模型名称只允许从该固定环境变量引用，实际值必须放在 secrets.env。
 model_env = "OPENAI_COMPATIBLE_MODEL"
+# 单次模型请求超时时间，单位为秒；允许范围 1–120。
+request_timeout_seconds = {policy.MODEL_REQUEST_TIMEOUT_DEFAULT_SECONDS}
+# 临时传输错误的自动重试次数，不包含首次请求；允许范围 0–3。
+transport_retries = {policy.MODEL_TRANSPORT_RETRIES_DEFAULT}
+# 非法响应结构的修复重试次数；单个 Agent Node 共用，允许范围 0–3。
+response_repair_retries = {policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT}
+
+[agent]
+# 单个 Agent Node 最大模型逻辑轮次；不可超过 8，修复请求计入轮次。
+max_model_turns = {policy.AGENT_MAX_MODEL_TURNS_DEFAULT}
+# 单个 Agent Node 最大 Capability 调用次数；不可超过 8。
+max_capability_calls = {policy.AGENT_MAX_CAPABILITY_CALLS_DEFAULT}
+# 单次 Agent 执行总超时时间，单位为秒；不可超过 180。
+total_timeout_seconds = {policy.AGENT_TOTAL_TIMEOUT_DEFAULT_SECONDS}
+# 连续相同 Capability 调用达到该次数时终止；允许范围 2–3。
+repeated_call_limit = {policy.AGENT_REPEATED_CALL_LIMIT_DEFAULT}
+
+[capability.process]
+# process.execute 默认超时时间，单位为秒；允许范围 1–30。
+default_timeout_seconds = {policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS}
 
 [database]
+# 开发数据库只允许从该固定环境变量引用，实际 URL 必须放在 secrets.env。
 url_env = "DATABASE_URL"
+# 测试数据库只允许从该固定环境变量引用，实际 URL 必须放在 secrets.env。
 test_url_env = "ANBAN_TEST_DATABASE_URL"
 """
 
@@ -52,7 +84,7 @@ def initialize_workspace() -> WorkspaceInitialization:
         directory.chmod(0o700)
 
     config = root / "anban.toml"
-    created_config = _create_file(config, _CONFIG.encode(), 0o600)
+    created_config = _create_file(config, default_configuration_text().encode(), 0o600)
     _validate_existing_config(config)
     secrets = root / "secrets.env"
     created_secrets = _create_file(secrets, b"", 0o600)

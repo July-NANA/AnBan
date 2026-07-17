@@ -8,9 +8,16 @@ import pytest
 
 from anban.core import AnbanError, ErrorCode
 from anban.persistence import DatabaseProfile, database_profile, database_url
+from anban.workspace import default_configuration_text
+
+
+def prepare_workspace(path: Path) -> None:
+    (path / "anban.toml").write_text(default_configuration_text(), encoding="utf-8")
+    (path / "secrets.env").write_text("", encoding="utf-8")
 
 
 def test_development_and_test_profiles_use_separate_keys(tmp_path: Path) -> None:
+    prepare_workspace(tmp_path)
     environment = {
         "DATABASE_URL": "postgresql+asyncpg://localhost/anban",
         "ANBAN_TEST_DATABASE_URL": "postgresql+asyncpg://localhost/anban_test",
@@ -32,6 +39,7 @@ def test_database_profile_defaults_to_development_and_rejects_unknown() -> None:
 
 
 def test_missing_or_wrong_driver_fails_without_echoing_value(tmp_path: Path) -> None:
+    prepare_workspace(tmp_path)
     with pytest.raises(AnbanError) as missing:
         database_url(DatabaseProfile.TEST, environ={}, workspace=tmp_path)
     assert missing.value.info.code is ErrorCode.CONFIGURATION_MISSING

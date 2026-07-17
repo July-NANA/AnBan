@@ -36,6 +36,7 @@ from anban.persistence import (
     DatabaseProfile,
     SQLAlchemyUnitOfWorkFactory,
     create_database_engine,
+    database_url,
 )
 from anban.persistence.models import TaskRecord
 
@@ -94,7 +95,7 @@ def records() -> tuple[
 
 
 async def accept_repositories() -> None:
-    engine = create_database_engine(DatabaseProfile.TEST)
+    engine = create_database_engine(database_url(DatabaseProfile.TEST))
     factory = SQLAlchemyUnitOfWorkFactory(engine)
     task, run, node, invocation, artifact, events = records()
     failed_task = Task(id=new_task_id(), request="must roll back")

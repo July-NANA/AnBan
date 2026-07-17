@@ -6,21 +6,29 @@ from pathlib import Path
 
 import pytest
 
+from anban.config import load_configuration, policy
 from anban.core import AnbanError, ErrorCode
-from anban.model import load_model_configuration
 
 CONFIG = """
+schema_version = 1
+workspace_id = "test-workspace"
+
 [model.default]
 provider = "openai-compatible"
 base_url_env = "OPENAI_COMPATIBLE_BASE_URL"
 api_key_env = "OPENAI_COMPATIBLE_API_KEY"
 model_env = "OPENAI_COMPATIBLE_MODEL"
+
+[database]
+url_env = "DATABASE_URL"
+test_url_env = "ANBAN_TEST_DATABASE_URL"
 """
 
 
 def test_configuration_uses_allowlisted_environment_references(tmp_path: Path) -> None:
     (tmp_path / "anban.toml").write_text(CONFIG, encoding="utf-8")
-    configuration = load_model_configuration(
+    (tmp_path / "secrets.env").write_text("", encoding="utf-8")
+    configuration = load_configuration(
         workspace=tmp_path,
         environ={
             "OPENAI_COMPATIBLE_BASE_URL": "https://provider.invalid/v1",
@@ -28,12 +36,52 @@ def test_configuration_uses_allowlisted_environment_references(tmp_path: Path) -
             "OPENAI_COMPATIBLE_MODEL": "test-model",
         },
     )
-    assert configuration.model == "test-model"
+    model = configuration.require_model()
+    assert model.model == "test-model"
+    assert model.request_timeout_seconds == policy.MODEL_REQUEST_TIMEOUT_DEFAULT_SECONDS
+    assert configuration.agent.max_model_turns == policy.AGENT_MAX_MODEL_TURNS_DEFAULT
+    assert (
+        configuration.process.default_timeout_seconds
+        == policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS
+    )
 
 
 def test_missing_configuration_fails_explicitly(tmp_path: Path) -> None:
     (tmp_path / "anban.toml").write_text(CONFIG, encoding="utf-8")
+    (tmp_path / "secrets.env").write_text("", encoding="utf-8")
     with pytest.raises(AnbanError) as raised:
-        load_model_configuration(workspace=tmp_path, environ={})
+        load_configuration(workspace=tmp_path, environ={}).require_model()
     assert raised.value.info.code is ErrorCode.CONFIGURATION_MISSING
     assert "synthetic-test-value" not in str(raised.value.as_dict())
+
+
+def test_configuration_above_hard_limit_fails_without_clamping(tmp_path: Path) -> None:
+    (tmp_path / "anban.toml").write_text(
+        CONFIG.replace(
+            'model_env = "OPENAI_COMPATIBLE_MODEL"',
+            'model_env = "OPENAI_COMPATIBLE_MODEL"\nrequest_timeout_seconds = 121',
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "secrets.env").write_text("", encoding="utf-8")
+    with pytest.raises(AnbanError) as raised:
+        load_configuration(workspace=tmp_path, environ={})
+    assert raised.value.info.code is ErrorCode.VALIDATION_FAILED
+
+
+def test_policy_defaults_are_inside_their_hard_ranges() -> None:
+    assert (
+        policy.MODEL_REQUEST_TIMEOUT_MIN_SECONDS
+        <= policy.MODEL_REQUEST_TIMEOUT_DEFAULT_SECONDS
+        <= policy.MODEL_REQUEST_TIMEOUT_MAX_SECONDS
+    )
+    assert (
+        policy.MODEL_TRANSPORT_RETRIES_MIN
+        <= policy.MODEL_TRANSPORT_RETRIES_DEFAULT
+        <= policy.MODEL_TRANSPORT_RETRIES_MAX
+    )
+    assert (
+        policy.MODEL_RESPONSE_REPAIR_RETRIES_MIN
+        <= policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT
+        <= policy.MODEL_RESPONSE_REPAIR_RETRIES_MAX
+    )

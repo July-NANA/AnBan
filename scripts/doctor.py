@@ -8,11 +8,9 @@ import hashlib
 import importlib
 import json
 import os
-import re
 import stat
 import subprocess
 import sys
-import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
@@ -20,11 +18,12 @@ from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Literal, cast
 
-from dotenv import dotenv_values
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from anban.capability.skill import WEATHER_SKILL
+from anban.config.loader import AnbanConfiguration, load_configuration
+from anban.core import AnbanError
 from scripts.workspace_bootstrap import WorkspaceResolutionError, resolve_workspace
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -224,11 +223,6 @@ def check_node() -> CheckResult:
     return node_environment_result(node_version, pnpm_version, package_manager)
 
 
-def load_workspace_config(workspace: Path) -> dict[str, object]:
-    with (workspace / "anban.toml").open("rb") as handle:
-        return tomllib.load(handle)
-
-
 def check_workspace(workspace: Path | None = None) -> CheckResult:
     resolution = None
     try:
@@ -277,44 +271,20 @@ def check_workspace(workspace: Path | None = None) -> CheckResult:
             "secrets.env is missing or not mode 0600.",
             "Create secrets.env and set mode 0600.",
         )
-    try:
-        config = load_workspace_config(workspace)
-    except (OSError, tomllib.TOMLDecodeError):
-        return fail_result(
-            "Workspace",
-            "workspace_configuration_invalid",
-            "anban.toml cannot be parsed.",
-            "Restore a valid Workspace configuration.",
-        )
-    schema_version = config.get("schema_version")
-    workspace_id = config.get("workspace_id")
-    if not isinstance(schema_version, int) or schema_version < 1:
-        return fail_result(
-            "Workspace",
-            "workspace_schema_version_invalid",
-            "anban.toml schema_version is invalid.",
-            "Set schema_version to a supported positive integer.",
-        )
-    if not isinstance(workspace_id, str) or not re.fullmatch(
-        r"[a-z0-9][a-z0-9_-]{2,63}", workspace_id
-    ):
-        return fail_result(
-            "Workspace",
-            "workspace_id_invalid",
-            "anban.toml workspace_id is invalid.",
-            "Set a stable lowercase workspace identifier.",
-        )
     source = resolution.source if resolution is not None else "explicit validation path"
     return pass_result(
-        "Workspace", f"resolved from {source}; external, permissions and configuration valid"
+        "Workspace", f"resolved from {source}; external layout and permissions valid"
     )
 
 
-def load_configuration_presence(workspace: Path, environ: Mapping[str, str]) -> dict[str, bool]:
-    values = dotenv_values(workspace / "secrets.env", interpolate=False)
+def configuration_presence(configuration: AnbanConfiguration) -> dict[str, bool]:
+    model_configured = configuration.model is not None
     return {
-        name: bool(environ.get(name) or (isinstance(values.get(name), str) and values.get(name)))
-        for name in CONFIGURATION_KEYS
+        "DATABASE_URL": configuration.database.development_url is not None,
+        "ANBAN_TEST_DATABASE_URL": configuration.database.test_url is not None,
+        "OPENAI_COMPATIBLE_BASE_URL": model_configured,
+        "OPENAI_COMPATIBLE_API_KEY": model_configured,
+        "OPENAI_COMPATIBLE_MODEL": model_configured,
     }
 
 
@@ -334,8 +304,24 @@ def configuration_results(presence: Mapping[str, bool]) -> list[CheckResult]:
     ]
 
 
-def check_configuration(workspace: Path) -> list[CheckResult]:
-    return configuration_results(load_configuration_presence(workspace, os.environ))
+def check_configuration(configuration: AnbanConfiguration) -> list[CheckResult]:
+    results = configuration_results(configuration_presence(configuration))
+    model = configuration.model
+    if model is None:
+        return results
+    results.append(
+        pass_result(
+            "effective configuration",
+            "model timeout="
+            f"{model.request_timeout_seconds}s, transport retries={model.transport_retries}, "
+            f"response repairs={model.response_repair_retries}, model turns="
+            f"{configuration.agent.max_model_turns}, capability calls="
+            f"{configuration.agent.max_capability_calls}, total timeout="
+            f"{configuration.agent.total_timeout_seconds}s, process timeout="
+            f"{configuration.process.default_timeout_seconds}s",
+        )
+    )
+    return results
 
 
 async def database_probe(url: str, expected_database: str) -> None:
@@ -376,11 +362,11 @@ async def database_probe(url: str, expected_database: str) -> None:
         await engine.dispose()
 
 
-def check_postgresql(workspace: Path) -> CheckResult:
-    values = dotenv_values(workspace / "secrets.env", interpolate=False)
-    development = os.environ.get("DATABASE_URL") or values.get("DATABASE_URL")
-    test = os.environ.get("ANBAN_TEST_DATABASE_URL") or values.get("ANBAN_TEST_DATABASE_URL")
-    if not isinstance(development, str) or not development or not isinstance(test, str) or not test:
+def check_postgresql(configuration: AnbanConfiguration) -> CheckResult:
+    try:
+        development = configuration.database.require("development")
+        test = configuration.database.require("test")
+    except AnbanError:
         return fail_result(
             "PostgreSQL",
             "postgresql_configuration_missing",
@@ -527,8 +513,21 @@ def main(argv: list[str] | None = None) -> int:
                 print(line)
         return 1 if any(result.status == "FAIL" for result in results) else 0
     results += run_guarded("Workspace", check_workspace, one)
-    results += run_guarded("configuration", lambda: check_configuration(workspace), many)
-    results += run_guarded("PostgreSQL", lambda: check_postgresql(workspace), one)
+    try:
+        configuration = load_configuration(workspace=workspace)
+    except AnbanError:
+        results.append(
+            fail_result(
+                "configuration",
+                "workspace_configuration_invalid",
+                "Workspace configuration is invalid.",
+                "Correct anban.toml and its fixed environment references.",
+            )
+        )
+        configuration = None
+    if configuration is not None:
+        results += run_guarded("configuration", lambda: check_configuration(configuration), many)
+        results += run_guarded("PostgreSQL", lambda: check_postgresql(configuration), one)
     results += run_guarded("Skill baseline", lambda: check_skill_baseline(workspace), one)
     results += run_guarded("Chromium", check_chromium, one)
 

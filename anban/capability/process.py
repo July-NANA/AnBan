@@ -18,14 +18,11 @@ from anban.capability.contracts import (
     InvocationContext,
 )
 from anban.capability.workspace import WorkspaceBoundary, capability_error
+from anban.config import policy
 from anban.core.errors import ErrorCode, ErrorInfo
 from anban.core.metadata import SafeMetadata, validate_safe_text
 from anban.core.models import now_utc
 
-DEFAULT_TIMEOUT_SECONDS = 10
-MAX_TIMEOUT_SECONDS = 30
-MAX_PROCESS_OUTPUT_BYTES = 16_384
-MAX_PROCESS_ARGUMENTS = 64
 _ENVIRONMENT_KEYS = frozenset({"LANG", "LC_ALL", "TZ", "PYTHONUTF8"})
 
 
@@ -43,10 +40,18 @@ class ProcessCapability:
         allowed_executables: Mapping[str, Path],
         *,
         environment: Mapping[str, str] | None = None,
+        default_timeout_seconds: int = policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS,
     ) -> None:
         self._boundary = boundary
         self._executables = dict(allowed_executables)
         self._environment = self._validated_environment(environment or {})
+        if not (
+            policy.PROCESS_DEFAULT_TIMEOUT_MIN_SECONDS
+            <= default_timeout_seconds
+            <= policy.PROCESS_TIMEOUT_MAX_SECONDS
+        ):
+            raise ValueError("process default timeout is outside the safety policy")
+        self._default_timeout_seconds = default_timeout_seconds
         self._processes: dict[str, asyncio.subprocess.Process] = {}
         self._cancelled: set[str] = set()
         self._descriptor = self._build_descriptor()
@@ -61,7 +66,7 @@ class ProcessCapability:
         command = arguments["command"]
         args = arguments.get("args", [])
         cwd = arguments.get("cwd", ".")
-        timeout = arguments.get("timeout", DEFAULT_TIMEOUT_SECONDS)
+        timeout = arguments.get("timeout", self._default_timeout_seconds)
         if (
             not isinstance(command, str)
             or not isinstance(args, list)
@@ -228,7 +233,8 @@ class ProcessCapability:
         retained = bytearray()
         exceeded = False
         while chunk := await stream.read(4096):
-            remaining = MAX_PROCESS_OUTPUT_BYTES - len(retained)
+            limit = max(policy.PROCESS_STDOUT_MAX_BYTES, policy.PROCESS_STDERR_MAX_BYTES)
+            remaining = limit - len(retained)
             if remaining > 0:
                 retained.extend(chunk[:remaining])
             if len(chunk) > remaining and not exceeded:
@@ -299,13 +305,13 @@ class ProcessCapability:
                     "args": {
                         "type": "array",
                         "items": {"type": "string", "maxLength": 4096},
-                        "maxItems": MAX_PROCESS_ARGUMENTS,
+                        "maxItems": policy.PROCESS_ARGUMENTS_MAX,
                     },
                     "cwd": {"type": "string", "minLength": 1, "maxLength": 512},
                     "timeout": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": MAX_TIMEOUT_SECONDS,
+                        "maximum": policy.PROCESS_TIMEOUT_MAX_SECONDS,
                     },
                 },
                 "required": ["command"],

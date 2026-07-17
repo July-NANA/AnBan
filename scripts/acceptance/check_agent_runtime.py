@@ -7,6 +7,7 @@ import json
 import sys
 
 from anban.capability import CapabilityRegistry, register_workspace_skill
+from anban.config import load_configuration
 from anban.core.errors import AnbanError
 from anban.core.ids import new_execution_run_id, new_node_run_id
 from anban.model import OpenAICompatibleAdapter
@@ -18,7 +19,10 @@ class AgentAcceptanceError(RuntimeError):
 
 
 async def accept_agent_runtime() -> None:
-    model = OpenAICompatibleAdapter.configured()
+    configuration = load_configuration()
+    model = OpenAICompatibleAdapter.configured(
+        configuration.require_model(), protected_values=configuration.protected_values()
+    )
     registry = CapabilityRegistry()
     register_workspace_skill(registry)
     agent = FixedGeneralAgent(model, registry)

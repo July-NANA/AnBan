@@ -22,6 +22,7 @@ from anban.capability import (
     local_capability_registry,
     register_workspace_skill,
 )
+from anban.config import load_configuration
 from anban.core.errors import AnbanError, ErrorCode
 from anban.core.ids import (
     ExecutionRunId,
@@ -36,6 +37,7 @@ from anban.persistence import (
     DatabaseProfile,
     SQLAlchemyUnitOfWorkFactory,
     create_database_engine,
+    database_url,
 )
 from anban.persistence.models import TaskRecord
 from anban.runtime import AgentOutcomeStatus, EventProjectionService, PersistentRuntime
@@ -100,8 +102,8 @@ async def accept_model_failures() -> None:
     configuration = load_model_configuration()
     timeout = OpenAICompatibleAdapter(
         AsyncOpenAI(
-            api_key=configuration.api_key,
-            base_url=configuration.base_url,
+            api_key=configuration.api_key.get_secret_value(),
+            base_url=configuration.base_url.get_secret_value(),
             timeout=0.001,
             max_retries=0,
         ),
@@ -225,7 +227,7 @@ async def accept_capability_failures(workspace: Path) -> tuple[ExecutionRunId, .
 
 
 async def inspect_gate_run(run_id: ExecutionRunId, workspace: Path) -> None:
-    engine = create_database_engine(DatabaseProfile.TEST)
+    engine = create_database_engine(database_url(DatabaseProfile.TEST))
     try:
         factory = SQLAlchemyUnitOfWorkFactory(engine)
         async with factory() as unit:
@@ -287,8 +289,11 @@ async def inspect_in_new_process(run_id: ExecutionRunId) -> None:
 
 
 async def accept_real_vertical_slice(workspace: Path) -> tuple[TaskId, ExecutionRunId]:
-    engine = create_database_engine(DatabaseProfile.TEST)
-    model = OpenAICompatibleAdapter.configured()
+    configuration = load_configuration(workspace=workspace)
+    engine = create_database_engine(configuration.database.require("test"))
+    model = OpenAICompatibleAdapter.configured(
+        configuration.require_model(), protected_values=configuration.protected_values()
+    )
     task_id: TaskId | None = None
     run_id: ExecutionRunId | None = None
     try:
@@ -349,7 +354,7 @@ async def accept_p2_gate(workspace: Path) -> None:
             boundary_runs + (() if run_id is None else (run_id,)),
         )
         if task_id is not None:
-            engine = create_database_engine(DatabaseProfile.TEST)
+            engine = create_database_engine(database_url(DatabaseProfile.TEST))
             try:
                 async with engine.begin() as connection:
                     await connection.execute(delete(TaskRecord).where(TaskRecord.id == task_id))

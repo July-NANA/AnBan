@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from anban.capability import local_capability_registry, register_workspace_skill
+from anban.capability import local_capability_registry
 from anban.config import load_configuration
 from anban.interaction import InteractionService
 from anban.model import OpenAICompatibleAdapter
@@ -60,7 +60,6 @@ async def build_application() -> Application:
             artifact_max_bytes=configuration.process.artifact_max_bytes,
             protected_values=configuration.protected_values(),
         )
-        register_workspace_skill(capabilities, workspace_root=configuration.workspace)
         runtime = PersistentRuntime(
             model,
             capabilities,

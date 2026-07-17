@@ -25,6 +25,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["anban*", "scripts*"]
 
+[tool.setuptools.package-data]
+anban = ["skills/**/SKILL.md"]
+
 [dependency-groups]
 dev = [
   "pyright>=1.1.400",

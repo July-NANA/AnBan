@@ -6,6 +6,7 @@ from pathlib import Path
 
 from anban.capability.process import ProcessCapability
 from anban.capability.registry import CapabilityRegistry
+from anban.capability.skill import SkillActivationCapability, WorkspaceSkillCatalog
 from anban.capability.workspace import WorkspaceBoundary
 from anban.config import policy
 from scripts.workspace_bootstrap import REPOSITORY, resolve_workspace
@@ -50,4 +51,8 @@ def local_capability_registry(
         max_artifacts=max_artifacts,
         artifact_max_bytes=artifact_max_bytes,
     )
-    return CapabilityRegistry((process,))
+    skills = WorkspaceSkillCatalog(
+        resolved_root,
+        protected_values=protected_values,
+    ).discover()
+    return CapabilityRegistry((process, SkillActivationCapability(skills)))

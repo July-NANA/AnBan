@@ -211,7 +211,9 @@ class ProbeConnection:
         query = str(statement)
         self.queries.append(query)
         if "current_database()" in query:
-            return ProbeResult(row=("anban", "anban"))
+            return ProbeResult(row=("custom_database", "custom_user"))
+        if "alembic_version" in query:
+            return ProbeResult(scalar="head-1")
         if "SELECT value" in query:
             return ProbeResult(scalar="ok")
         if "to_regclass" in query:
@@ -263,29 +265,31 @@ async def test_database_with_business_tables_passes_and_transaction_rolls_back(
 
     monkeypatch.setattr(doctor, "create_async_engine", probe_create_async_engine)
 
-    await doctor.database_probe("postgresql+asyncpg://not-logged", "anban")
+    await doctor.database_probe("postgresql+asyncpg://not-logged", "head-1")
 
     assert any("information_schema.tables" in query for query in connection.queries)
     assert connection.transaction.rolled_back
     assert any("to_regclass" in query for query in connection.queries)
 
 
-def test_skill_files_version_pin_and_hash_pass(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_skill_discovery_uses_uniform_parser_without_install_metadata(tmp_path: Path) -> None:
     workspace = create_workspace(tmp_path / "workspace")
-    skill = workspace / "skills" / "@steipete" / "weather" / "SKILL.md"
+    (workspace / "anban.toml").write_text(default_configuration_text(), encoding="utf-8")
+    skill = workspace / "skills" / "@owner" / "example" / "SKILL.md"
     skill.parent.mkdir(parents=True)
-    skill.write_text("approved instructions", encoding="utf-8")
-    lock = workspace / ".clawhub" / "lock.json"
-    lock.parent.mkdir()
-    lock.write_text(
-        '{"skills":{"@steipete/weather":{"version":"1.0.0","pinned":true}}}',
+    skill.write_text(
+        "---\nname: example\ndescription: Example Skill.\n---\n\nRun a real command.\n",
         encoding="utf-8",
     )
-    digest = __import__("hashlib").sha256(skill.read_bytes()).hexdigest()
-    monkeypatch.setattr(doctor, "SKILL_HASH", digest)
-    assert doctor.skill_baseline_result(workspace, doctor.CLAW_CLI_VERSION).status == "PASS"
+    metadata = workspace / ".clawhub" / "lock.json"
+    metadata.parent.mkdir()
+    metadata.write_text("not json", encoding="utf-8")
+    configuration = load_configuration(workspace=workspace, environ={})
+
+    result = doctor.check_skills(workspace, configuration)
+
+    assert result.status == "PASS"
+    assert "valid=2" in result.detail
 
 
 def test_doctor_call_graph_excludes_real_acceptance_network_and_duplicate_checks() -> None:
@@ -302,7 +306,18 @@ def test_doctor_call_graph_excludes_real_acceptance_network_and_duplicate_checks
         "check_ci_files",
     )
     assert all(token not in source for token in forbidden)
-    assert '"npx", "--offline"' in source
+    assert "if arguments.online:" in source
+    assert "if arguments.web:" in source
+    base_section = source[source.index("if configuration is not None:") :]
+    assert base_section.index("if arguments.online:") > base_section.index("check_process")
+
+
+def test_doctor_options_keep_online_and_web_checks_out_of_base_mode() -> None:
+    parsed = doctor.parser().parse_args([])
+    assert parsed.online is False
+    assert parsed.web is False
+    assert doctor.parser().parse_args(["--online"]).online is True
+    assert doctor.parser().parse_args(["--web"]).web is True
 
 
 def test_doctor_repository_check_ignores_branch_and_worktree(

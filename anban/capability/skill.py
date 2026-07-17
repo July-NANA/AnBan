@@ -1,16 +1,13 @@
-"""Approved Workspace Skill discovery and activation through CapabilityPort."""
+"""Uniform package and Workspace SKILL.md discovery and activation."""
 
 from __future__ import annotations
 
 import hashlib
-import json
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from anban.capability.contracts import (
     CapabilityDescriptor,
@@ -19,222 +16,192 @@ from anban.capability.contracts import (
     CapabilityResultStatus,
     InvocationContext,
 )
-from anban.capability.registry import CapabilityRegistry
 from anban.capability.workspace import capability_error
-from anban.core.errors import AnbanError, ErrorCode
-from anban.core.metadata import SafeMetadata, validate_safe_text
+from anban.core.errors import ErrorCode
+from anban.core.metadata import SafeMetadata
 from scripts.workspace_bootstrap import resolve_workspace
 
 MAX_SKILL_SOURCE_BYTES = 65_536
 MAX_SKILL_CONTEXT_CHARS = 15_000
+_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _SLUG_PATTERN = re.compile(r"^@[a-z0-9][a-z0-9-]{0,63}/[a-z0-9][a-z0-9-]{0,63}$")
-
-
-@dataclass(frozen=True)
-class ApprovedSkill:
-    slug: str
-    version: str
-    owner_handle: str
-    sha256: str
-
-
-WEATHER_SKILL = ApprovedSkill(
-    slug="@steipete/weather",
-    version="1.0.0",
-    owner_handle="steipete",
-    sha256="1ca0c8d768ad603ea8d5d47f56a9b435fe575f7f34e719eda85c82003d740e93",
-)
-APPROVED_SKILLS = (WEATHER_SKILL,)
+_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 
 
 class SkillPackage(BaseModel):
-    """Safe package facts and the bounded model-visible instruction projection."""
+    """Identity and complete bounded instructions derived only from one SKILL.md."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     slug: str = Field(pattern=_SLUG_PATTERN.pattern)
-    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*$")
+    name: str = Field(pattern=_NAME_PATTERN.pattern)
     description: str = Field(min_length=1, max_length=1024)
-    version: str = Field(min_length=1, max_length=64, pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")
-    owner_handle: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*$")
-    source_uri: str = Field(min_length=1, max_length=256, pattern=r"^anban://skill/")
+    version: str = Field(pattern=r"^(?:unverified|[A-Za-z0-9][A-Za-z0-9._+-]{0,63})$")
+    skill_root: str = Field(min_length=1, max_length=512)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     instructions: str = Field(min_length=1, max_length=MAX_SKILL_CONTEXT_CHARS)
-    omitted_line_count: int = Field(ge=0)
 
-    @field_validator("description", "instructions", "source_uri")
-    @classmethod
-    def validate_model_visible_text(cls, value: str) -> str:
-        return validate_safe_text(value, label="Skill context", max_length=MAX_SKILL_CONTEXT_CHARS)
+
+@dataclass(frozen=True)
+class SkillDiagnostic:
+    """Non-sensitive reason for skipping one invalid SKILL.md."""
+
+    path: str
+    reason: str
 
 
 class WorkspaceSkillCatalog:
-    """Discover only explicitly approved, pinned packages from the managed Workspace."""
+    """Scan package and Workspace roots through one parser and validation path."""
 
     def __init__(
         self,
         workspace_root: Path | None = None,
         *,
-        approved: tuple[ApprovedSkill, ...] = APPROVED_SKILLS,
+        package_skills_root: Path | None = None,
+        protected_values: tuple[str, ...] = (),
     ) -> None:
-        root = resolve_workspace().path if workspace_root is None else workspace_root
-        try:
-            self._root = root.resolve(strict=True)
-            self._skills_root = (self._root / "skills").resolve(strict=True)
-        except (OSError, RuntimeError) as exc:
-            raise self._failure("Skill directory is unavailable", "skills_root_invalid") from exc
-        if not self._skills_root.is_dir() or not self._skills_root.is_relative_to(self._root):
-            raise self._failure("Skill directory is unavailable", "skills_root_invalid")
-        self._approved = approved
+        workspace = resolve_workspace().path if workspace_root is None else workspace_root
+        package_root = (
+            Path(__file__).resolve().parent.parent / "skills"
+            if package_skills_root is None
+            else package_skills_root
+        )
+        self._roots = (
+            self._root(package_root, "package", "package/skills"),
+            self._root(workspace / "skills", "workspace", "skills"),
+        )
+        self._protected_values = tuple(value for value in protected_values if value)
+        self._diagnostics: tuple[SkillDiagnostic, ...] = ()
+
+    @property
+    def diagnostics(self) -> tuple[SkillDiagnostic, ...]:
+        return self._diagnostics
 
     def discover(self) -> tuple[SkillPackage, ...]:
-        records = self._lock_records()
-        packages = tuple(self._load(approved, records) for approved in self._approved)
-        if not packages:
-            raise self._failure("No approved Workspace Skill is configured", "skill_missing")
-        return packages
+        packages: dict[str, SkillPackage] = {}
+        diagnostics: list[SkillDiagnostic] = []
+        for physical_root, label, logical_root in self._roots:
+            if not physical_root.is_dir():
+                continue
+            for source_path in sorted(physical_root.rglob("SKILL.md")):
+                relative = source_path.relative_to(physical_root)
+                diagnostic_path = f"{label}:{relative.as_posix()}"
+                try:
+                    package = self._load(physical_root, logical_root, source_path, relative)
+                    if package.slug in packages:
+                        raise SkillLoadError("slug_conflict")
+                    packages[package.slug] = package
+                except SkillLoadError as exc:
+                    diagnostics.append(SkillDiagnostic(diagnostic_path, exc.reason))
+        self._diagnostics = tuple(diagnostics)
+        return tuple(packages[key] for key in sorted(packages))
 
-    def _load(self, approved: ApprovedSkill, records: Mapping[str, object]) -> SkillPackage:
-        if not _SLUG_PATTERN.fullmatch(approved.slug):
-            raise self._failure("Approved Skill identity is invalid", "approval_invalid")
-        namespace, package_name = approved.slug.split("/", maxsplit=1)
-        skill_file = self._skills_root / namespace / package_name / "SKILL.md"
+    @staticmethod
+    def _root(path: Path, label: str, logical: str) -> tuple[Path, str, str]:
         try:
-            resolved = skill_file.resolve(strict=True)
-            if not resolved.is_file() or not resolved.is_relative_to(self._skills_root):
-                raise ValueError("Skill source escapes the Workspace")
+            resolved = path.resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(f"{label} Skill root is invalid") from exc
+        return resolved, label, logical
+
+    def _load(
+        self,
+        root: Path,
+        logical_root: str,
+        source_path: Path,
+        relative: Path,
+    ) -> SkillPackage:
+        try:
+            resolved = source_path.resolve(strict=True)
+            if not resolved.is_file() or not resolved.is_relative_to(root):
+                raise SkillLoadError("path_invalid")
             raw = resolved.read_bytes()
-        except (OSError, RuntimeError, ValueError) as exc:
-            raise self._failure("Approved Workspace Skill is unavailable", "skill_missing") from exc
+        except SkillLoadError:
+            raise
+        except (OSError, RuntimeError) as exc:
+            raise SkillLoadError("source_unavailable") from exc
         if len(raw) > MAX_SKILL_SOURCE_BYTES:
-            raise self._failure("Workspace Skill source exceeds its limit", "source_limit")
-        digest = hashlib.sha256(raw).hexdigest()
-        record = records.get(approved.slug)
-        if not isinstance(record, dict):
-            raise self._failure("Workspace Skill source record is missing", "source_record_missing")
-        source_record = cast(dict[str, object], record)
-        if (
-            source_record.get("version") != approved.version
-            or source_record.get("ownerHandle") != approved.owner_handle
-            or source_record.get("pinned") is not True
-            or digest != approved.sha256
-        ):
-            raise self._failure("Workspace Skill approval does not match", "approval_mismatch")
+            raise SkillLoadError("source_limit")
         try:
             source = raw.decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise self._failure("Workspace Skill source is not UTF-8", "source_invalid") from exc
-        name, description, body = self._parse_frontmatter(source)
-        if name != package_name:
-            raise self._failure("Workspace Skill identity does not match", "identity_mismatch")
-        instructions, omitted = self._safe_projection(body)
+            raise SkillLoadError("source_not_utf8") from exc
+        if len(source) > MAX_SKILL_CONTEXT_CHARS:
+            raise SkillLoadError("context_limit")
+        if any(value in source for value in self._protected_values):
+            raise SkillLoadError("protected_value")
+        fields = self._frontmatter(source)
+        name = fields["name"]
+        if not _NAME_PATTERN.fullmatch(name):
+            raise SkillLoadError("name_invalid")
+        description = fields["description"]
+        if not description or len(description) > 1024:
+            raise SkillLoadError("description_invalid")
+        version = fields.get("version", "unverified")
+        if not _VERSION_PATTERN.fullmatch(version):
+            raise SkillLoadError("version_invalid")
+        slug = self._slug(relative, name)
+        package_root = relative.parent
         return SkillPackage(
-            slug=approved.slug,
+            slug=slug,
             name=name,
             description=description,
-            version=approved.version,
-            owner_handle=approved.owner_handle,
-            source_uri=f"anban://skill/{approved.slug}@{approved.version}",
-            content_hash=digest,
-            instructions=instructions,
-            omitted_line_count=omitted,
+            version=version,
+            skill_root=f"{logical_root}/{package_root.as_posix()}",
+            content_hash=hashlib.sha256(raw).hexdigest(),
+            instructions=source,
         )
-
-    def _lock_records(self) -> Mapping[str, object]:
-        lock_file = self._root / ".clawhub" / "lock.json"
-        try:
-            resolved = lock_file.resolve(strict=True)
-            if not resolved.is_file() or not resolved.is_relative_to(self._root):
-                raise ValueError("Skill source record escapes the Workspace")
-            if resolved.stat().st_size > MAX_SKILL_SOURCE_BYTES:
-                raise ValueError("Skill source record is too large")
-            payload: object = json.loads(resolved.read_text(encoding="utf-8"))
-        except (OSError, RuntimeError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise self._failure(
-                "Workspace Skill source record is invalid", "source_record_invalid"
-            ) from exc
-        if not isinstance(payload, dict):
-            raise self._failure("Workspace Skill source record is invalid", "source_record_invalid")
-        payload_mapping = cast(dict[str, object], payload)
-        records = payload_mapping.get("skills")
-        if not isinstance(records, dict):
-            raise self._failure("Workspace Skill source record is invalid", "source_record_invalid")
-        return cast(dict[str, object], records)
-
-    def _parse_frontmatter(self, source: str) -> tuple[str, str, str]:
-        lines = source.splitlines()
-        if not lines or lines[0] != "---":
-            raise self._failure("Workspace Skill frontmatter is invalid", "frontmatter_invalid")
-        try:
-            end = lines.index("---", 1, min(len(lines), 34))
-        except ValueError as exc:
-            raise self._failure(
-                "Workspace Skill frontmatter is invalid", "frontmatter_invalid"
-            ) from exc
-        fields: dict[str, str] = {}
-        for line in lines[1:end]:
-            key, separator, value = line.partition(":")
-            if separator and key in {"name", "description"}:
-                fields[key] = value.strip()
-        name = fields.get("name", "")
-        description = fields.get("description", "")
-        if not name or not description:
-            raise self._failure("Workspace Skill frontmatter is invalid", "frontmatter_invalid")
-        try:
-            validate_safe_text(description, label="Skill description", max_length=1024)
-        except ValueError as exc:
-            raise self._failure(
-                "Workspace Skill description is unsafe", "unsafe_description"
-            ) from exc
-        return name, description, "\n".join(lines[end + 1 :]).strip()
-
-    def _safe_projection(self, body: str) -> tuple[str, int]:
-        retained: list[str] = []
-        omitted = 0
-        for line in body.splitlines():
-            try:
-                validate_safe_text(line, label="Skill instruction line", max_length=2048)
-            except ValueError:
-                omitted += 1
-                continue
-            retained.append(line)
-        instructions = "\n".join(retained).strip()
-        try:
-            validate_safe_text(
-                instructions,
-                label="Skill instructions",
-                max_length=MAX_SKILL_CONTEXT_CHARS,
-            )
-        except ValueError as exc:
-            raise self._failure(
-                "Workspace Skill instructions are unsafe", "instruction_limit"
-            ) from exc
-        if not instructions:
-            raise self._failure("Workspace Skill instructions are empty", "instructions_empty")
-        return instructions, omitted
 
     @staticmethod
-    def _failure(message: str, reason: str) -> AnbanError:
-        return capability_error(
-            ErrorCode.CAPABILITY_EXECUTION_FAILED,
-            message,
-            reason=reason,
-            capability_name="skill.activate",
-        )
+    def _frontmatter(source: str) -> dict[str, str]:
+        lines = source.splitlines()
+        if not lines or lines[0].strip() != "---":
+            raise SkillLoadError("frontmatter_invalid")
+        try:
+            end = next(index for index in range(1, min(len(lines), 65)) if lines[index] == "---")
+        except StopIteration as exc:
+            raise SkillLoadError("frontmatter_invalid") from exc
+        fields: dict[str, str] = {}
+        for line in lines[1:end]:
+            key, separator, raw_value = line.partition(":")
+            if not separator or key not in {"name", "description", "version"}:
+                continue
+            value = raw_value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            fields[key] = value
+        if not fields.get("name") or not fields.get("description"):
+            raise SkillLoadError("frontmatter_invalid")
+        return fields
+
+    @staticmethod
+    def _slug(relative: Path, name: str) -> str:
+        parts = relative.parts
+        if len(parts) == 3 and parts[0].startswith("@") and parts[2] == "SKILL.md":
+            slug = f"{parts[0]}/{parts[1]}"
+            if not _SLUG_PATTERN.fullmatch(slug) or parts[1] != name:
+                raise SkillLoadError("identity_mismatch")
+            return slug
+        return f"@local/{name}"
+
+
+class SkillLoadError(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class SkillActivationCapability:
-    """Activate at most one discovered Skill into the current Agent observation context."""
+    """Return complete instructions for any uniformly discovered Skill."""
 
     def __init__(self, packages: tuple[SkillPackage, ...]) -> None:
         if not packages:
-            raise ValueError("Skill activation requires a discovered package")
+            raise ValueError("Skill activation requires at least one valid package")
         self._packages = {package.slug: package for package in packages}
-        self._active_slug: str | None = None
         enum: list[JsonValue] = list(self._packages)
         self._descriptor = CapabilityDescriptor(
             name="skill.activate",
-            description="Activate one approved Workspace Skill for the current Agent execution.",
+            description="Activate one discovered Skill and return its complete instructions.",
             kind=CapabilityKind.SKILL,
             input_schema={
                 "type": "object",
@@ -255,24 +222,17 @@ class SkillActivationCapability:
         if not isinstance(slug, str) or slug not in self._packages:
             raise capability_error(
                 ErrorCode.CAPABILITY_ARGUMENTS_INVALID,
-                "Workspace Skill identity is invalid",
+                "Skill identity is invalid",
                 reason="unknown_skill",
                 capability_name=self.descriptor.name,
             )
-        if self._active_slug not in (None, slug):
-            raise capability_error(
-                ErrorCode.CAPABILITY_UNAVAILABLE,
-                "Another Workspace Skill is already active",
-                reason="activation_limit",
-                capability_name=self.descriptor.name,
-            )
-        self._active_slug = slug
         package = self._packages[slug]
         observation = (
-            f"Activated Workspace Skill {package.slug}@{package.version}\n"
-            f"Source: {package.source_uri}\n"
+            f"Activated Skill: {package.slug}\n"
+            f"Version: {package.version}\n"
+            f"Skill root: {package.skill_root}\n"
             f"Content SHA-256: {package.content_hash}\n"
-            "Instructions:\n"
+            "SKILL.md:\n"
             f"{package.instructions}"
         )
         return CapabilityResult(
@@ -282,25 +242,11 @@ class SkillActivationCapability:
                 {
                     "skill_slug": package.slug,
                     "skill_version": package.version,
-                    "skill_source": package.source_uri,
+                    "skill_root": package.skill_root,
                     "content_hash": package.content_hash,
-                    "omitted_line_count": package.omitted_line_count,
                 }
             ),
         )
 
     async def cancel(self, context: InvocationContext) -> None:
         return None
-
-
-def register_workspace_skill(
-    registry: CapabilityRegistry,
-    *,
-    workspace_root: Path | None = None,
-    approved: tuple[ApprovedSkill, ...] = APPROVED_SKILLS,
-) -> tuple[SkillPackage, ...]:
-    """Discover approved packages and register their single activation boundary."""
-
-    packages = WorkspaceSkillCatalog(workspace_root, approved=approved).discover()
-    registry.register(SkillActivationCapability(packages))
-    return packages

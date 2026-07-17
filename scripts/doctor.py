@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import importlib
 import json
 import os
@@ -13,25 +12,31 @@ import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Literal, cast
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from anban.capability.skill import WEATHER_SKILL
+from anban.capability import CapabilityResultStatus, InvocationContext, local_capability_registry
+from anban.capability.skill import WorkspaceSkillCatalog
 from anban.config.loader import AnbanConfiguration, load_configuration
 from anban.core import AnbanError
+from anban.core.ids import (
+    new_capability_invocation_id,
+    new_execution_run_id,
+    new_node_run_id,
+)
+from anban.core.models import now_utc
 from scripts.workspace_bootstrap import WorkspaceResolutionError, resolve_workspace
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-CLAW_CLI = "clawhub@0.23.1"
-CLAW_CLI_VERSION = "0.23.1"
-SKILL_SLUG = WEATHER_SKILL.slug
-SKILL_VERSION = WEATHER_SKILL.version
-SKILL_HASH = WEATHER_SKILL.sha256
+CLAW_CLI = "clawhub@latest"
 CONFIGURATION_KEYS = (
     "DATABASE_URL",
     "ANBAN_TEST_DATABASE_URL",
@@ -324,15 +329,28 @@ def check_configuration(configuration: AnbanConfiguration) -> list[CheckResult]:
     return results
 
 
-async def database_probe(url: str, expected_database: str) -> None:
+def migration_head() -> str:
+    configuration = Config(REPOSITORY / "alembic.ini")
+    head = ScriptDirectory.from_config(configuration).get_current_head()
+    if head is None:
+        raise RuntimeError("migration head unavailable")
+    return head
+
+
+async def database_probe(url: str, expected_head: str) -> None:
     engine = create_async_engine(url, echo=False, pool_pre_ping=True)
     try:
         async with engine.connect() as connection:
             identity = (
                 await connection.execute(text("SELECT current_database(), current_user"))
             ).one()
-            if identity[0] != expected_database or identity[1] != "anban":
-                raise RuntimeError("database identity mismatch")
+            if not all(isinstance(value, str) and value for value in identity):
+                raise RuntimeError("database identity unavailable")
+            current_head = (
+                await connection.execute(text("SELECT version_num FROM alembic_version"))
+            ).scalar_one()
+            if current_head != expected_head:
+                raise RuntimeError("migration head mismatch")
             await connection.execute(
                 text(
                     "SELECT current_schema(), count(*) "
@@ -374,71 +392,104 @@ def check_postgresql(configuration: AnbanConfiguration) -> CheckResult:
             "Configure both database URLs without exposing their values.",
         )
     try:
-        asyncio.run(database_probe(development, "anban"))
-        asyncio.run(database_probe(test, "anban_test"))
+        expected_head = migration_head()
+        asyncio.run(database_probe(development, expected_head))
+        asyncio.run(database_probe(test, expected_head))
     except Exception as exc:
         return fail_result(
             "PostgreSQL",
             "postgresql_probe_failed",
             f"A database probe failed ({type(exc).__name__}).",
-            "Start both databases and verify identity, schema readability, and transaction rights.",
+            "Start both configured databases and apply the current migration head.",
         )
     return pass_result(
-        "PostgreSQL", "development and test databases connected; schema readable; rollback verified"
+        "PostgreSQL",
+        "both configured databases connected; migrations current; "
+        "schema readable; rollback verified",
     )
 
 
-def skill_baseline_result(workspace: Path, cli_version: str | None) -> CheckResult:
-    skill_file = workspace / "skills" / "@steipete" / "weather" / "SKILL.md"
-    lock_file = workspace / ".clawhub" / "lock.json"
-    if cli_version != CLAW_CLI_VERSION:
-        return fail_result(
-            "Skill baseline",
-            "clawhub_cli_unavailable",
-            "The pinned ClawHub CLI is not locally callable through npx in offline mode.",
-            f"Make {CLAW_CLI} available in the local npm cache.",
-        )
-    if not skill_file.is_file() or not lock_file.is_file():
-        return fail_result(
-            "Skill baseline",
-            "skill_baseline_missing",
-            "The approved Skill files or ClawHub lock are missing.",
-            "Restore the approved local Skill and its source record.",
-        )
+def check_skills(workspace: Path, configuration: AnbanConfiguration) -> CheckResult:
     try:
-        digest = hashlib.sha256(skill_file.read_bytes()).hexdigest()
-        lock = cast(dict[str, object], json.loads(lock_file.read_text(encoding="utf-8")))
-        skills = cast(dict[str, dict[str, object]], lock.get("skills", {}))
-        record = skills.get(SKILL_SLUG, {})
-    except (OSError, json.JSONDecodeError, TypeError):
-        return fail_result(
-            "Skill baseline",
-            "skill_source_record_invalid",
-            "The approved Skill source record cannot be read.",
-            "Restore a valid ClawHub lock for the approved Skill.",
+        catalog = WorkspaceSkillCatalog(
+            workspace,
+            protected_values=configuration.protected_values(),
         )
-    if (
-        digest != SKILL_HASH
-        or record.get("version") != SKILL_VERSION
-        or record.get("pinned") is not True
+        packages = catalog.discover()
+    except (OSError, ValueError):
+        return fail_result(
+            "Skills",
+            "skill_discovery_failed",
+            "Skill discovery could not inspect the configured roots.",
+            "Restore readable package and Workspace Skill directories.",
+        )
+    if not packages:
+        return fail_result(
+            "Skills",
+            "skill_discovery_empty",
+            "No valid SKILL.md was discovered.",
+            "Restore at least one valid package or Workspace SKILL.md.",
+        )
+    return pass_result(
+        "Skills",
+        f"valid={len(packages)}, skipped={len(catalog.diagnostics)}; uniform parser completed",
+    )
+
+
+async def process_probe(configuration: AnbanConfiguration) -> None:
+    registry = local_capability_registry(
+        workspace_root=configuration.workspace,
+        process_default_timeout_seconds=configuration.process.default_timeout_seconds,
+        process_max_timeout_seconds=configuration.process.max_timeout_seconds,
+        stdout_max_bytes=configuration.process.stdout_max_bytes,
+        stderr_max_bytes=configuration.process.stderr_max_bytes,
+        stdin_max_bytes=configuration.process.stdin_max_bytes,
+        max_arguments=configuration.process.max_arguments,
+        max_artifacts=configuration.process.max_artifacts,
+        artifact_max_bytes=configuration.process.artifact_max_bytes,
+        protected_values=configuration.protected_values(),
+    )
+    invocation = InvocationContext(
+        run_id=new_execution_run_id(),
+        node_run_id=new_node_run_id(),
+        invocation_id=new_capability_invocation_id(),
+        deadline_at=now_utc() + timedelta(seconds=10),
+    )
+    result = await registry.invoke(
+        "process.execute",
+        {"command": sys.executable, "args": ["-c", "print('anban-doctor-process')"]},
+        invocation,
+    )
+    if result.status is not CapabilityResultStatus.COMPLETED or "anban-doctor-process" not in (
+        result.observation or ""
     ):
-        return fail_result(
-            "Skill baseline",
-            "skill_baseline_mismatch",
-            "The approved Skill version, pin, or content hash does not match.",
-            "Review and restore the approved local Skill baseline.",
-        )
-    return pass_result(
-        "Skill baseline", f"{SKILL_SLUG}@{SKILL_VERSION} pinned with approved content hash"
-    )
+        raise RuntimeError("process probe failed")
 
 
-def check_skill_baseline(workspace: Path) -> CheckResult:
+def check_process(configuration: AnbanConfiguration) -> CheckResult:
     try:
-        cli_version = command("npx", "--offline", "--yes", CLAW_CLI, "--cli-version", timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        cli_version = None
-    return skill_baseline_result(workspace, cli_version)
+        asyncio.run(process_probe(configuration))
+    except Exception as exc:
+        return fail_result(
+            "Process",
+            "process_probe_failed",
+            f"Production process.execute probe failed ({type(exc).__name__}).",
+            "Verify the configured Workspace and current Python executable permissions.",
+        )
+    return pass_result("Process", "production Registry executed the current Python safely")
+
+
+def check_online() -> CheckResult:
+    try:
+        version = command("npx", "--yes", CLAW_CLI, "--cli-version", timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return fail_result(
+            "Online",
+            "clawhub_cli_unavailable",
+            f"Online npx/ClawHub probe failed ({type(exc).__name__}).",
+            "Verify npm network access and the current ClawHub package.",
+        )
+    return pass_result("Online", f"ClawHub CLI {version.splitlines()[-1]}")
 
 
 def check_chromium() -> CheckResult:
@@ -493,6 +544,16 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="check only repository, Python, and Node toolchains",
     )
+    result.add_argument(
+        "--online",
+        action="store_true",
+        help="also check online npx and the current ClawHub CLI",
+    )
+    result.add_argument(
+        "--web",
+        action="store_true",
+        help="also check the locked Playwright Chromium runtime",
+    )
     return result
 
 
@@ -528,8 +589,12 @@ def main(argv: list[str] | None = None) -> int:
     if configuration is not None:
         results += run_guarded("configuration", lambda: check_configuration(configuration), many)
         results += run_guarded("PostgreSQL", lambda: check_postgresql(configuration), one)
-    results += run_guarded("Skill baseline", lambda: check_skill_baseline(workspace), one)
-    results += run_guarded("Chromium", check_chromium, one)
+        results += run_guarded("Skills", lambda: check_skills(workspace, configuration), one)
+        results += run_guarded("Process", lambda: check_process(configuration), one)
+    if arguments.online:
+        results += run_guarded("Online", check_online, one)
+    if arguments.web:
+        results += run_guarded("Chromium", check_chromium, one)
 
     for result in results:
         for line in result_lines(result):

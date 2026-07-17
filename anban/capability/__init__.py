@@ -13,16 +13,14 @@ from anban.capability.contracts import (
 from anban.capability.local import local_capability_registry
 from anban.capability.registry import CapabilityRegistry
 from anban.capability.skill import (
-    ApprovedSkill,
     SkillActivationCapability,
+    SkillDiagnostic,
     SkillPackage,
     WorkspaceSkillCatalog,
-    register_workspace_skill,
 )
 
 __all__ = [
     "ArtifactReference",
-    "ApprovedSkill",
     "CapabilityDescriptor",
     "CapabilityHandler",
     "CapabilityKind",
@@ -32,8 +30,8 @@ __all__ = [
     "CapabilityResultStatus",
     "InvocationContext",
     "SkillActivationCapability",
+    "SkillDiagnostic",
     "SkillPackage",
     "WorkspaceSkillCatalog",
     "local_capability_registry",
-    "register_workspace_skill",
 ]

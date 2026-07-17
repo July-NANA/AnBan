@@ -67,7 +67,7 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "stderr_hash",
         "stderr_size",
         "skill_slug",
-        "skill_source",
+        "skill_root",
         "skill_version",
         "stdout_hash",
         "stdout_size",

@@ -13,12 +13,15 @@ import pytest
 from pydantic import JsonValue, TypeAdapter
 
 from anban.capability import (
+    ArtifactReference,
     CapabilityRegistry,
     CapabilityResult,
     CapabilityResultStatus,
     InvocationContext,
 )
 from anban.capability.local import local_capability_registry
+from anban.capability.process import ProcessCapability
+from anban.capability.workspace import WorkspaceBoundary
 from anban.core.errors import AnbanError, ErrorCode
 from anban.core.ids import (
     new_capability_invocation_id,
@@ -176,6 +179,7 @@ async def test_stdin_stdout_and_stderr_are_structured(tmp_path: Path) -> None:
                 "print('diagnostic',file=sys.stderr)",
             ],
             "stdin": "input text",
+            "artifacts": [],
         },
         context(),
     )
@@ -329,6 +333,84 @@ async def test_missing_or_oversized_artifact_fails_without_partial_snapshot(
         assert result.error is not None
         assert result.error.details.root["reason"] == "artifact_collection_failed"
         assert not (tmp_path / "artifacts" / str(invocation_context.run_id)).exists()
+
+
+async def test_duplicate_declared_artifact_path_fails_without_snapshot(tmp_path: Path) -> None:
+    invocation_context = context()
+    result = await registry(tmp_path).invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": ["-c", "open('same.txt','w').write('data')"],
+            "artifacts": [
+                {"path": "same.txt", "media_type": "text/plain"},
+                {"path": str(tmp_path / "same.txt")},
+            ],
+        },
+        invocation_context,
+    )
+
+    assert result.status is CapabilityResultStatus.FAILED
+    assert result.error is not None
+    assert result.error.details.root["reason"] == "artifact_collection_failed"
+    assert not (tmp_path / "artifacts" / str(invocation_context.run_id)).exists()
+
+
+async def test_snapshot_failure_cleans_current_and_previous_artifact_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    boundary = WorkspaceBoundary(tmp_path)
+    original = boundary.create_artifact
+    created = 0
+
+    def fail_second_snapshot(
+        invocation_context: InvocationContext, content: bytes, media_type: str
+    ) -> ArtifactReference:
+        nonlocal created
+        created += 1
+        if created == 2:
+            raise OSError("test-only snapshot failure")
+        return original(invocation_context, content, media_type)
+
+    monkeypatch.setattr(boundary, "create_artifact", fail_second_snapshot)
+    gateway = CapabilityRegistry((ProcessCapability(boundary),))
+    invocation_context = context()
+    result = await gateway.invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": [
+                "-c",
+                "open('one.txt','w').write('one');open('two.txt','w').write('two')",
+            ],
+            "artifacts": [{"path": "one.txt"}, {"path": "two.txt"}],
+        },
+        invocation_context,
+    )
+
+    assert result.status is CapabilityResultStatus.FAILED
+    artifact_root = tmp_path / "artifacts" / str(invocation_context.run_id)
+    assert not artifact_root.exists() or not any(artifact_root.iterdir())
+
+
+def test_workspace_snapshot_write_failure_removes_partial_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    boundary = WorkspaceBoundary(tmp_path)
+    invocation_context = context()
+    original = Path.write_bytes
+
+    def partial_write(target: Path, content: bytes) -> int:
+        original(target, content[:1])
+        raise OSError("test-only partial write")
+
+    monkeypatch.setattr(Path, "write_bytes", partial_write)
+    with pytest.raises(OSError):
+        boundary.create_artifact(invocation_context, b"content", "text/plain")
+
+    artifact_root = tmp_path / "artifacts" / str(invocation_context.run_id)
+    assert artifact_root.exists()
+    assert not any(artifact_root.iterdir())
 
 
 async def test_failed_process_does_not_collect_declared_artifact(tmp_path: Path) -> None:

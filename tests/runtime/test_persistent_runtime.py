@@ -269,19 +269,22 @@ def final_turn(content: str = "Persistent final result.") -> ModelTurn:
     return ModelTurn(content=content, finish_reason="stop")
 
 
-def completed_capability(*, artifact: bool = False) -> CapabilityResult:
-    artifacts = ()
-    if artifact:
-        artifact_id = new_artifact_id()
-        artifacts = (
-            ArtifactReference(
-                id=artifact_id,
-                uri=f"anban://artifact/{artifact_id}",
-                sha256="a" * 64,
-                size_bytes=7,
-                media_type="text/plain",
-            ),
-        )
+def completed_capability(*, artifact_count: int = 0) -> CapabilityResult:
+    artifacts: tuple[ArtifactReference, ...] = ()
+    if artifact_count:
+        references: list[ArtifactReference] = []
+        for index in range(artifact_count):
+            artifact_id = new_artifact_id()
+            references.append(
+                ArtifactReference(
+                    id=artifact_id,
+                    uri=f"anban://artifact/{artifact_id}",
+                    sha256=f"{index + 1:x}" * 64,
+                    size_bytes=7 + index,
+                    media_type="text/plain",
+                )
+            )
+        artifacts = tuple(references)
     return CapabilityResult(
         status=CapabilityResultStatus.COMPLETED,
         observation="bounded write completed",
@@ -301,7 +304,7 @@ async def load_run(
 async def test_success_is_durable_and_external_calls_have_no_open_transaction() -> None:
     factory = MemoryUnitOfWorkFactory()
     model = TransactionCheckingModel(factory, [tool_turn(), final_turn()])
-    capability = TransactionCheckingCapability(factory, completed_capability(artifact=True))
+    capability = TransactionCheckingCapability(factory, completed_capability(artifact_count=2))
     result = await PersistentRuntime(
         model,
         CapabilityRegistry((capability,)),
@@ -317,7 +320,9 @@ async def test_success_is_durable_and_external_calls_have_no_open_transaction() 
     assert aggregate.run.status.value == "succeeded"
     assert aggregate.nodes[0].status.value == "succeeded"
     assert aggregate.invocations[0].status.value == "succeeded"
-    assert len(aggregate.artifacts) == 1
+    assert len(aggregate.artifacts) == 2
+    assert len({artifact.invocation_id for artifact in aggregate.artifacts}) == 1
+    assert sum(event.event_type == "artifact.created" for event in aggregate.events) == 2
     assert tuple(event.sequence for event in aggregate.events) == tuple(
         range(1, len(aggregate.events) + 1)
     )

@@ -338,11 +338,16 @@ class ProcessCapability:
         environment: dict[str, str],
     ) -> tuple[ArtifactReference, ...]:
         prepared: list[tuple[bytes, str]] = []
+        sources: set[Path] = set()
         for value, media_type in declarations:
             source = self._boundary.resolve_artifact(cwd, value)
-            if source.stat().st_size > self._artifact_max_bytes:
+            if source in sources:
+                raise ValueError("Artifact path is declared more than once")
+            sources.add(source)
+            with source.open("rb") as stream:
+                content = stream.read(self._artifact_max_bytes + 1)
+            if len(content) > self._artifact_max_bytes:
                 raise ValueError("Artifact exceeds configured limit")
-            content = source.read_bytes()
             if self._contains_protected(content, b"", environment):
                 raise ValueError("Artifact contains protected data")
             prepared.append((content, media_type))

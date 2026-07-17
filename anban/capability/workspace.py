@@ -103,10 +103,14 @@ class WorkspaceBoundary:
 
         artifact_id = new_artifact_id()
         directory = self.root / "artifacts" / str(context.run_id)
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         target = directory / str(artifact_id)
-        target.write_bytes(content)
-        target.chmod(0o600)
+        try:
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            target.write_bytes(content)
+            target.chmod(0o600)
+        except OSError:
+            target.unlink(missing_ok=True)
+            raise
         return ArtifactReference(
             id=artifact_id,
             uri=f"anban://artifact/{context.run_id}/{artifact_id}",

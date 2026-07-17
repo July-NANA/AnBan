@@ -30,7 +30,7 @@ async def test_success_trace_and_audit_are_stable_after_new_service_instance() -
     result = await PersistentRuntime(
         TransactionCheckingModel(factory, [tool_turn(), final_turn()]),
         CapabilityRegistry(
-            (TransactionCheckingCapability(factory, completed_capability(artifact=True)),)
+            (TransactionCheckingCapability(factory, completed_capability(artifact_count=2)),)
         ),
         factory,
     ).execute("Persist one governed result.")

@@ -107,6 +107,20 @@ Convert CSV, JSON, XML, YAML, and TOML with ordinary local programs.
     assert packages[1].instructions == plain_source
 
 
+def test_local_skill_display_name_is_normalized_into_a_logical_slug(tmp_path: Path) -> None:
+    source = SOURCE.replace("name: runner", "name: JSON Utility Tools")
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    workspace = tmp_path / "workspace"
+    write_skill(workspace / "skills", "json-utility-tools", source)
+
+    package = catalog(workspace, package_root).discover()[0]
+
+    assert package.slug == "@local/json-utility-tools"
+    assert package.name == "json-utility-tools"
+    assert package.instructions == source
+
+
 def test_multiple_scoped_and_local_skills_are_discovered_without_external_metadata(
     tmp_path: Path,
 ) -> None:

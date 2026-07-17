@@ -139,13 +139,14 @@ class WorkspaceSkillCatalog:
         if any(value in source for value in self._protected_values):
             raise SkillLoadError("protected_value")
         fields = self._frontmatter(source)
+        scoped_name = self._scoped_name(relative)
         if fields is None:
-            name = self._scoped_name(relative)
-            if name is None:
+            if scoped_name is None:
                 raise SkillLoadError("frontmatter_invalid")
+            name = scoped_name
             description = self._plain_description(source)
         else:
-            name = fields["name"]
+            name = scoped_name or self._logical_name(fields["name"])
             description = fields["description"]
         if not _NAME_PATTERN.fullmatch(name):
             raise SkillLoadError("name_invalid")
@@ -198,6 +199,13 @@ class WorkspaceSkillCatalog:
             if candidate and not candidate.startswith(("#", "```")):
                 return candidate
         raise SkillLoadError("description_invalid")
+
+    @staticmethod
+    def _logical_name(value: str) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+        if not _NAME_PATTERN.fullmatch(normalized):
+            raise SkillLoadError("name_invalid")
+        return normalized
 
     @staticmethod
     def _slug(relative: Path, name: str) -> str:

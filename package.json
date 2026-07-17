@@ -10,6 +10,7 @@
     "build": "pnpm --dir apps/web build",
     "doctor": "conda run -n anban python -m scripts.doctor",
     "acceptance:model": "conda run -n anban python -m scripts.acceptance.check_real_model",
-    "acceptance:skill": "conda run -n anban python -m scripts.acceptance.check_real_skill"
+    "acceptance:skill": "conda run -n anban python -m scripts.acceptance.check_real_skill",
+    "acceptance:persistence": "conda run -n anban python -m scripts.acceptance.check_repositories"
   }
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import TracebackType
 from typing import Protocol, Self
 
 from anban.core.ids import (
@@ -89,7 +90,7 @@ class UnitOfWork(Protocol):
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: object | None,
+        traceback: TracebackType | None,
     ) -> None: ...
 
     async def commit(self) -> None: ...

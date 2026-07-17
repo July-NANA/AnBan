@@ -17,7 +17,9 @@ These commands fail closed and emit only bounded evidence:
   Traces. Skill identity evidence is limited to slug, relative `SKILL.md` path, and content hash;
   production and acceptance do not derive identity from installation records. Gate A also runs two
   differently worded multi-Artifact tasks without prescribing cwd, filenames, Tool Schema, command,
-  or Tool order.
+  or Tool order. Gate A strictly proves that one Process Invocation can collect two Artifacts; the
+  semantic recovery variants separately prove Run-level persistence and restart queries for at
+  least two valid Artifacts without prescribing how many legitimate Invocations the model uses.
 - `pnpm run acceptance:security`: deterministic fail-closed and Secret-boundary tests.
 - `pnpm run acceptance:v0.1`: local quality, Doctor base/online/web, database, model, Capability,
   Runtime, security, and release-closure checks.

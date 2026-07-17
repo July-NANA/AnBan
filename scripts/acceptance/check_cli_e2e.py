@@ -8,10 +8,12 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import sys
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from anban.application import build_application, build_query_application
@@ -19,13 +21,189 @@ from anban.capability.skill import WorkspaceSkillCatalog
 from anban.config import AnbanConfiguration, load_configuration
 from anban.core.ids import ExecutionRunId, new_interaction_id
 from anban.interaction import InteractionEnvelope
-from anban.runtime import AgentOutcomeStatus, ExecutionResult, RunObservability
+from anban.runtime import (
+    AgentOutcomeStatus,
+    ArtifactDetail,
+    ExecutionResult,
+    RunDetail,
+    RunObservability,
+)
 from anban.workspace import default_configuration_text
 from scripts.workspace_bootstrap import resolve_workspace
 
 
 class RuntimeGateError(RuntimeError):
     """Safe Gate failure without model, command, credential, or physical-path output."""
+
+
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True)
+class RecoverableArtifactEvidence:
+    """Safe, deterministic facts for the Run-level Artifact recovery contract."""
+
+    run_id: str
+    detail_run_id: str | None
+    persisted: bool
+    outcome_status: str
+    final_text_present: bool
+    trace_complete: bool
+    inconsistencies: tuple[str, ...]
+    artifact_ids: tuple[str, ...]
+    queried_artifact_ids: tuple[str, ...]
+    artifact_invocation_ids: tuple[str | None, ...]
+    artifact_node_run_ids: tuple[str | None, ...]
+    artifact_uris: tuple[str, ...]
+    artifact_sizes: tuple[int, ...]
+    artifact_sha256s: tuple[str, ...]
+    invocation_ids: frozenset[str]
+    node_run_ids: frozenset[str]
+    capability_invocation_count: int
+    artifact_event_count: int
+
+    @property
+    def artifact_count(self) -> int:
+        return len(self.artifact_ids)
+
+    @property
+    def unique_artifact_invocation_count(self) -> int:
+        return len(
+            {
+                invocation_id
+                for invocation_id in self.artifact_invocation_ids
+                if invocation_id is not None
+            }
+        )
+
+
+def recoverable_artifact_evidence(
+    result: ExecutionResult,
+    detail: RunDetail,
+    queried_artifacts: tuple[ArtifactDetail, ...],
+) -> RecoverableArtifactEvidence:
+    artifact_events = sum(
+        entry.event_type == "artifact.created" for entry in detail.observability.trace
+    )
+    return RecoverableArtifactEvidence(
+        run_id=str(result.run_id),
+        detail_run_id=str(detail.run.id),
+        persisted=result.persisted,
+        outcome_status=result.outcome.status.value,
+        final_text_present=bool(result.outcome.final_text),
+        trace_complete=detail.observability.complete,
+        inconsistencies=detail.observability.inconsistencies,
+        artifact_ids=tuple(str(artifact.id) for artifact in detail.artifacts),
+        queried_artifact_ids=tuple(str(artifact.id) for artifact in queried_artifacts),
+        artifact_invocation_ids=tuple(
+            None if artifact.invocation_id is None else str(artifact.invocation_id)
+            for artifact in detail.artifacts
+        ),
+        artifact_node_run_ids=tuple(
+            None if artifact.node_run_id is None else str(artifact.node_run_id)
+            for artifact in detail.artifacts
+        ),
+        artifact_uris=tuple(artifact.uri for artifact in detail.artifacts),
+        artifact_sizes=tuple(artifact.size_bytes for artifact in detail.artifacts),
+        artifact_sha256s=tuple(artifact.sha256 for artifact in detail.artifacts),
+        invocation_ids=frozenset(str(invocation.id) for invocation in detail.invocations),
+        node_run_ids=frozenset(str(node.id) for node in detail.nodes),
+        capability_invocation_count=len(detail.invocations),
+        artifact_event_count=artifact_events,
+    )
+
+
+def unavailable_recoverable_artifact_evidence(
+    result: ExecutionResult,
+) -> RecoverableArtifactEvidence:
+    """Represent a non-persisted result without attempting a database query."""
+
+    return RecoverableArtifactEvidence(
+        run_id=str(result.run_id),
+        detail_run_id=None,
+        persisted=result.persisted,
+        outcome_status=result.outcome.status.value,
+        final_text_present=bool(result.outcome.final_text),
+        trace_complete=False,
+        inconsistencies=(),
+        artifact_ids=(),
+        queried_artifact_ids=(),
+        artifact_invocation_ids=(),
+        artifact_node_run_ids=(),
+        artifact_uris=(),
+        artifact_sizes=(),
+        artifact_sha256s=(),
+        invocation_ids=frozenset(),
+        node_run_ids=frozenset(),
+        capability_invocation_count=0,
+        artifact_event_count=0,
+    )
+
+
+def recoverable_artifact_issues(evidence: RecoverableArtifactEvidence) -> tuple[str, ...]:
+    """Validate recovery without prescribing the model's Capability-call topology."""
+
+    issues: set[str] = set()
+    if not evidence.persisted:
+        issues.add("result_not_persisted")
+    if evidence.outcome_status != AgentOutcomeStatus.SUCCEEDED.value:
+        issues.add("outcome_not_succeeded")
+    if not evidence.final_text_present:
+        issues.add("final_text_missing")
+    if evidence.detail_run_id != evidence.run_id:
+        issues.add("run_query_mismatch")
+    if not evidence.trace_complete:
+        issues.add("trace_incomplete")
+    if evidence.inconsistencies:
+        issues.add("trace_inconsistent")
+    if evidence.artifact_count < 2:
+        issues.add("artifact_count_below_minimum")
+    if len(set(evidence.artifact_ids)) != evidence.artifact_count:
+        issues.add("artifact_id_duplicate")
+    if len(evidence.queried_artifact_ids) != evidence.artifact_count or set(
+        evidence.queried_artifact_ids
+    ) != set(evidence.artifact_ids):
+        issues.add("restart_query_mismatch")
+    if any(
+        invocation_id is None or invocation_id not in evidence.invocation_ids
+        for invocation_id in evidence.artifact_invocation_ids
+    ):
+        issues.add("artifact_invocation_invalid")
+    if any(
+        node_run_id is None or node_run_id not in evidence.node_run_ids
+        for node_run_id in evidence.artifact_node_run_ids
+    ):
+        issues.add("artifact_node_invalid")
+    expected_uris = tuple(
+        f"anban://artifact/{evidence.run_id}/{artifact_id}" for artifact_id in evidence.artifact_ids
+    )
+    if evidence.artifact_uris != expected_uris:
+        issues.add("artifact_uri_invalid")
+    if any(size <= 0 for size in evidence.artifact_sizes):
+        issues.add("artifact_empty")
+    if any(_SHA256_PATTERN.fullmatch(value) is None for value in evidence.artifact_sha256s):
+        issues.add("artifact_sha256_invalid")
+    return tuple(sorted(issues))
+
+
+def recoverable_artifact_failure(
+    label: str,
+    evidence: RecoverableArtifactEvidence,
+    issues: tuple[str, ...],
+) -> str:
+    """Format only logical identifiers, bounded counts, and consistency names."""
+
+    return (
+        f"{label} failed: run_id={evidence.run_id}, persisted={str(evidence.persisted).lower()}, "
+        f"outcome_status={evidence.outcome_status}, "
+        f"trace_complete={str(evidence.trace_complete).lower()}, "
+        f"inconsistency_count={len(evidence.inconsistencies)}, "
+        f"inconsistencies={list(evidence.inconsistencies)}, "
+        f"artifacts={evidence.artifact_count}, "
+        f"artifact_invocations={evidence.unique_artifact_invocation_count}, "
+        f"capability_invocations={evidence.capability_invocation_count}, "
+        f"artifact_events={evidence.artifact_event_count}, issues={list(issues)}"
+    )
 
 
 class GateHttpHandler(http.server.BaseHTTPRequestHandler):
@@ -179,6 +357,9 @@ async def gate_a() -> dict[str, object]:
 
 
 async def gate_recoverable_artifacts() -> dict[str, object]:
+    # Gate A proves exact multi-Artifact collection by one Process Invocation. These semantic
+    # variants instead prove that every valid Run-level Artifact survives a new query Application,
+    # regardless of how many legitimate Capability Invocations the real model selected.
     prompts = (
         "在 Workspace 的临时目录生成一份文本说明和一份 JSON 摘要，并把两个结果文件作为 "
         "Artifact 返回。请真实执行并在完成后简要说明结果。",
@@ -189,20 +370,21 @@ async def gate_recoverable_artifacts() -> dict[str, object]:
     evidence: list[dict[str, object]] = []
     for index, prompt in enumerate(prompts, start=1):
         result = await submit(prompt)
-        require_success(result, f"recoverable Artifact run {index}")
-        observation = await trace(result.run_id)
-        application = await build_query_application()
-        try:
-            artifacts = await application.interactions.artifacts(result.run_id)
-        finally:
-            await application.close()
-        if (
-            not observation.complete
-            or observation.inconsistencies
-            or len(artifacts) != 2
-            or len({artifact.invocation_id for artifact in artifacts}) != 1
-        ):
-            raise RuntimeGateError(f"recoverable Artifact run {index} is incomplete")
+        label = f"recoverable Artifact run {index}"
+        if result.persisted:
+            application = await build_query_application()
+            try:
+                detail = await application.interactions.show_run(result.run_id)
+                artifacts = await application.interactions.artifacts(result.run_id)
+            finally:
+                await application.close()
+            run_evidence = recoverable_artifact_evidence(result, detail, artifacts)
+        else:
+            artifacts = ()
+            run_evidence = unavailable_recoverable_artifact_evidence(result)
+        issues = recoverable_artifact_issues(run_evidence)
+        if issues:
+            raise RuntimeGateError(recoverable_artifact_failure(label, run_evidence, issues))
         evidence.append(
             {
                 "run_id": str(result.run_id),

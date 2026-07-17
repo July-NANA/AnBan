@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from anban.capability import ArtifactReference
 from anban.core.errors import ErrorInfo
-from anban.core.ids import ExecutionRunId, NodeRunId
+from anban.core.ids import ExecutionRunId, NodeRunId, TaskId
 from anban.core.metadata import validate_safe_text
 
 
@@ -54,3 +54,11 @@ class AgentOutcome(RuntimeValue):
         elif self.error is None or self.final_text is not None:
             raise ValueError("non-successful Agent outcome requires an error and no final text")
         return self
+
+
+class ExecutionResult(RuntimeValue):
+    task_id: TaskId
+    run_id: ExecutionRunId
+    node_run_id: NodeRunId
+    outcome: AgentOutcome
+    persisted: bool

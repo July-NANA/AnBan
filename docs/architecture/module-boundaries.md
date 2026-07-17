@@ -25,3 +25,8 @@ Owns interfaces for executable Tools, Skills, MCP services, external Agents, and
 Owns repositories and storage adapters for state, checkpoints, memory, artifacts, audit data, and traces. PostgreSQL is the business database.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
+
+For v0.1, Interaction calls the Runtime application entry. Runtime depends on Core contracts,
+ModelPort, CapabilityPort, and Core persistence Protocols. Persistence, provider, Workspace, and
+CLI adapters point inward toward those contracts; no reverse dependency or integration-specific
+Core path is allowed.

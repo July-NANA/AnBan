@@ -15,3 +15,8 @@ Anban separates external interaction, domain authority, execution discipline, mo
 Harness engineering is cross-cutting: observability, bounded execution, reproducibility, failure clarity, and validation apply across modules without creating a Harness module or HarnessProfile.
 
 Future integrations enter only through Interaction, Model, or Capability Adapters. A provider, source, or individual Skill must not receive a core bypass.
+
+For v0.1 the product surface is CLI-only and Runtime uses the fixed
+`START -> General Agent -> END` LangGraph. The accepted execution must cross the real Model and
+Capability Ports, activate a real Workspace Skill, persist PostgreSQL execution facts, and remain
+inspectable after process restart. See [ADR-0003](../adr/0003-v0.1-core-runtime-cli.md).

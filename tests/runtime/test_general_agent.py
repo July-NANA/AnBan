@@ -147,6 +147,7 @@ async def test_valid_model_final_is_the_only_success_path() -> None:
     system_contract = model.requests[0].messages[0].content or ""
     assert "no non-whitespace assistant content" in system_contract
     assert "no tool_calls" in system_contract
+    assert "use http.get or http.request" in system_contract
 
 
 async def test_tool_call_result_pairing_across_model_turns() -> None:

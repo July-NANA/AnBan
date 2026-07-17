@@ -419,6 +419,8 @@ class FixedGeneralAgent:
         progress.artifacts.extend(result.artifacts)
         if result.status is CapabilityResultStatus.COMPLETED:
             return result
+        if result.status is CapabilityResultStatus.FAILED and result.observation is not None:
+            return result
         if result.error is None:
             return self._outcome(
                 AgentOutcomeStatus.FAILED,

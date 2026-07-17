@@ -218,6 +218,31 @@ async def test_capability_failure_is_terminal_without_another_model_request() ->
     assert len(model.requests) == 1
 
 
+async def test_explainable_capability_failure_is_returned_to_model_for_recovery() -> None:
+    failure = CapabilityResult(
+        status=CapabilityResultStatus.FAILED,
+        observation='{"status":"failed","exit_code":1}',
+        error=ErrorInfo(
+            code=ErrorCode.CAPABILITY_EXECUTION_FAILED,
+            message="Capability execution failed",
+        ),
+    )
+    model = ScriptedModel([tool_turn(call()), final_turn("The failed command was handled.")])
+    handler = RecordingHandler(result=failure)
+
+    outcome = await FixedGeneralAgent(model, CapabilityRegistry((handler,))).execute(agent_input())
+
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert outcome.capability_call_count == 1
+    assert len(handler.calls) == 1
+    assert len(model.requests) == 2
+    result_message = next(
+        message for message in model.requests[1].messages if message.role == "tool"
+    )
+    assert result_message.tool_result is not None
+    assert result_message.tool_result.content == failure.observation
+
+
 @pytest.mark.parametrize(
     ("failure", "status"),
     [

@@ -30,7 +30,7 @@ from anban.core.metadata import SafeMetadata
 from anban.core.models import Artifact, CapabilityInvocation, Event, ExecutionRun, NodeRun, Task
 from anban.core.persistence import ExecutionRunAggregate
 from anban.model import ModelRequest, ModelTurn, ToolCall
-from anban.runtime import AgentOutcomeStatus, PersistentRuntime
+from anban.runtime import AgentOutcomeStatus, ExecutionQueryService, PersistentRuntime
 
 
 @dataclass
@@ -451,6 +451,35 @@ async def test_capability_failure_and_timeout_are_persisted() -> None:
         aggregate = await load_run(factory, result.run_id)
         assert aggregate.invocations[0].status.value == expected.value
         assert aggregate.run.status.value == expected.value
+
+
+async def test_explainable_capability_failure_remains_failed_while_model_recovers() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    failure = CapabilityResult(
+        status=CapabilityResultStatus.FAILED,
+        observation='{"status":"failed","exit_code":1}',
+        error=ErrorInfo(
+            code=ErrorCode.CAPABILITY_EXECUTION_FAILED,
+            message="Capability failed safely",
+        ),
+    )
+    capability = TransactionCheckingCapability(factory, failure)
+    result = await PersistentRuntime(
+        TransactionCheckingModel(factory, [tool_turn(), final_turn("Recovered safely.")]),
+        CapabilityRegistry((capability,)),
+        factory,
+    ).execute("Recover from one explainable tool failure.")
+
+    assert result.persisted is True
+    assert result.outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert capability.calls == 1
+    aggregate = await load_run(factory, result.run_id)
+    assert aggregate.run.status.value == "succeeded"
+    assert aggregate.invocations[0].status.value == "failed"
+    assert "capability.failed" in {event.event_type for event in aggregate.events}
+    observation = await ExecutionQueryService(factory).trace(result.run_id)
+    assert observation.complete is True
+    assert observation.inconsistencies == ()
 
 
 async def test_initial_event_failure_never_calls_model() -> None:

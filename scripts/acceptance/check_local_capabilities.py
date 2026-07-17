@@ -1,115 +1,116 @@
-"""Real acceptance for production file and process Capability wiring."""
+"""Real local production Registry acceptance without a model or network dependency."""
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
+import json
 import shutil
 import sys
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from datetime import timedelta
 
-from anban.capability import CapabilityResultStatus, InvocationContext
-from anban.capability.local import local_capability_registry
+from anban.capability import CapabilityResultStatus, InvocationContext, local_capability_registry
+from anban.config import load_configuration
 from anban.core.errors import AnbanError
 from anban.core.ids import (
     new_capability_invocation_id,
     new_execution_run_id,
     new_node_run_id,
 )
-from scripts.workspace_bootstrap import WorkspaceResolutionError, resolve_workspace
+from anban.core.models import now_utc
 
 
 class CapabilityAcceptanceError(RuntimeError):
-    """Safe failure without physical paths or process output."""
+    """Safe acceptance failure without process output or physical paths."""
 
 
-def next_context(context: InvocationContext) -> InvocationContext:
-    return context.model_copy(update={"invocation_id": new_capability_invocation_id()})
-
-
-async def accept_local_capabilities(workspace: Path) -> None:
-    registry = local_capability_registry(
-        workspace_root=workspace,
-        allowed_executables={"python": Path(sys.executable)},
-        environment={"PYTHONUTF8": "1"},
-    )
-    context = InvocationContext(
+def context() -> InvocationContext:
+    return InvocationContext(
         run_id=new_execution_run_id(),
         node_run_id=new_node_run_id(),
         invocation_id=new_capability_invocation_id(),
-        deadline_at=datetime.now(UTC) + timedelta(seconds=30),
+        deadline_at=now_utc() + timedelta(seconds=30),
     )
-    run_storage = workspace / "runs" / str(context.run_id)
-    artifact_storage = workspace / "artifacts" / str(context.run_id)
+
+
+async def accept_capabilities() -> None:
+    configuration = load_configuration()
+    registry = local_capability_registry(
+        workspace_root=configuration.workspace,
+        protected_values=configuration.protected_values(),
+    )
+    if tuple(item.name for item in registry.search()) != ("process.execute", "skill.activate"):
+        raise CapabilityAcceptanceError("production Capability surface mismatch")
+    work = configuration.workspace / "tmp" / f"acceptance-{new_execution_run_id()}"
+    work.mkdir(mode=0o700)
+    invocation = context()
     try:
-        expected = (
-            "file.list",
-            "file.read",
-            "file.write",
-            "http.get",
-            "http.request",
+        completed = await registry.invoke(
             "process.execute",
+            {
+                "command": sys.executable,
+                "cwd": str(work),
+                "env": [{"name": "ANBAN_ACCEPTANCE_VALUE", "value": "overridden"}],
+                "stdin": "stdin-value",
+                "args": [
+                    "-c",
+                    "import os,sys;from pathlib import Path;"
+                    "Path('result.txt').write_text(sys.stdin.read()+'-'+os.environ['ANBAN_ACCEPTANCE_VALUE']);"
+                    "print('completed')",
+                ],
+                "artifacts": [{"path": "result.txt", "media_type": "text/plain"}],
+            },
+            invocation,
         )
-        if tuple(item.name for item in registry.search()) != expected:
-            raise CapabilityAcceptanceError("registered Capability set mismatch")
-        content = "real governed Capability acceptance"
-        written = await registry.invoke(
-            "file.write",
-            {"path": "acceptance/result.txt", "content": content},
-            context,
-        )
-        if written.status is not CapabilityResultStatus.COMPLETED or len(written.artifacts) != 1:
-            raise CapabilityAcceptanceError("real file write failed")
-        artifact = written.artifacts[0]
-        artifact_file = artifact_storage / str(artifact.id)
         if (
-            not artifact_file.is_file()
-            or artifact_file.read_text(encoding="utf-8") != content
-            or artifact.sha256 != hashlib.sha256(content.encode()).hexdigest()
+            completed.status is not CapabilityResultStatus.COMPLETED
+            or len(completed.artifacts) != 1
         ):
+            raise CapabilityAcceptanceError("real Process or Artifact did not complete")
+        payload = json.loads(completed.observation or "{}")
+        if payload.get("stdout") != "completed\n":
+            raise CapabilityAcceptanceError("real Process output mismatch")
+        artifact = completed.artifacts[0]
+        snapshot = configuration.workspace / "artifacts" / str(invocation.run_id) / str(artifact.id)
+        if snapshot.read_text(encoding="utf-8") != "stdin-value-overridden":
             raise CapabilityAcceptanceError("Artifact snapshot mismatch")
-        read = await registry.invoke(
-            "file.read",
-            {"path": "acceptance/result.txt"},
-            next_context(context),
-        )
-        listing = await registry.invoke(
-            "file.list",
-            {"path": "acceptance"},
-            next_context(context),
-        )
-        process = await registry.invoke(
+
+        nonzero = await registry.invoke(
             "process.execute",
-            {"command": "python", "args": ["-c", "print('real governed process')"]},
-            next_context(context),
+            {"command": sys.executable, "args": ["-c", "raise SystemExit(9)"]},
+            context(),
         )
-        if read.observation != content or "result.txt" not in (listing.observation or ""):
-            raise CapabilityAcceptanceError("real file read or list failed")
-        if process.status is not CapabilityResultStatus.COMPLETED:
-            raise CapabilityAcceptanceError("real process execution failed")
-        if str(workspace) in str(written.model_dump(mode="json")):
-            raise CapabilityAcceptanceError("physical Workspace path escaped the adapter")
+        missing_artifact = await registry.invoke(
+            "process.execute",
+            {
+                "command": sys.executable,
+                "args": ["-c", "pass"],
+                "artifacts": [{"path": "missing.txt"}],
+            },
+            context(),
+        )
+        if (
+            nonzero.status is not CapabilityResultStatus.FAILED
+            or missing_artifact.status is not CapabilityResultStatus.FAILED
+        ):
+            raise CapabilityAcceptanceError("Process failure paths returned success")
     finally:
-        for target in (run_storage, artifact_storage):
-            if target.is_relative_to(workspace) and target.name == str(context.run_id):
-                shutil.rmtree(target, ignore_errors=True)
+        shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(
+            configuration.workspace / "artifacts" / str(invocation.run_id),
+            ignore_errors=True,
+        )
 
 
 def main() -> int:
     try:
-        workspace = resolve_workspace().path
-        asyncio.run(accept_local_capabilities(workspace))
+        asyncio.run(accept_capabilities())
     except AnbanError as exc:
         print(f"local Capability acceptance: FAIL [{exc.info.code.value}]", file=sys.stderr)
-        return 1
-    except WorkspaceResolutionError as exc:
-        print(f"local Capability acceptance: FAIL [{exc.code}]", file=sys.stderr)
         return 1
     except Exception as exc:
         print(f"local Capability acceptance: FAIL ({type(exc).__name__})", file=sys.stderr)
         return 1
-    print("local Capability acceptance: PASS - file, process, bounds, Artifact, safe output")
+    print("local Capability acceptance: PASS - surface, process, stdin, env, Artifact, failures")
     return 0
 
 

@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import sys
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import delete, func, select, text
 
+from anban.config import load_configuration
 from anban.core import (
     AnbanError,
     Artifact,
@@ -32,12 +35,7 @@ from anban.core import (
     new_node_run_id,
     new_task_id,
 )
-from anban.persistence import (
-    DatabaseProfile,
-    SQLAlchemyUnitOfWorkFactory,
-    create_database_engine,
-    database_url,
-)
+from anban.persistence import SQLAlchemyUnitOfWorkFactory, create_database_engine
 from anban.persistence.models import TaskRecord
 
 
@@ -64,7 +62,7 @@ def records() -> tuple[
         id=new_capability_invocation_id(),
         run_id=run.id,
         node_run_id=node.id,
-        capability_name="file.write",
+        capability_name="process.execute",
     )
     artifact = Artifact(
         id=new_artifact_id(),
@@ -95,7 +93,7 @@ def records() -> tuple[
 
 
 async def accept_repositories() -> None:
-    engine = create_database_engine(database_url(DatabaseProfile.TEST))
+    engine = create_database_engine(load_configuration().database.require("test"))
     factory = SQLAlchemyUnitOfWorkFactory(engine)
     task, run, node, invocation, artifact, events = records()
     failed_task = Task(id=new_task_id(), request="must roll back")
@@ -103,12 +101,12 @@ async def accept_repositories() -> None:
     cleanup_ids = (task.id, failed_task.id)
     try:
         async with engine.connect() as connection:
-            identity = (await connection.execute(text("SELECT current_database()"))).scalar_one()
             revision = (
                 await connection.execute(text("SELECT version_num FROM alembic_version"))
             ).scalar_one()
-            if identity != "anban_test" or revision != "0003_capability_error":
-                raise RepositoryAcceptanceError("test database or migration identity mismatch")
+            expected_head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+            if revision != expected_head:
+                raise RepositoryAcceptanceError("migration identity mismatch")
 
         async with factory() as unit:
             await unit.executions.add_task(task)

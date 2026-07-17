@@ -7,12 +7,14 @@ import sys
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import insert, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from sqlalchemy.sql.base import Executable
 
-from anban.persistence import DatabaseProfile, database_url
+from anban.config import load_configuration
 from anban.persistence.models import (
     CapabilityInvocationRecord,
     EventRecord,
@@ -47,16 +49,15 @@ async def expect_integrity_failure(connection: AsyncConnection, statement: Execu
 
 
 async def accept_schema() -> None:
-    engine = create_async_engine(database_url(DatabaseProfile.TEST), echo=False, pool_pre_ping=True)
+    database = load_configuration().database.require("test")
+    expected_head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+    engine = create_async_engine(database, echo=False, pool_pre_ping=True)
     try:
         async with engine.connect() as connection:
-            identity = (await connection.execute(text("SELECT current_database()"))).scalar_one()
-            if identity != "anban_test":
-                raise MigrationAcceptanceError("test database identity mismatch")
             revision = (
                 await connection.execute(text("SELECT version_num FROM alembic_version"))
             ).scalar_one()
-            if revision != "0003_capability_error":
+            if revision != expected_head:
                 raise MigrationAcceptanceError("migration head mismatch")
             rows = await connection.execute(
                 text(

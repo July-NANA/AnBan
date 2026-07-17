@@ -1,429 +1,286 @@
-"""Real installed-CLI acceptance with restart-safe PostgreSQL inspection."""
+"""Real-model Gate A-D acceptance through the production Application composition root."""
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import hashlib
+import http.server
 import json
 import os
-import platform
-import re
-import shutil
-import subprocess
 import sys
-import tempfile
-from collections.abc import Mapping, Sequence
+import threading
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import cast
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
-from sqlalchemy import delete
-
-from anban.capability.skill import WEATHER_SKILL
-from anban.core.errors import ErrorInfo
-from anban.core.ids import ExecutionRunId, TaskId
-from anban.model.config import load_model_configuration
-from anban.persistence import (
-    DatabaseProfile,
-    SQLAlchemyUnitOfWorkFactory,
-    create_database_engine,
-    database_url,
-)
-from anban.persistence.models import TaskRecord
-from anban.runtime import ArtifactDetail, RunDetail, RunSummary, TraceEntry
-from scripts.workspace_bootstrap import REPOSITORY, WorkspaceResolutionError, resolve_workspace
-
-MAX_OUTPUT_BYTES = 65_536
-PROCESS_TIMEOUT_SECONDS = 210
-FORBIDDEN_OUTPUT_MARKERS = (
-    "authorization:",
-    "bearer ",
-    "file://",
-    "postgresql://",
-    "postgresql+asyncpg://",
-    "provider_response",
-)
-SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+from anban.application import build_application, build_query_application
+from anban.capability.skill import WorkspaceSkillCatalog
+from anban.config import AnbanConfiguration, load_configuration
+from anban.core.ids import ExecutionRunId, new_interaction_id
+from anban.interaction import InteractionEnvelope
+from anban.runtime import AgentOutcomeStatus, ExecutionResult, RunObservability
+from anban.workspace import default_configuration_text
+from scripts.workspace_bootstrap import resolve_workspace
 
 
-class CliE2EError(RuntimeError):
-    """Safe acceptance failure without requests, credentials, or physical paths."""
+class RuntimeGateError(RuntimeError):
+    """Safe Gate failure without model, command, credential, or physical-path output."""
 
 
-class CliResult(BaseModel):
-    model_config = ConfigDict(extra="ignore", frozen=True)
+class GateHttpHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        body = b"gate-http-ok"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
-    status: str
-    run_id: ExecutionRunId
-    persisted: bool
-    error: ErrorInfo | None = None
-
-
-class CliFailureError(BaseModel):
-    model_config = ConfigDict(extra="ignore", frozen=True)
-
-    code: str
+    def log_message(self, format: str, *args: object) -> None:
+        return None
 
 
-class CliFailure(BaseModel):
-    model_config = ConfigDict(extra="ignore", frozen=True)
-
-    status: str
-    error: CliFailureError
-    run_id: ExecutionRunId | None = None
-
-
-class CliTrace(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    run_id: ExecutionRunId
-    complete: bool
-    inconsistencies: tuple[str, ...]
-    trace: tuple[TraceEntry, ...]
-
-
-ARTIFACT_LIST: TypeAdapter[tuple[ArtifactDetail, ...]] = TypeAdapter(tuple[ArtifactDetail, ...])
-RUN_LIST: TypeAdapter[tuple[RunSummary, ...]] = TypeAdapter(tuple[RunSummary, ...])
-
-
-async def run_cli(
-    executable: str,
-    arguments: Sequence[str],
-    environment: Mapping[str, str],
-) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
-        executable,
-        *arguments,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=environment,
-    )
+@contextmanager
+def local_http_endpoint() -> Generator[str]:
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), GateHttpHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            process.communicate(), timeout=PROCESS_TIMEOUT_SECONDS
+        yield f"http://127.0.0.1:{server.server_port}/validation"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def prepare_workspace(parent: Path, name: str) -> Path:
+    root = parent / name
+    root.mkdir(mode=0o700, exist_ok=False)
+    os.chmod(root, 0o700)
+    for directory in ("skills", "runs", "artifacts", "cache", "logs", "tmp", "home"):
+        (root / directory).mkdir(mode=0o700)
+    (root / "anban.toml").write_text(default_configuration_text(), encoding="utf-8")
+    secrets = root / "secrets.env"
+    secrets.write_text("", encoding="utf-8")
+    os.chmod(secrets, 0o600)
+    return root
+
+
+@contextmanager
+def isolated_environment(root: Path, source: AnbanConfiguration) -> Generator[None]:
+    model = source.require_model()
+    values = {
+        "ANBAN_WORKSPACE_DIR": str(root),
+        "HOME": str(root / "home"),
+        "OPENAI_COMPATIBLE_BASE_URL": model.base_url.get_secret_value(),
+        "OPENAI_COMPATIBLE_API_KEY": model.api_key.get_secret_value(),
+        "OPENAI_COMPATIBLE_MODEL": model.model,
+        "DATABASE_URL": source.database.require("test"),
+        "ANBAN_TEST_DATABASE_URL": source.database.require("test"),
+    }
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+async def submit(prompt: str) -> ExecutionResult:
+    application = await build_application()
+    try:
+        return await application.interactions.submit(
+            InteractionEnvelope(id=new_interaction_id(), content=prompt)
         )
-    except TimeoutError:
-        process.kill()
-        await process.wait()
-        raise CliE2EError("CLI acceptance process exceeded its bound") from None
-    if len(stdout_bytes) > MAX_OUTPUT_BYTES or len(stderr_bytes) > MAX_OUTPUT_BYTES:
-        raise CliE2EError("CLI acceptance output exceeded its bound")
+    finally:
+        await application.close()
+
+
+async def trace(run_id: ExecutionRunId) -> RunObservability:
+    application = await build_query_application()
     try:
-        return (
-            process.returncode or 0,
-            stdout_bytes.decode("utf-8"),
-            stderr_bytes.decode("utf-8"),
-        )
-    except UnicodeDecodeError:
-        raise CliE2EError("CLI acceptance output is not UTF-8") from None
+        return await application.interactions.trace(run_id)
+    finally:
+        await application.close()
 
 
-def parse_model[ModelT: BaseModel](model: type[ModelT], value: str) -> ModelT:
-    try:
-        return model.model_validate_json(value)
-    except ValidationError:
-        raise CliE2EError("CLI acceptance output is not valid JSON") from None
-
-
-def parse_adapter[ValueT](adapter: TypeAdapter[ValueT], value: str) -> ValueT:
-    try:
-        return adapter.validate_json(value)
-    except ValidationError:
-        raise CliE2EError("CLI acceptance output is not valid JSON") from None
-
-
-def assert_safe_output(output: str, workspace: Path, protected_values: Sequence[str]) -> None:
-    lowered = output.lower()
-    if str(workspace) in output or any(marker in lowered for marker in FORBIDDEN_OUTPUT_MARKERS):
-        raise CliE2EError("CLI acceptance output contains a protected value")
-    if any(value and value in output for value in protected_values):
-        raise CliE2EError("CLI acceptance output contains a protected value")
-
-
-async def expect_success(
-    executable: str,
-    arguments: Sequence[str],
-    environment: Mapping[str, str],
-) -> str:
-    return_code, stdout, stderr = await run_cli(executable, arguments, environment)
-    if return_code != 0 or stderr or not stdout:
-        raise CliE2EError("CLI command did not succeed cleanly")
-    return stdout
-
-
-async def expect_failure(
-    executable: str,
-    arguments: Sequence[str],
-    environment: Mapping[str, str],
-    expected_code: str,
-) -> CliFailure:
-    return_code, stdout, stderr = await run_cli(executable, arguments, environment)
-    if return_code == 0:
-        raise CliE2EError("CLI failure probe unexpectedly succeeded")
-    payload = parse_model(CliFailure, stdout or stderr)
-    if payload.error.code != expected_code:
-        raise CliE2EError("CLI failure classification mismatch")
-    return payload
-
-
-async def accept_vertical_slice(
-    executable: str,
-    environment: Mapping[str, str],
-    workspace: Path,
-    run_ids: list[ExecutionRunId],
-) -> None:
-    result_output = await expect_success(
-        executable,
-        (
-            "run",
-            "First call skill.activate for @steipete/weather. After its Tool Result, call "
-            "http.get exactly once for https://wttr.in/Sydney?format=3. After that Tool Result, "
-            "file.write exactly once with path acceptance/cli-e2e.txt and content "
-            "cli-e2e-accepted. After all Tool Results, return one short final sentence.",
-            "--json",
-        ),
-        environment,
-    )
-    result = parse_model(CliResult, result_output)
-    if result.status != "succeeded" or not result.persisted:
-        raise CliE2EError("real CLI execution did not persist a successful result")
-    run_id = result.run_id
-    run_ids.append(run_id)
-
-    run_argument = str(run_id)
-    show_output, trace_output, artifacts_output, runs_output = await asyncio.gather(
-        expect_success(executable, ("run", "show", run_argument, "--json"), environment),
-        expect_success(executable, ("trace", run_argument, "--json"), environment),
-        expect_success(executable, ("artifacts", run_argument, "--json"), environment),
-        expect_success(executable, ("runs", "--limit", "100", "--json"), environment),
-    )
-    combined = result_output + show_output + trace_output + artifacts_output + runs_output
-    assert_safe_output(
-        combined,
-        workspace,
-        (environment.get("OPENAI_COMPATIBLE_API_KEY", ""),),
-    )
-
-    show = parse_model(RunDetail, show_output)
-    trace = parse_model(CliTrace, trace_output)
-    artifacts = parse_adapter(ARTIFACT_LIST, artifacts_output)
-    runs = parse_adapter(RUN_LIST, runs_output)
+def require_success(result: ExecutionResult, label: str) -> None:
     if (
-        show.run.id != run_id
-        or show.run.status.value != "succeeded"
-        or len(show.nodes) != 1
-        or show.nodes[0].status.value != "succeeded"
-        or [item.capability_name for item in show.invocations]
-        != ["skill.activate", "http.get", "file.write"]
-        or any(item.status.value != "succeeded" for item in show.invocations)
-        or not show.observability.complete
-        or not trace.complete
-        or trace.inconsistencies
-        or len(artifacts) != 1
-        or not any(item.id == run_id for item in runs)
+        not result.persisted
+        or result.outcome.status is not AgentOutcomeStatus.SUCCEEDED
+        or not result.outcome.final_text
     ):
-        raise CliE2EError("restart-safe CLI projections are incomplete")
+        raise RuntimeGateError(f"{label} did not complete successfully")
 
-    sequences = [entry.sequence for entry in trace.trace]
-    event_types = {entry.event_type for entry in trace.trace}
-    skill_events = [entry for entry in trace.trace if entry.event_type == "skill.activated"]
-    http_events = [
+
+async def gate_a() -> dict[str, object]:
+    with local_http_endpoint() as endpoint:
+        result = await submit(
+            "In this isolated Anban Workspace, perform a real general-runtime validation. Run the "
+            "current Python, inspect a Workspace file listing, create then modify and delete a "
+            "temporary text file, make one real HTTP GET to the provided deterministic validation "
+            f"endpoint {endpoint} using an available command-line or Python program and verify its "
+            "gate-http-ok response, demonstrate stdin or an environment override, and generate "
+            "gate-a-result.txt as a declared text Artifact. Do not claim completion unless every "
+            "operation really ran. Once those operations and Artifact collection have succeeded, "
+            "stop executing commands and summarize; do not add redundant verification commands."
+        )
+    require_success(result, "Gate A")
+    observation = await trace(result.run_id)
+    capability_events = [
         entry
-        for entry in trace.trace
+        for entry in observation.trace
         if entry.event_type == "capability.completed"
-        and entry.metadata.root.get("capability_name") == "http.get"
+        and entry.metadata.root.get("capability_name") == "process.execute"
     ]
-    skill_metadata = skill_events[0].metadata.root if len(skill_events) == 1 else None
-    artifact = artifacts[0]
-    if (
-        sequences != list(range(1, len(sequences) + 1))
-        or not {
-            "model.requested",
-            "model.completed",
-            "skill.activated",
-            "capability.completed",
-            "artifact.created",
-            "run.final",
-        }
-        <= event_types
-        or skill_metadata is None
-        or skill_metadata.get("skill_version") != WEATHER_SKILL.version
-        or skill_metadata.get("content_hash") != WEATHER_SKILL.sha256
-        or skill_metadata.get("skill_source") != "anban://skill/@steipete/weather@1.0.0"
-        or len(http_events) != 1
-        or http_events[0].metadata.root.get("status_code") != 200
-        or not artifact.uri.startswith("anban://artifact/")
-        or artifact.size_bytes != len(b"cli-e2e-accepted")
-    ):
-        raise CliE2EError("CLI Trace, Skill, or Artifact evidence is incomplete")
-
-    artifact_file = workspace / "artifacts" / run_argument / str(artifact.id)
+    if not observation.complete or observation.inconsistencies or not capability_events:
+        raise RuntimeGateError("Gate A Trace is incomplete")
+    summary_keys = {
+        "command",
+        "argument_count",
+        "arguments_hash",
+        "cwd_scope",
+        "duration_ms",
+        "exit_code",
+        "stdout_size",
+        "stderr_size",
+        "stdout_hash",
+        "stderr_hash",
+        "artifact_count",
+        "timed_out",
+        "cancelled",
+    }
+    if not any(summary_keys <= set(entry.metadata.root) for entry in capability_events):
+        raise RuntimeGateError("Gate A Process summary is incomplete")
+    application = await build_query_application()
     try:
-        artifact_bytes = artifact_file.read_bytes()
-    except OSError:
-        raise CliE2EError("CLI Artifact snapshot is unavailable") from None
-    if (
-        artifact_bytes != b"cli-e2e-accepted"
-        or hashlib.sha256(artifact_bytes).hexdigest() != artifact.sha256
-    ):
-        raise CliE2EError("CLI Artifact snapshot does not match durable metadata")
-
-
-async def accept_failure_paths(
-    executable: str,
-    environment: dict[str, str],
-    workspace: Path,
-    run_ids: list[ExecutionRunId],
-) -> None:
-    unavailable_model = dict(environment)
-    unavailable_model.update(
-        {
-            "OPENAI_COMPATIBLE_BASE_URL": "http://127.0.0.1:1/v1",
-            "OPENAI_COMPATIBLE_API_KEY": "cli-e2e-probe-not-a-secret",
-            "OPENAI_COMPATIBLE_MODEL": "unavailable",
-        }
-    )
-    failed_model = await expect_failure(
-        executable,
-        ("run", "Return one short sentence.", "--json"),
-        unavailable_model,
-        "model_transport_failed",
-    )
-    try:
-        if failed_model.run_id is None:
-            raise ValueError
-        failed_run_id = failed_model.run_id
-    except ValueError:
-        raise CliE2EError("failed model Run was not durably identified") from None
-    run_ids.append(failed_run_id)
-
-    with tempfile.TemporaryDirectory(prefix="anban-cli-e2e-") as temporary:
-        isolated_workspace = Path(temporary)
-        shutil.copyfile(workspace / "anban.toml", isolated_workspace / "anban.toml")
-        missing_skill = dict(environment)
-        missing_skill["ANBAN_WORKSPACE_DIR"] = str(isolated_workspace)
-        missing_skill_failure = await expect_failure(
-            executable,
-            ("run", "Activate the approved Workspace Skill.", "--json"),
-            missing_skill,
-            "capability_execution_failed",
-        )
-        assert_safe_output(
-            missing_skill_failure.model_dump_json(),
-            isolated_workspace,
-            (environment["OPENAI_COMPATIBLE_API_KEY"],),
-        )
-
-    unavailable_database = dict(environment)
-    unavailable_database["DATABASE_URL"] = (
-        "postgresql+asyncpg://acceptance:acceptance@127.0.0.1:1/unavailable"
-    )
-    database_failure = await expect_failure(
-        executable,
-        ("runs", "--json"),
-        unavailable_database,
-        "persistence_unavailable",
-    )
-    outputs = json.dumps(
-        (
-            failed_model.model_dump(mode="json"),
-            missing_skill_failure.model_dump(mode="json"),
-            database_failure.model_dump(mode="json"),
-        ),
-        separators=(",", ":"),
-    )
-    assert_safe_output(
-        outputs,
-        workspace,
-        (
-            environment["OPENAI_COMPATIBLE_API_KEY"],
-            unavailable_model["OPENAI_COMPATIBLE_API_KEY"],
-        ),
-    )
-
-
-async def cleanup(workspace: Path, run_ids: Sequence[ExecutionRunId]) -> None:
-    engine = create_database_engine(database_url(DatabaseProfile.TEST))
-    try:
-        factory = SQLAlchemyUnitOfWorkFactory(engine)
-        task_ids: list[TaskId] = []
-        for run_id in run_ids:
-            async with factory() as unit:
-                aggregate = await unit.executions.load_run(run_id)
-            if aggregate is not None:
-                task_ids.append(aggregate.task.id)
-        if task_ids:
-            async with engine.begin() as connection:
-                await connection.execute(delete(TaskRecord).where(TaskRecord.id.in_(task_ids)))
+        artifacts = await application.interactions.artifacts(result.run_id)
+        detail = await application.interactions.show_run(result.run_id)
     finally:
-        await engine.dispose()
-    for run_id in run_ids:
-        for parent in (workspace / "runs", workspace / "artifacts"):
-            target = parent / str(run_id)
-            if target.is_relative_to(workspace) and target.name == str(run_id):
-                shutil.rmtree(target, ignore_errors=True)
+        await application.close()
+    if not artifacts or not detail.observability.complete:
+        raise RuntimeGateError("Gate A restart query is incomplete")
+    return {"run_id": str(result.run_id), "artifact_ids": [str(item.id) for item in artifacts]}
 
 
-async def accept_cli_e2e(workspace: Path) -> None:
-    executable = shutil.which("anban")
-    if executable is None:
-        raise CliE2EError("installed anban console script is unavailable")
-    model = load_model_configuration(workspace=workspace)
-    test_database_url = database_url(DatabaseProfile.TEST, workspace=workspace)
-    environment = dict(os.environ)
-    environment.update(
-        {
-            "ANBAN_WORKSPACE_DIR": str(workspace),
-            "DATABASE_URL": test_database_url,
-            "OPENAI_COMPATIBLE_BASE_URL": model.base_url.get_secret_value(),
-            "OPENAI_COMPATIBLE_API_KEY": model.api_key.get_secret_value(),
-            "OPENAI_COMPATIBLE_MODEL": model.model,
-        }
+def workspace_packages(root: Path) -> tuple[str, ...]:
+    empty_package = root / "empty-package-skills"
+    empty_package.mkdir(exist_ok=True)
+    return tuple(
+        package.slug
+        for package in WorkspaceSkillCatalog(
+            root,
+            package_skills_root=empty_package,
+        ).discover()
     )
-    run_ids: list[ExecutionRunId] = []
+
+
+def external_install_record(root: Path, slug: str) -> dict[str, object]:
+    lock = root / ".clawhub" / "lock.json"
+    payload = cast(dict[str, object], json.loads(lock.read_text(encoding="utf-8")))
+    records = cast(dict[str, object], payload.get("skills", {}))
+    record = records.get(slug)
+    if record is None and len(records) == 1:
+        record = next(iter(records.values()))
+    if not isinstance(record, dict):
+        raise RuntimeGateError("external install record is missing")
+    return cast(dict[str, object], record)
+
+
+async def gate_bcd(root: Path) -> dict[str, object]:
+    if workspace_packages(root):
+        raise RuntimeGateError("Gate B Workspace was not initially empty")
+    install = await submit(
+        "Use the available Skill for ClawHub to search public Skills without logging in. Compare "
+        "a bounded set of candidates and explain compatibility before selection. Choose and "
+        "install one low-risk Skill that needs no credentials, Browser, MCP, database, or special "
+        "service and whose real behavior can be verified with ordinary process execution. The "
+        "request explicitly authorizes searching and installing exactly one suitable Skill."
+    )
+    require_success(install, "Gate B")
+    install_trace = await trace(install.run_id)
+    names = [
+        entry.metadata.root.get("capability_name")
+        for entry in install_trace.trace
+        if entry.event_type in {"capability.completed", "skill.activated"}
+    ]
+    if "skill.activate" not in names or names.count("process.execute") < 2:
+        raise RuntimeGateError("Gate B did not trace Skill activation, search, and install")
+    packages = workspace_packages(root)
+    if len(packages) != 1:
+        raise RuntimeGateError("Gate B did not install exactly one valid SKILL.md")
+    slug = packages[0]
+    record = external_install_record(root, slug)
+    run_ids: list[str] = []
+    for index in range(3):
+        result = await submit(
+            f"Use the discovered Skill {slug} for a fresh low-risk validation task number "
+            f"{index + 1}. Follow its actual instructions, use real process execution, and report "
+            "a verifiable result without inventing unavailable capabilities."
+        )
+        require_success(result, f"Gate C/D run {index + 1}")
+        observation = await trace(result.run_id)
+        event_names = [
+            entry.metadata.root.get("capability_name")
+            for entry in observation.trace
+            if entry.event_type in {"capability.completed", "skill.activated"}
+        ]
+        if (
+            not observation.complete
+            or observation.inconsistencies
+            or "skill.activate" not in event_names
+            or "process.execute" not in event_names
+        ):
+            raise RuntimeGateError("Gate C/D Trace is incomplete")
+        run_ids.append(str(result.run_id))
+    skill_file = next((root / "skills").rglob("SKILL.md"))
+    return {
+        "install_run_id": str(install.run_id),
+        "slug": slug,
+        "external_version": record.get("version", "unverified"),
+        "content_hash": hashlib.sha256(skill_file.read_bytes()).hexdigest(),
+        "execution_run_ids": run_ids,
+    }
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser()
+    result.add_argument("--gate-a-only", action="store_true")
+    return result
+
+
+async def accept_runtime(gate_a_only: bool) -> dict[str, object]:
+    source = load_configuration(workspace=resolve_workspace().path)
+    parent = source.workspace / "tmp"
+    marker = hashlib.sha256(os.urandom(32)).hexdigest()[:12]
+    gate_a_root = prepare_workspace(parent, f"gate28-a-{marker}")
+    evidence: dict[str, object] = {}
+    with isolated_environment(gate_a_root, source):
+        evidence["gate_a"] = await gate_a()
+    if not gate_a_only:
+        gate_b_root = prepare_workspace(parent, f"gate28-b-{marker}")
+        with isolated_environment(gate_b_root, source):
+            evidence["gate_bcd"] = await gate_bcd(gate_b_root)
+    return evidence
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parser().parse_args(argv)
     try:
-        await accept_vertical_slice(executable, environment, workspace, run_ids)
-        await accept_failure_paths(executable, environment, workspace, run_ids)
-    finally:
-        await cleanup(workspace, run_ids)
-
-
-def evidence_facts() -> str:
-    result = subprocess.run(
-        ("git", "rev-parse", "HEAD"),
-        cwd=REPOSITORY,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    sha = result.stdout.strip()
-    if result.returncode != 0 or not SHA_PATTERN.fullmatch(sha) or sys.version_info[:2] != (3, 12):
-        raise CliE2EError("CLI E2E environment facts are invalid")
-    return (
-        f"sha={sha} python={platform.python_version()} platform={sys.platform} "
-        f"interpreter=current database=test skill={WEATHER_SKILL.slug}@{WEATHER_SKILL.version}"
-    )
-
-
-def main() -> int:
-    try:
-        workspace = resolve_workspace().path
-        asyncio.run(accept_cli_e2e(workspace))
-        facts = evidence_facts()
-    except WorkspaceResolutionError as exc:
-        print(f"CLI E2E acceptance: FAIL [{exc.code}]", file=sys.stderr)
-        return 1
-    except CliE2EError:
-        print("CLI E2E acceptance: FAIL [acceptance_invalid]", file=sys.stderr)
+        evidence = asyncio.run(accept_runtime(arguments.gate_a_only))
+    except RuntimeGateError as exc:
+        print(f"runtime Gate acceptance: FAIL [{exc}]", file=sys.stderr)
         return 1
     except Exception as exc:
-        print(f"CLI E2E acceptance: FAIL ({type(exc).__name__})", file=sys.stderr)
+        print(f"runtime Gate acceptance: FAIL ({type(exc).__name__})", file=sys.stderr)
         return 1
-    print(
-        "CLI E2E acceptance: PASS - installed CLI, real Model/Skill/Capability, "
-        "PostgreSQL, Artifact, Event/Audit/Trace, restart, explicit failures"
-    )
-    print(f"CLI E2E evidence: {facts}")
+    print("runtime Gate acceptance: PASS " + json.dumps(evidence, separators=(",", ":")))
     return 0
 
 

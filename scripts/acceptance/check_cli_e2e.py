@@ -13,7 +13,6 @@ import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import cast
 
 from anban.application import build_application, build_query_application
 from anban.capability.skill import WorkspaceSkillCatalog
@@ -181,18 +180,6 @@ def workspace_packages(root: Path) -> tuple[str, ...]:
     )
 
 
-def external_install_record(root: Path, slug: str) -> dict[str, object]:
-    lock = root / ".clawhub" / "lock.json"
-    payload = cast(dict[str, object], json.loads(lock.read_text(encoding="utf-8")))
-    records = cast(dict[str, object], payload.get("skills", {}))
-    record = records.get(slug)
-    if record is None and len(records) == 1:
-        record = next(iter(records.values()))
-    if not isinstance(record, dict):
-        raise RuntimeGateError("external install record is missing")
-    return cast(dict[str, object], record)
-
-
 async def gate_bcd(root: Path) -> dict[str, object]:
     if workspace_packages(root):
         raise RuntimeGateError("Gate B Workspace was not initially empty")
@@ -218,7 +205,6 @@ async def gate_bcd(root: Path) -> dict[str, object]:
     if len(packages) != 1:
         raise RuntimeGateError("Gate B did not install exactly one valid SKILL.md")
     slug = packages[0]
-    record = external_install_record(root, slug)
     run_ids: list[str] = []
     for index in range(3):
         result = await submit(
@@ -245,7 +231,6 @@ async def gate_bcd(root: Path) -> dict[str, object]:
     return {
         "install_run_id": str(install.run_id),
         "slug": slug,
-        "external_version": record.get("version", "unverified"),
         "content_hash": hashlib.sha256(skill_file.read_bytes()).hexdigest(),
         "execution_run_ids": run_ids,
     }

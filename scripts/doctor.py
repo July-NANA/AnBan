@@ -430,9 +430,14 @@ def check_skills(workspace: Path, configuration: AnbanConfiguration) -> CheckRes
             "No valid SKILL.md was discovered.",
             "Restore at least one valid package or Workspace SKILL.md.",
         )
+    reasons: dict[str, int] = {}
+    for diagnostic in catalog.diagnostics:
+        reasons[diagnostic.reason] = reasons.get(diagnostic.reason, 0) + 1
+    diagnostic_summary = ", ".join(f"{reason}={count}" for reason, count in sorted(reasons.items()))
     return pass_result(
         "Skills",
-        f"valid={len(packages)}, skipped={len(catalog.diagnostics)}; uniform parser completed",
+        f"valid={len(packages)}, skipped={len(catalog.diagnostics)}; uniform parser completed"
+        + (f"; diagnostics: {diagnostic_summary}" if diagnostic_summary else ""),
     )
 
 

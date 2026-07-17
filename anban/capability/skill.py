@@ -25,7 +25,6 @@ MAX_SKILL_SOURCE_BYTES = 65_536
 MAX_SKILL_CONTEXT_CHARS = 15_000
 _NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _SLUG_PATTERN = re.compile(r"^@[a-z0-9][a-z0-9-]{0,63}/[a-z0-9][a-z0-9-]{0,63}$")
-_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 
 
 class SkillPackage(BaseModel):
@@ -36,7 +35,6 @@ class SkillPackage(BaseModel):
     slug: str = Field(pattern=_SLUG_PATTERN.pattern)
     name: str = Field(pattern=_NAME_PATTERN.pattern)
     description: str = Field(min_length=1, max_length=1024)
-    version: str = Field(pattern=r"^(?:unverified|[A-Za-z0-9][A-Za-z0-9._+-]{0,63})$")
     skill_root: str = Field(min_length=1, max_length=512)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     instructions: str = Field(min_length=1, max_length=MAX_SKILL_CONTEXT_CHARS)
@@ -78,7 +76,7 @@ class WorkspaceSkillCatalog:
         return self._diagnostics
 
     def discover(self) -> tuple[SkillPackage, ...]:
-        packages: dict[str, SkillPackage] = {}
+        candidates: dict[str, list[tuple[SkillPackage, str]]] = {}
         diagnostics: list[SkillDiagnostic] = []
         for physical_root, label, logical_root in self._roots:
             if not physical_root.is_dir():
@@ -88,12 +86,22 @@ class WorkspaceSkillCatalog:
                 diagnostic_path = f"{label}:{relative.as_posix()}"
                 try:
                     package = self._load(physical_root, logical_root, source_path, relative)
-                    if package.slug in packages:
-                        raise SkillLoadError("slug_conflict")
-                    packages[package.slug] = package
+                    if label == "workspace" and package.slug.startswith("@anban/"):
+                        raise SkillLoadError("reserved_skill_namespace")
+                    candidates.setdefault(package.slug, []).append((package, diagnostic_path))
                 except SkillLoadError as exc:
                     diagnostics.append(SkillDiagnostic(diagnostic_path, exc.reason))
-        self._diagnostics = tuple(diagnostics)
+        packages: dict[str, SkillPackage] = {}
+        for slug in sorted(candidates):
+            entries = candidates[slug]
+            if len(entries) == 1:
+                packages[slug] = entries[0][0]
+                continue
+            diagnostics.extend(
+                SkillDiagnostic(path, "slug_conflict")
+                for _, path in sorted(entries, key=lambda entry: entry[1])
+            )
+        self._diagnostics = tuple(sorted(diagnostics, key=lambda item: (item.path, item.reason)))
         return tuple(packages[key] for key in sorted(packages))
 
     @staticmethod
@@ -137,16 +145,12 @@ class WorkspaceSkillCatalog:
         description = fields["description"]
         if not description or len(description) > 1024:
             raise SkillLoadError("description_invalid")
-        version = fields.get("version", "unverified")
-        if not _VERSION_PATTERN.fullmatch(version):
-            raise SkillLoadError("version_invalid")
         slug = self._slug(relative, name)
         package_root = relative.parent
         return SkillPackage(
             slug=slug,
             name=name,
             description=description,
-            version=version,
             skill_root=f"{logical_root}/{package_root.as_posix()}",
             content_hash=hashlib.sha256(raw).hexdigest(),
             instructions=source,
@@ -164,7 +168,7 @@ class WorkspaceSkillCatalog:
         fields: dict[str, str] = {}
         for line in lines[1:end]:
             key, separator, raw_value = line.partition(":")
-            if not separator or key not in {"name", "description", "version"}:
+            if not separator or key not in {"name", "description"}:
                 continue
             value = raw_value.strip()
             if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
@@ -229,7 +233,6 @@ class SkillActivationCapability:
         package = self._packages[slug]
         observation = (
             f"Activated Skill: {package.slug}\n"
-            f"Version: {package.version}\n"
             f"Skill root: {package.skill_root}\n"
             f"Content SHA-256: {package.content_hash}\n"
             "SKILL.md:\n"
@@ -241,7 +244,6 @@ class SkillActivationCapability:
             metadata=SafeMetadata(
                 {
                     "skill_slug": package.slug,
-                    "skill_version": package.version,
                     "skill_root": package.skill_root,
                     "content_hash": package.content_hash,
                 }

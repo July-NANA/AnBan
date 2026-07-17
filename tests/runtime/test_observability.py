@@ -157,9 +157,8 @@ async def test_skill_activation_is_distinct_and_uses_logical_reference() -> None
             observation="Activated approved Workspace Skill.",
             metadata=SafeMetadata(
                 {
-                    "skill_slug": "@steipete/weather",
-                    "skill_version": "1.0.0",
-                    "skill_root": "skills/@steipete/weather",
+                    "skill_slug": "@owner/example",
+                    "skill_root": "skills/@owner/example",
                     "content_hash": "a" * 64,
                     "omitted_line_count": 0,
                 }
@@ -186,7 +185,7 @@ async def test_skill_activation_is_distinct_and_uses_logical_reference() -> None
                         ToolCall(
                             id="skill-call",
                             name="skill.activate",
-                            arguments={"name": "@steipete/weather"},
+                            arguments={"name": "@owner/example"},
                         ),
                     ),
                     finish_reason="tool_calls",
@@ -202,7 +201,8 @@ async def test_skill_activation_is_distinct_and_uses_logical_reference() -> None
     skill_event = next(
         entry for entry in observation.audit if entry.event_type == "skill.activated"
     )
-    assert skill_event.metadata.root["skill_root"] == "skills/@steipete/weather"
+    assert skill_event.metadata.root["skill_root"] == "skills/@owner/example"
+    assert "skill_version" not in skill_event.metadata.root
     assert "capability.completed" in {entry.event_type for entry in observation.audit}
 
 

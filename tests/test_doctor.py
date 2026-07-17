@@ -292,6 +292,30 @@ def test_skill_discovery_uses_uniform_parser_without_install_metadata(tmp_path: 
     assert "valid=2" in result.detail
 
 
+def test_skill_discovery_reports_reserved_and_conflict_diagnostics(tmp_path: Path) -> None:
+    workspace = create_workspace(tmp_path / "workspace")
+    (workspace / "anban.toml").write_text(default_configuration_text(), encoding="utf-8")
+    source = "---\nname: duplicate\ndescription: Duplicate Skill.\n---\n"
+    for relative in ("one", "two"):
+        skill = workspace / "skills" / relative / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text(source, encoding="utf-8")
+    reserved = workspace / "skills" / "@anban" / "reserved" / "SKILL.md"
+    reserved.parent.mkdir(parents=True)
+    reserved.write_text(
+        "---\nname: reserved\ndescription: Reserved Skill.\n---\n",
+        encoding="utf-8",
+    )
+    configuration = load_configuration(workspace=workspace, environ={})
+
+    result = doctor.check_skills(workspace, configuration)
+
+    assert result.status == "PASS"
+    assert "reserved_skill_namespace=1" in result.detail
+    assert "slug_conflict=2" in result.detail
+    assert str(tmp_path) not in result.detail
+
+
 def test_doctor_call_graph_excludes_real_acceptance_network_and_duplicate_checks() -> None:
     source = Path(doctor.__file__).read_text(encoding="utf-8")
     forbidden = (

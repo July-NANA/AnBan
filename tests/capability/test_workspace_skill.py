@@ -89,8 +89,10 @@ def test_multiple_scoped_and_local_skills_are_discovered_without_external_metada
     package_root = tmp_path / "package"
     workspace = tmp_path / "workspace"
     package_root.mkdir()
-    unverified = SOURCE.replace("name: runner", "name: local-tool").replace("version: 2.1.0\n", "")
-    write_skill(workspace / "skills", "plain-directory", unverified)
+    local_source = SOURCE.replace("name: runner", "name: local-tool").replace(
+        "version: 2.1.0\n", ""
+    )
+    write_skill(workspace / "skills", "plain-directory", local_source)
     write_skill(
         workspace / "skills",
         "@owner/other",
@@ -100,7 +102,7 @@ def test_multiple_scoped_and_local_skills_are_discovered_without_external_metada
     packages = catalog(workspace, package_root).discover()
 
     assert [item.slug for item in packages] == ["@local/local-tool", "@owner/other"]
-    assert packages[0].version == "unverified"
+    assert "version" not in packages[0].model_dump()
     assert packages[0].skill_root == "skills/plain-directory"
 
 
@@ -149,7 +151,7 @@ def test_invalid_skills_report_safe_diagnostics_without_blocking_valid_skills(
     assert str(tmp_path) not in str(discovered.diagnostics)
 
 
-def test_slug_conflict_skips_later_skill_without_overwriting_first(tmp_path: Path) -> None:
+def test_slug_conflict_excludes_every_candidate_without_scan_order_winner(tmp_path: Path) -> None:
     package_root = tmp_path / "package"
     workspace = tmp_path / "workspace"
     write_skill(package_root, "@owner/runner")
@@ -161,11 +163,65 @@ def test_slug_conflict_skips_later_skill_without_overwriting_first(tmp_path: Pat
     discovered = catalog(workspace, package_root)
     packages = discovered.discover()
 
-    assert len(packages) == 1
-    assert packages[0].instructions == SOURCE
-    assert discovered.diagnostics == (
-        discovered.diagnostics[0].__class__("workspace:@owner/runner/SKILL.md", "slug_conflict"),
+    assert packages == ()
+    assert [(item.path, item.reason) for item in discovered.diagnostics] == [
+        ("package:@owner/runner/SKILL.md", "slug_conflict"),
+        ("workspace:@owner/runner/SKILL.md", "slug_conflict"),
+    ]
+
+
+def test_workspace_cannot_claim_reserved_anban_namespace(tmp_path: Path) -> None:
+    package_root = tmp_path / "package"
+    workspace = tmp_path / "workspace"
+    write_skill(
+        package_root,
+        "@anban/clawhub",
+        SOURCE.replace("name: runner", "name: clawhub"),
     )
+    write_skill(
+        workspace / "skills",
+        "@anban/clawhub",
+        SOURCE.replace("name: runner", "name: clawhub"),
+    )
+    write_skill(
+        workspace / "skills",
+        "@anban/other",
+        SOURCE.replace("name: runner", "name: other"),
+    )
+
+    discovered = catalog(workspace, package_root)
+    packages = discovered.discover()
+
+    assert [item.slug for item in packages] == ["@anban/clawhub"]
+    assert [(item.path, item.reason) for item in discovered.diagnostics] == [
+        ("workspace:@anban/clawhub/SKILL.md", "reserved_skill_namespace"),
+        ("workspace:@anban/other/SKILL.md", "reserved_skill_namespace"),
+    ]
+
+
+def test_three_conflicts_are_excluded_while_unrelated_skill_loads_deterministically(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    workspace = tmp_path / "workspace"
+    for relative in ("third", "first", "second"):
+        write_skill(workspace / "skills", relative)
+    write_skill(
+        workspace / "skills",
+        "@owner/other",
+        SOURCE.replace("name: runner", "name: other"),
+    )
+
+    discovered = catalog(workspace, package_root)
+    packages = discovered.discover()
+
+    assert [item.slug for item in packages] == ["@owner/other"]
+    assert [(item.path, item.reason) for item in discovered.diagnostics] == [
+        ("workspace:first/SKILL.md", "slug_conflict"),
+        ("workspace:second/SKILL.md", "slug_conflict"),
+        ("workspace:third/SKILL.md", "slug_conflict"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -193,7 +249,7 @@ def test_install_metadata_cannot_change_discovery_or_identity(
     package = catalog(workspace, package_root).discover()[0]
 
     assert package.slug == "@owner/runner"
-    assert package.version == "2.1.0"
+    assert "version" not in package.model_dump()
     assert package.content_hash == hashlib.sha256(SOURCE.encode()).hexdigest()
 
 
@@ -220,6 +276,8 @@ async def test_activation_is_stateless_idempotent_and_allows_multiple_skills(
     assert first.observation == repeated.observation
     assert other.status is CapabilityResultStatus.COMPLETED
     assert first.metadata.root["skill_root"] == "skills/@owner/runner"
+    assert "skill_version" not in first.metadata.root
+    assert "Version:" not in (first.observation or "")
     assert "SKILL.md:\n---" in (first.observation or "")
 
 
@@ -298,6 +356,7 @@ def test_production_catalog_has_no_install_source_metadata_branches() -> None:
         "registry",
         "publisher",
         "fingerprint",
+        "skill_version",
     ):
         assert forbidden not in source
 

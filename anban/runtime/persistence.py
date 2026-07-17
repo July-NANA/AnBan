@@ -94,7 +94,6 @@ _CAPABILITY_EVENT_METADATA = frozenset(
         "stderr_size",
         "skill_slug",
         "skill_root",
-        "skill_version",
         "stdout_hash",
         "stdout_size",
         "timed_out",

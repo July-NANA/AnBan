@@ -1,7 +1,6 @@
 ---
 name: clawhub
 description: Search, install, list, and update public Skills with the real ClawHub CLI.
-version: 1.0.0
 ---
 
 # ClawHub CLI

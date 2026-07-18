@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from pydantic import JsonValue
 
 from anban.capability import (
@@ -99,6 +100,30 @@ def tool_turn() -> ModelTurn:
 
 def final_turn(content: str = "Persistent final result.") -> ModelTurn:
     return ModelTurn(content=content, finish_reason="stop")
+
+
+def completion_turn(
+    *,
+    resolution: str = "complete",
+    final_text: str = "Persistent final result.",
+    unmet_condition: str = "",
+    next_strategy: str = "",
+    next_target: str = "",
+) -> ModelTurn:
+    return ModelTurn(
+        structured_output={
+            "resolution": resolution,
+            "rationale": "Actual execution evidence supports this bounded completion decision.",
+            "confidence": 0.91,
+            "unmet_condition": unmet_condition,
+            "next_strategy": next_strategy,
+            "next_target": next_target,
+            "final_text": final_text if resolution == "complete" else "",
+            "user_input_can_unlock": resolution == "clarify",
+            "safe_paths_exhausted": resolution == "fail",
+        },
+        finish_reason="stop",
+    )
 
 
 def assessment_turn(
@@ -200,7 +225,10 @@ async def test_sufficiency_and_observations_are_durable_in_the_same_run() -> Non
     registry = CapabilityRegistry((capability,))
     inventory = UnifiedCapabilityInventory(registry, model_available=True)
     result = await PersistentRuntime(
-        TransactionCheckingModel(factory, [assessment_turn(), tool_turn(), final_turn()]),
+        TransactionCheckingModel(
+            factory,
+            [assessment_turn(), tool_turn(), final_turn(), completion_turn()],
+        ),
         registry,
         factory,
         inventory=inventory,
@@ -209,11 +237,12 @@ async def test_sufficiency_and_observations_are_durable_in_the_same_run() -> Non
 
     assert result.persisted
     assert result.outcome.status is AgentOutcomeStatus.SUCCEEDED
-    assert result.outcome.model_turn_count == 3
+    assert result.outcome.model_turn_count == 4
     aggregate = await load_run(factory, result.run_id)
     event_types = [event.event_type for event in aggregate.events]
     assert event_types.count("agent.sufficiency_assessed") == 1
     assert event_types.count("agent.observed") == 1
+    assert event_types.count("agent.completion_assessed") == 1
     assessment = next(
         event for event in aggregate.events if event.event_type == "agent.sufficiency_assessed"
     )
@@ -227,7 +256,54 @@ async def test_sufficiency_and_observations_are_durable_in_the_same_run() -> Non
     assert {entry.event_type for entry in trace.audit} >= {
         "agent.sufficiency_assessed",
         "agent.observed",
+        "agent.completion_assessed",
     }
+
+
+@pytest.mark.parametrize(
+    ("resolution", "reason", "decision_event"),
+    [
+        ("clarify", "completion_clarification_required", "agent.clarification_requested"),
+        ("fail", "completion_failed", "agent.failure_selected"),
+    ],
+)
+async def test_completion_terminal_decisions_are_durable_and_safe(
+    resolution: str,
+    reason: str,
+    decision_event: str,
+) -> None:
+    factory = MemoryUnitOfWorkFactory()
+    registry = CapabilityRegistry()
+    inventory = UnifiedCapabilityInventory(registry, model_available=True)
+    canary = "raw-completion-rationale-must-not-persist"
+    model = TransactionCheckingModel(
+        factory,
+        [
+            assessment_turn(ExecutionStrategy.DIRECT_ANSWER, target=""),
+            final_turn("This proposed final is not enough."),
+            completion_turn(
+                resolution=resolution,
+                unmet_condition=f"A missing bounded condition {canary} remains.",
+            ),
+        ],
+    )
+    result = await PersistentRuntime(
+        model,
+        registry,
+        factory,
+        inventory=inventory,
+        sufficiency=CapabilitySufficiencyEvaluator(inventory),
+    ).execute("Resolve an incomplete task without fabricating completion.")
+
+    assert result.outcome.status is AgentOutcomeStatus.FAILED
+    assert result.outcome.error is not None
+    assert result.outcome.error.details.root["reason"] == reason
+    trace = await ExecutionQueryService(factory).trace(result.run_id)
+    event_types = [event.event_type for event in trace.audit]
+    assert event_types.count("agent.completion_assessed") == 1
+    assert event_types.count("agent.replan_decided") == 1
+    assert event_types.count(decision_event) == 1
+    assert canary not in trace.model_dump_json()
 
 
 async def test_model_failure_is_persisted_as_safe_terminal_state() -> None:

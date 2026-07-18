@@ -17,7 +17,11 @@ Owns v0.1 execution order, state transitions, the fixed LangGraph, bounded Tool 
 coordination, and query projections. The v0.5 sufficiency evaluator uses a closed structured Model
 decision to select only real, ready inventory targets; Runtime constructs and validates the
 authoritative assessment, including general Skill-acquisition justification and explicit
-clarification/failure. Waiting, resume, and checkpoints are not v0.1 behavior.
+clarification/failure. Runtime also owns structured completion assessment and a separately bounded
+replan decision. Proposed final text, successful Skill activation, stored Memory, and intermediate
+Capability output are not terminal facts. The next alternative must match one exact ready
+strategy/target, while identical completed or uncertain calls remain replay-protected. Waiting,
+resume, and checkpoints are not v0.1 behavior.
 
 ## Model
 

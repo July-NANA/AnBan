@@ -44,6 +44,8 @@ max_capability_calls = {policy.AGENT_MAX_CAPABILITY_CALLS_DEFAULT}
 total_timeout_seconds = {policy.AGENT_TOTAL_TIMEOUT_DEFAULT_SECONDS}
 # 连续相同 Capability 调用达到该次数时终止；0 禁用，1 非法，最大 8。
 repeated_call_limit = {policy.AGENT_REPEATED_CALL_LIMIT_DEFAULT}
+# 完成评估允许选择替代路径的最大次数；0 禁用，最大 8。
+max_replans = {policy.AGENT_MAX_REPLANS_DEFAULT}
 
 [capability.process]
 # process.execute 默认超时时间，单位为秒。

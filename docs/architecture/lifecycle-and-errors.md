@@ -63,3 +63,10 @@ model response may trigger at most three contract-only repair requests shared by
 Events record the structural reason, attempt, repairability, exhaustion, and safe transport retry
 count without the response, Prompt, or Tool arguments. Waiting/resume and checkpoint behavior
 remain outside v0.1.
+
+The v0.5 Main Agent adds bounded replanning without broadening automatic retries. Completion
+assessment is a structured Model decision, not another Capability call. A replan consumes one of a
+separate finite budget and selects an exact ready strategy/target; production rejects a different
+next path. Failed, completed, and uncertain calls remain in the observed-signature set, so
+completion assessment cannot replay an identical side effect. Invalid assessment output, exhausted
+budget, missing clarification, and absence of a safe alternative remain explicit terminal errors.

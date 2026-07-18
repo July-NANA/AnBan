@@ -86,6 +86,11 @@ class AgentConfiguration(ConfigurationValue):
         ge=policy.AGENT_REPEATED_CALL_LIMIT_MIN,
         le=policy.AGENT_REPEATED_CALL_LIMIT_MAX,
     )
+    max_replans: int = Field(
+        default=policy.AGENT_MAX_REPLANS_DEFAULT,
+        ge=policy.AGENT_MAX_REPLANS_MIN,
+        le=policy.AGENT_MAX_REPLANS_MAX,
+    )
 
     @field_validator("repeated_call_limit")
     @classmethod

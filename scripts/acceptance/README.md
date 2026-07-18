@@ -30,3 +30,9 @@ Gate E failure paths remain production-path tests: missing program, nonzero exit
 cancellation, output/Artifact failure, damaged Skill, model repair/exhaustion, database/Event
 failure, Invocation compensation, Artifact cleanup, compensation failure, and unconfirmed commit
 state. Fixtures provide invalid inputs only; they do not replace successful production execution.
+
+Deterministic Runtime coverage also rejects premature finals, exercises three semantic completion
+variants, enforces an exact alternative strategy/target, proves clarification and explicit failure,
+and exhausts the finite replan budget without repeating the failed side effect. Model-dependent
+S01-S04/S06/S12 completion evidence remains part of P1 Gate #72 rather than being fabricated by
+the deterministic suite.

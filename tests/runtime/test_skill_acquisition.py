@@ -25,6 +25,7 @@ from anban.runtime import (
 from tests.runtime.test_persistent_runtime import (
     MemoryUnitOfWorkFactory,
     TransactionCheckingModel,
+    completion_turn,
     final_turn,
     load_run,
 )
@@ -129,6 +130,7 @@ async def test_real_capabilities_acquire_and_use_a_skill_in_the_original_run(
                 {"command": sys.executable, "args": ["-c", "print('goal-completed')"]},
             ),
             final_turn("The original task completed with the acquired workflow."),
+            completion_turn(final_text="The original task completed with the acquired workflow."),
         ],
     )
     result = await PersistentRuntime(
@@ -141,7 +143,7 @@ async def test_real_capabilities_acquire_and_use_a_skill_in_the_original_run(
 
     assert result.outcome.status is AgentOutcomeStatus.SUCCEEDED
     assert result.outcome.capability_call_count == 4
-    assert result.outcome.model_turn_count == 6
+    assert result.outcome.model_turn_count == 7
     assert guide.key in (model.requests[1].messages[1].content or "")
     aggregate = await load_run(factory, result.run_id)
     assert aggregate.task.request == original_request

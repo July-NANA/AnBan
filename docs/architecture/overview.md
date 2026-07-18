@@ -14,9 +14,9 @@ Interaction -> Runtime -> ModelPort
 Core owns identities, lifecycles, Artifact/Event facts, `ExecutionRepository`, `UnitOfWork`, and
 `UnitOfWorkFactory`, including Task/Session Context vocabulary. Model remains an independent Port.
 Capability owns the Registry and its three Handlers. Runtime owns the fixed Agent loop,
-Tool-call correctness, repair without side-effect
-replay, persistence coordination, and Trace projection. Persistence implements the one PostgreSQL
-backend; Interaction supplies the CLI loop.
+Tool-call correctness, structured completion evaluation, bounded alternative-path selection,
+repair without side-effect replay, persistence coordination, and Trace projection. Persistence
+implements the one PostgreSQL backend; Interaction supplies the CLI loop.
 
 Every Skill follows `SKILL.md -> uniform parser -> SkillPackage -> skill.activate ->
 process.execute`. No production code selects behavior by source, installer, registry, publisher,
@@ -39,3 +39,11 @@ Context entries, summaries, and ordered summary coverage. Compression is atomic:
 marks covered entries superseded but never deletes them; any validation or write failure rolls the
 whole operation back. No vector database, second registry, source-specific loader, or Memory
 backend was introduced.
+
+The Main Agent does not equate a valid final-text shape with goal completion. The existing Model
+Port receives a closed completion schema plus the original bounded transcript, real Tool Results,
+safe observation facts, ready sufficiency candidates, and remaining replan budget. Only a complete
+assessment can produce success. An incomplete assessment selects one exact ready strategy/target,
+requests clarification, or fails; production then enforces that selected alternative on the next
+native response. This is Runtime logic inside the same fixed LangGraph, not another scheduler,
+Port, or execution channel.

@@ -27,11 +27,12 @@ absolute executable paths must be executable regular files; relative executable 
 No implicit shell is used. Multiple Artifact declarations are validated together and duplicate
 resolved paths are rejected before managed snapshots are created.
 
-Default budgets are 12 model turns, 16 Capability calls, 600 seconds total, and repeated-call limit
-3 (`0` disables it; `1` is invalid). Process defaults are 60 seconds with a configurable maximum
-of 300, 64 KiB each for stdout/stderr/stdin, 128 arguments, 8 Artifacts, and 16 MiB per Artifact.
-Hard maxima are 24 turns, 32 calls, 1800 seconds total, 600 seconds Process, 256 KiB streams, 256
-arguments, 32 Artifacts, and 64 MiB per Artifact.
+Default budgets are 12 model turns, 16 Capability calls, 3 replans, 600 seconds total, and
+repeated-call limit 3 (`0` disables it; `1` is invalid). Replans can be disabled with `0` and have
+a hard maximum of 8. Process defaults are 60 seconds with a configurable maximum of 300, 64 KiB
+each for stdout/stderr/stdin, 128 arguments, 8 Artifacts, and 16 MiB per Artifact. Hard maxima are
+24 turns, 32 calls, 1800 seconds total, 600 seconds Process, 256 KiB streams, 256 arguments, 32
+Artifacts, and 64 MiB per Artifact.
 
 `python -m scripts.doctor` checks the active Python 3.12 toolchain, Node/pnpm, Workspace,
 configuration, both configured PostgreSQL databases and migration heads, uniform Skill discovery,

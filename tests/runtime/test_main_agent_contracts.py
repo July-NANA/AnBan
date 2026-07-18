@@ -165,6 +165,7 @@ def test_incomplete_completion_and_bounded_replan_are_explicit() -> None:
         should_replan=True,
         rationale="One distinct safe path remains.",
         next_strategy=ExecutionStrategy.USE_PROCESS,
+        next_target="process.execute",
         remaining_attempts=1,
     )
     assert incomplete.complete is False

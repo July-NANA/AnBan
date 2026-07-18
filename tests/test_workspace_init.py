@@ -71,6 +71,7 @@ def test_workspace_template_uses_policy_defaults_and_chinese_comments(tmp_path: 
     (workspace / "secrets.env").write_text("", encoding="utf-8")
     configuration = load_configuration(workspace=workspace, environ={})
     assert configuration.agent.max_model_turns == policy.AGENT_MAX_MODEL_TURNS_DEFAULT
+    assert configuration.agent.max_replans == policy.AGENT_MAX_REPLANS_DEFAULT
     assert (
         configuration.process.default_timeout_seconds
         == policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS

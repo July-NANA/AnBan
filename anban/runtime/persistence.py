@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal
@@ -38,10 +37,19 @@ from anban.core.models import (
 )
 from anban.core.persistence import ExecutionRepository, ExecutionRunAggregate, UnitOfWorkFactory
 from anban.model import ModelRequest, ModelTurn
+from anban.runtime.agent_event_facts import (
+    AgentEventFact,
+    completion_event_facts,
+    observation_event_facts,
+    replan_event_facts,
+    sufficiency_event_facts,
+)
 from anban.runtime.contracts import (
     AgentObservation,
     AgentOutcome,
     CapabilitySufficiencyAssessment,
+    CompletionAssessment,
+    ReplanDecision,
 )
 from anban.runtime.persistence_metadata import (
     CAPABILITY_EVENT_METADATA,
@@ -263,57 +271,24 @@ class RunPersistence:
         await self._events_only("model_failed", tuple(facts))
 
     async def agent_sufficiency_assessed(self, assessment: CapabilitySufficiencyAssessment) -> None:
-        metadata = SafeMetadata(
-            {
-                "strategy": assessment.selected.strategy.value,
-                "target": assessment.selected.target,
-                "sufficient": assessment.sufficient,
-                "candidate_count": len(assessment.candidates),
-                "confidence": assessment.confidence,
-                "should_acquire_skill": assessment.should_acquire_skill,
-                "requires_clarification": assessment.requires_clarification,
-                "must_fail": assessment.must_fail,
-            }
-        )
-        facts = [EventFact("agent.sufficiency_assessed", metadata, node_run_id=self.node.id)]
-        if assessment.should_acquire_skill:
-            acquisition = assessment.acquisition
-            facts.append(
-                EventFact(
-                    "agent.skill_acquisition_requested",
-                    SafeMetadata(
-                        {
-                            "substantial_temporary_code": acquisition.substantial_temporary_code,
-                            "complex_domain_workflow": acquisition.complex_domain_workflow,
-                            "high_improvisation_risk": acquisition.high_improvisation_risk,
-                            "low_implementation_confidence": (
-                                acquisition.low_implementation_confidence
-                            ),
-                            "repeated_reusable_need": acquisition.repeated_reusable_need,
-                            "existing_process_path_unreasonable": (
-                                acquisition.existing_process_path_unreasonable
-                            ),
-                        }
-                    ),
-                    node_run_id=self.node.id,
-                )
-            )
-        await self._events_only("agent_sufficiency_assessed", tuple(facts))
+        await self._agent_events("agent_sufficiency_assessed", sufficiency_event_facts(assessment))
 
     async def agent_observed(self, observation: AgentObservation) -> None:
-        metadata = SafeMetadata(
-            {
-                "observation_sequence": observation.sequence,
-                "strategy": observation.strategy.value,
-                "observation_status": observation.status.value,
-                "retry_safe": observation.retry_safe,
-                "side_effect_completed": observation.side_effect_completed,
-                "summary_hash": hashlib.sha256(observation.summary.encode()).hexdigest(),
-            }
-        )
+        await self._agent_events("agent_observed", observation_event_facts(observation))
+
+    async def agent_completion_assessed(self, assessment: CompletionAssessment) -> None:
+        await self._agent_events("agent_completion_assessed", completion_event_facts(assessment))
+
+    async def agent_replan_decided(self, decision: ReplanDecision) -> None:
+        await self._agent_events("agent_replan_decided", replan_event_facts(decision))
+
+    async def _agent_events(self, stage: str, facts: tuple[AgentEventFact, ...]) -> None:
         await self._events_only(
-            "agent_observed",
-            (EventFact("agent.observed", metadata, node_run_id=self.node.id),),
+            stage,
+            tuple(
+                EventFact(fact.event_type, fact.metadata, node_run_id=self.node.id)
+                for fact in facts
+            ),
         )
 
     async def begin_invocation(self, name: str, context: InvocationContext) -> None:

@@ -26,6 +26,7 @@ from anban.core.persistence import UnitOfWorkFactory
 from anban.model import ModelPort
 from anban.runtime.agent import FixedGeneralAgent
 from anban.runtime.capability_persistence import PersistedCapabilityPort
+from anban.runtime.completion import CompletionEvaluator
 from anban.runtime.contracts import (
     AgentInput,
     AgentLimits,
@@ -120,8 +121,11 @@ class PersistentRuntime:
                 artifact_cleanup=self._artifact_cleanup,
             ),
             sufficiency=self._sufficiency,
+            completion=(CompletionEvaluator() if self._sufficiency is not None else None),
             assessment_observer=persistence.agent_sufficiency_assessed,
             observation_observer=persistence.agent_observed,
+            completion_observer=persistence.agent_completion_assessed,
+            replan_observer=persistence.agent_replan_decided,
             limits=self._limits,
             response_repair_retries=self._response_repair_retries,
         )
@@ -310,8 +314,11 @@ class PersistentChatSession:
                 artifact_cleanup=self._artifact_cleanup,
             ),
             sufficiency=self._sufficiency,
+            completion=(CompletionEvaluator() if self._sufficiency is not None else None),
             assessment_observer=persistence.agent_sufficiency_assessed,
             observation_observer=persistence.agent_observed,
+            completion_observer=persistence.agent_completion_assessed,
+            replan_observer=persistence.agent_replan_decided,
             limits=self._limits,
             response_repair_retries=self._response_repair_retries,
         )

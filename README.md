@@ -6,6 +6,12 @@ real programs through `process.execute`, uses bounded Task/Session context throu
 `memory.context`, and persists Invocation, Artifact, Context, Event, Audit, and Trace facts in
 PostgreSQL.
 
+In the v0.5 Main Agent path, non-empty assistant text is only a proposed final. A separate
+structured completion assessment checks the original goal against the real Tool Result transcript;
+it may accept the final, select one exact ready alternative, request clarification, or fail
+explicitly. Replanning is bounded independently from model turns, Capability calls, total time,
+and identical-call replay prevention.
+
 ```text
 User task -> FixedGeneralAgent -> skill.activate -> process.execute
                               -> memory.context

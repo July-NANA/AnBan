@@ -635,6 +635,8 @@ def test_limits_cannot_exceed_v01_bounds() -> None:
     with pytest.raises(ValueError):
         AgentLimits(max_capability_calls=33)
     with pytest.raises(ValueError):
+        AgentLimits(max_replans=9)
+    with pytest.raises(ValueError):
         AgentLimits(total_timeout_seconds=1801)
     with pytest.raises(ValueError):
         AgentLimits(repeated_call_limit=1)

@@ -48,12 +48,20 @@ def matches_initial_decision(
     """Confirm that the first real action follows a sufficient selected path."""
 
     selected = assessment.selected
-    if selected.strategy is ExecutionStrategy.DIRECT_ANSWER:
+    return matches_strategy_target(call, selected.strategy, selected.target, describe)
+
+
+def matches_strategy_target(
+    call: ToolCall,
+    strategy: ExecutionStrategy,
+    target: str | None,
+    describe: Callable[[str], CapabilityDescriptor],
+) -> bool:
+    """Confirm one native Tool Call matches a bounded strategy/target pair."""
+
+    if strategy is ExecutionStrategy.DIRECT_ANSWER:
         return False
-    if selected.strategy is ExecutionStrategy.ACTIVATE_SKILL:
+    if strategy is ExecutionStrategy.ACTIVATE_SKILL:
         descriptor = describe(call.name)
-        return (
-            descriptor.kind is CapabilityKind.SKILL
-            and call.arguments.get("name") == selected.target
-        )
-    return call.name == selected.target
+        return descriptor.kind is CapabilityKind.SKILL and call.arguments.get("name") == target
+    return call.name == target

@@ -321,7 +321,8 @@ def check_configuration(configuration: AnbanConfiguration) -> list[CheckResult]:
             f"{model.request_timeout_seconds}s, transport retries={model.transport_retries}, "
             f"response repairs={model.response_repair_retries}, model turns="
             f"{configuration.agent.max_model_turns}, capability calls="
-            f"{configuration.agent.max_capability_calls}, total timeout="
+            f"{configuration.agent.max_capability_calls}, replans="
+            f"{configuration.agent.max_replans}, total timeout="
             f"{configuration.agent.total_timeout_seconds}s, process timeout="
             f"{configuration.process.default_timeout_seconds}s",
         )

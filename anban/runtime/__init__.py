@@ -1,6 +1,7 @@
 """Execution discipline, state transitions, waiting, recovery, and scheduling."""
 
 from anban.runtime.agent import FixedGeneralAgent
+from anban.runtime.completion import CompletionEvaluator
 from anban.runtime.contracts import (
     AgentDecision,
     AgentInput,
@@ -51,6 +52,7 @@ __all__ = [
     "CapabilitySufficiencyAssessment",
     "CapabilitySufficiencyEvaluator",
     "CompletionAssessment",
+    "CompletionEvaluator",
     "ContextDetail",
     "ContextEntryDetail",
     "ContextSummaryDetail",

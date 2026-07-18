@@ -40,7 +40,11 @@ from anban.runtime import (
     PersistentRuntime,
 )
 from tests.runtime.memory_uow import MemoryUnitOfWorkFactory
-from tests.runtime.test_persistent_runtime import TransactionCheckingModel, final_turn
+from tests.runtime.test_persistent_runtime import (
+    TransactionCheckingModel,
+    completion_turn,
+    final_turn,
+)
 
 
 async def persisted_context(
@@ -302,6 +306,7 @@ async def test_ordinary_runtime_invocation_persists_memory_audit_without_raw_con
                 finish_reason="tool_calls",
             ),
             final_turn("The durable fact was retained and recalled."),
+            completion_turn(final_text="The durable fact was retained and recalled."),
         ],
     )
     result = await PersistentRuntime(
@@ -341,7 +346,13 @@ async def test_failed_memory_operation_is_audited_and_can_replan_without_success
                 ),
                 finish_reason="tool_calls",
             ),
+            completion_turn(
+                resolution="replan",
+                unmet_condition="The invalid write must be reported without claiming storage.",
+                next_strategy=ExecutionStrategy.DIRECT_ANSWER.value,
+            ),
             final_turn("The invalid request was not stored."),
+            completion_turn(final_text="The invalid request was not stored."),
         ],
     )
     result = await PersistentRuntime(
@@ -356,7 +367,10 @@ async def test_failed_memory_operation_is_audited_and_can_replan_without_success
     aggregate = await ExecutionQueryService(factory).show(result.run_id)
     assert aggregate.invocations[0].status.value == "failed"
     trace = await ExecutionQueryService(factory).trace(result.run_id)
-    assert [event.event_type for event in trace.audit].count("context.operation_failed") == 1
+    event_types = [event.event_type for event in trace.audit]
+    assert event_types.count("context.operation_failed") == 1
+    assert event_types.count("agent.completion_assessed") == 2
+    assert event_types.count("agent.replan_decided") == 1
     async with factory() as unit:
         assert (
             await unit.executions.list_context_entries(ContextScope.TASK, aggregate.task.id) == ()

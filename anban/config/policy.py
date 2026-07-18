@@ -49,6 +49,13 @@ AGENT_REPEATED_CALL_LIMIT_MIN = 0
 # 连续相同调用阈值的安全硬上限；防止重复副作用。
 AGENT_REPEATED_CALL_LIMIT_MAX = 8
 
+# 单个 Agent Node 的默认重规划决策次数；只在完成评估证明当前路径不足时消耗。
+AGENT_MAX_REPLANS_DEFAULT = 3
+# 零允许明确禁用替代路径，但完成评估仍会给出澄清或失败。
+AGENT_MAX_REPLANS_MIN = 0
+# 重规划的安全硬上限；与模型轮次和 Capability 调用预算共同防止无界循环。
+AGENT_MAX_REPLANS_MAX = 8
+
 # 同一 Agent Node 通过原生 Tool Result 组合的 Skill 指令字符总量硬上限。
 AGENT_SKILL_CONTEXT_MAX_CHARS = 65_536
 

@@ -216,6 +216,12 @@ class AgentObservation(RuntimeValue):
 
     sequence: int = Field(ge=1)
     strategy: ExecutionStrategy
+    target: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z@][a-z0-9_.@:/-]*$",
+    )
     status: ObservationStatus
     summary: str = Field(min_length=1, max_length=4096)
     retry_safe: bool
@@ -278,6 +284,12 @@ class ReplanDecision(RuntimeValue):
     should_replan: bool
     rationale: str = Field(min_length=1, max_length=2048)
     next_strategy: ExecutionStrategy | None = None
+    next_target: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z@][a-z0-9_.@:/-]*$",
+    )
     remaining_attempts: int = Field(ge=0, le=32)
     requires_clarification: bool = False
     must_fail: bool = False
@@ -295,13 +307,21 @@ class ReplanDecision(RuntimeValue):
         if self.should_replan:
             if (
                 self.next_strategy is None
-                or self.next_strategy in {ExecutionStrategy.CLARIFY, ExecutionStrategy.FAIL}
+                or self.next_strategy
+                in {
+                    ExecutionStrategy.ACQUIRE_SKILL,
+                    ExecutionStrategy.CLARIFY,
+                    ExecutionStrategy.FAIL,
+                }
                 or terminal_choices
                 or self.remaining_attempts == 0
             ):
                 raise ValueError("bounded replan requires a next strategy and remaining budget")
-        elif self.next_strategy is not None:
-            raise ValueError("non-replan decision cannot select a next strategy")
+            target_required = self.next_strategy is not ExecutionStrategy.DIRECT_ANSWER
+            if target_required != (self.next_target is not None):
+                raise ValueError("replan strategy and target disagree")
+        elif self.next_strategy is not None or self.next_target is not None:
+            raise ValueError("non-replan decision cannot select a next path")
         return self
 
 
@@ -368,6 +388,11 @@ class AgentLimits(RuntimeValue):
         default=policy.AGENT_REPEATED_CALL_LIMIT_DEFAULT,
         ge=policy.AGENT_REPEATED_CALL_LIMIT_MIN,
         le=policy.AGENT_REPEATED_CALL_LIMIT_MAX,
+    )
+    max_replans: int = Field(
+        default=policy.AGENT_MAX_REPLANS_DEFAULT,
+        ge=policy.AGENT_MAX_REPLANS_MIN,
+        le=policy.AGENT_MAX_REPLANS_MAX,
     )
 
     @field_validator("repeated_call_limit")

@@ -8,6 +8,12 @@ from pydantic import ValidationError
 from anban.core import (
     Artifact,
     CapabilityInvocation,
+    ContextEntry,
+    ContextEntryKind,
+    ContextScope,
+    ContextSource,
+    ContextSourceKind,
+    ContextSummary,
     Event,
     ExecutionRun,
     NodeRun,
@@ -15,6 +21,8 @@ from anban.core import (
     Task,
     new_artifact_id,
     new_capability_invocation_id,
+    new_context_entry_id,
+    new_context_summary_id,
     new_event_id,
     new_execution_run_id,
     new_node_run_id,
@@ -23,6 +31,11 @@ from anban.core import (
 from anban.persistence.mappers import (
     artifact_domain,
     artifact_record,
+    context_coverage_records,
+    context_entry_domain,
+    context_entry_record,
+    context_summary_domain,
+    context_summary_record,
     event_domain,
     event_record,
     invocation_domain,
@@ -87,6 +100,40 @@ def test_every_domain_record_round_trips_through_storage_model() -> None:
     assert invocation_domain(invocation_record(invocation)) == invocation
     assert artifact_domain(artifact_record(artifact)) == artifact
     assert event_domain(event_record(event)) == event
+
+
+def test_context_records_round_trip_with_ordered_summary_coverage() -> None:
+    task_id = new_task_id()
+    entries = tuple(
+        ContextEntry(
+            id=new_context_entry_id(),
+            scope=ContextScope.TASK,
+            task_id=task_id,
+            kind=ContextEntryKind.USER_FACT,
+            content=content,
+            source=ContextSource(
+                kind=ContextSourceKind.INTERACTION,
+                reference=f"interaction:{index}",
+            ),
+        )
+        for index, content in enumerate(("First durable fact.", "Second durable fact."), start=1)
+    )
+    summary = ContextSummary(
+        id=new_context_summary_id(),
+        scope=ContextScope.TASK,
+        task_id=task_id,
+        covered_entry_ids=tuple(entry.id for entry in entries),
+        content="Both durable facts remain covered in source order.",
+    )
+
+    assert tuple(context_entry_domain(context_entry_record(entry)) for entry in entries) == entries
+    coverage = context_coverage_records(summary)
+    assert tuple(item.ordinal for item in coverage) == (1, 2)
+    assert tuple(item.entry_id for item in coverage) == summary.covered_entry_ids
+    assert (
+        context_summary_domain(context_summary_record(summary), summary.covered_entry_ids)
+        == summary
+    )
 
 
 def test_unsafe_persisted_metadata_fails_closed() -> None:

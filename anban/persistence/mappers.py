@@ -2,14 +2,27 @@
 
 from __future__ import annotations
 
+from anban.core.context import (
+    ContextConflictState,
+    ContextEntry,
+    ContextEntryKind,
+    ContextScope,
+    ContextSensitivity,
+    ContextSource,
+    ContextSourceKind,
+    ContextSummary,
+)
 from anban.core.errors import ErrorCode
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    ContextEntryId,
+    ContextSummaryId,
     EventId,
     ExecutionRunId,
     GraphRevisionId,
     NodeRunId,
+    SessionId,
     TaskId,
 )
 from anban.core.metadata import SafeMetadata
@@ -28,11 +41,98 @@ from anban.core.models import (
 from anban.persistence.models import (
     ArtifactRecord,
     CapabilityInvocationRecord,
+    ContextEntryRecord,
+    ContextSummaryCoverageRecord,
+    ContextSummaryRecord,
     EventRecord,
     ExecutionRunRecord,
     NodeRunRecord,
     TaskRecord,
 )
+
+
+def context_entry_record(entry: ContextEntry) -> ContextEntryRecord:
+    return ContextEntryRecord(
+        id=entry.id,
+        scope=entry.scope.value,
+        task_id=entry.task_id,
+        session_id=entry.session_id,
+        kind=entry.kind.value,
+        content=entry.content,
+        source_kind=entry.source.kind.value,
+        source_reference=entry.source.reference,
+        source_observed_at=entry.source.observed_at,
+        sensitivity=entry.sensitivity.value,
+        state=entry.state.value,
+        artifact_id=entry.artifact_id,
+        supersedes=entry.supersedes,
+        conflicts_with=entry.conflicts_with,
+        created_at=entry.created_at,
+        expires_at=entry.expires_at,
+        safe_metadata=dict(entry.metadata.root),
+    )
+
+
+def context_entry_domain(record: ContextEntryRecord) -> ContextEntry:
+    return ContextEntry(
+        id=ContextEntryId(record.id),
+        scope=ContextScope(record.scope),
+        task_id=None if record.task_id is None else TaskId(record.task_id),
+        session_id=None if record.session_id is None else SessionId(record.session_id),
+        kind=ContextEntryKind(record.kind),
+        content=record.content,
+        source=ContextSource(
+            kind=ContextSourceKind(record.source_kind),
+            reference=record.source_reference,
+            observed_at=record.source_observed_at,
+        ),
+        sensitivity=ContextSensitivity(record.sensitivity),
+        state=ContextConflictState(record.state),
+        artifact_id=None if record.artifact_id is None else ArtifactId(record.artifact_id),
+        supersedes=(None if record.supersedes is None else ContextEntryId(record.supersedes)),
+        conflicts_with=(
+            None if record.conflicts_with is None else ContextEntryId(record.conflicts_with)
+        ),
+        created_at=record.created_at,
+        expires_at=record.expires_at,
+        metadata=metadata(record.safe_metadata),
+    )
+
+
+def context_summary_record(summary: ContextSummary) -> ContextSummaryRecord:
+    return ContextSummaryRecord(
+        id=summary.id,
+        scope=summary.scope.value,
+        task_id=summary.task_id,
+        session_id=summary.session_id,
+        content=summary.content,
+        created_at=summary.created_at,
+        safe_metadata=dict(summary.metadata.root),
+    )
+
+
+def context_coverage_records(
+    summary: ContextSummary,
+) -> tuple[ContextSummaryCoverageRecord, ...]:
+    return tuple(
+        ContextSummaryCoverageRecord(summary_id=summary.id, ordinal=index, entry_id=entry_id)
+        for index, entry_id in enumerate(summary.covered_entry_ids, start=1)
+    )
+
+
+def context_summary_domain(
+    record: ContextSummaryRecord, covered_entry_ids: tuple[ContextEntryId, ...]
+) -> ContextSummary:
+    return ContextSummary(
+        id=ContextSummaryId(record.id),
+        scope=ContextScope(record.scope),
+        task_id=None if record.task_id is None else TaskId(record.task_id),
+        session_id=None if record.session_id is None else SessionId(record.session_id),
+        covered_entry_ids=covered_entry_ids,
+        content=record.content,
+        created_at=record.created_at,
+        metadata=metadata(record.safe_metadata),
+    )
 
 
 def error_code(value: str | None) -> ErrorCode | None:

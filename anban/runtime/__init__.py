@@ -21,6 +21,9 @@ from anban.runtime.contracts import (
 )
 from anban.runtime.inspection import (
     ArtifactDetail,
+    ContextDetail,
+    ContextEntryDetail,
+    ContextSummaryDetail,
     ExecutionQueryService,
     InvocationDetail,
     NodeDetail,
@@ -48,6 +51,9 @@ __all__ = [
     "CapabilitySufficiencyAssessment",
     "CapabilitySufficiencyEvaluator",
     "CompletionAssessment",
+    "ContextDetail",
+    "ContextEntryDetail",
+    "ContextSummaryDetail",
     "ExecutionQueryService",
     "ExecutionResult",
     "ExecutionStrategy",

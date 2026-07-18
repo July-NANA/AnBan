@@ -17,17 +17,20 @@ EXPECTED_TABLES = {
     "capability_invocations",
     "artifacts",
     "events",
+    "context_entries",
+    "context_summaries",
+    "context_summary_entries",
 }
 
 
-def test_schema_has_only_the_v01_authoritative_tables() -> None:
+def test_schema_has_only_the_authorized_authoritative_tables() -> None:
     assert set(Base.metadata.tables) == EXPECTED_TABLES
     assert "graph_revision_id" in Base.metadata.tables["execution_runs"].c
     assert "metadata" in Base.metadata.tables["events"].c
 
 
 def test_run_relationships_use_foreign_keys() -> None:
-    for table_name in EXPECTED_TABLES - {"tasks"}:
+    for table_name in EXPECTED_TABLES - {"tasks", "context_summary_entries"}:
         table = Base.metadata.tables[table_name]
         assert any(isinstance(item, ForeignKeyConstraint) for item in table.constraints)
 
@@ -54,8 +57,8 @@ def test_alembic_has_one_reversible_head_revision() -> None:
     configuration = Config(repository / "alembic.ini")
     scripts = ScriptDirectory.from_config(configuration)
     head = scripts.get_current_head()
-    assert head == "0003_capability_error"
+    assert head == "0004_context_memory"
     revision = scripts.get_revision(head)
     assert revision is not None
-    assert revision.down_revision == "0002_model_errors"
+    assert revision.down_revision == "0003_capability_error"
     assert callable(revision.module.downgrade)

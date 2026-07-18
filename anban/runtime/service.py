@@ -13,7 +13,13 @@ from anban.capability import (
 )
 from anban.config import policy
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
-from anban.core.ids import new_execution_run_id, new_node_run_id, new_task_id
+from anban.core.ids import (
+    SessionId,
+    new_execution_run_id,
+    new_node_run_id,
+    new_session_id,
+    new_task_id,
+)
 from anban.core.metadata import SafeMetadata
 from anban.core.models import ExecutionRun, NodeRun, Task, now_utc
 from anban.core.persistence import UnitOfWorkFactory
@@ -208,6 +214,7 @@ class PersistentChatSession:
         self._response_repair_retries = response_repair_retries
         self._artifact_cleanup = artifact_cleanup
         self._started_at = now_utc()
+        self._session_id = new_session_id()
         self._persistence: RunPersistence | None = None
         self._history: list[tuple[str, str]] = []
         self._last_outcome: AgentOutcome | None = None
@@ -220,6 +227,10 @@ class PersistentChatSession:
     @property
     def user_input_count(self) -> int:
         return len(self._history)
+
+    @property
+    def session_id(self) -> SessionId:
+        return self._session_id
 
     @property
     def remaining_seconds(self) -> float:
@@ -245,7 +256,10 @@ class PersistentChatSession:
                 )
             )
         agent_request = self._conversation_request(request)
-        safe_metadata = metadata or SafeMetadata()
+        supplied_metadata = metadata or SafeMetadata()
+        safe_metadata = SafeMetadata(
+            {**supplied_metadata.root, "session_id": str(self._session_id)}
+        )
         persistence = self._persistence
         if persistence is None:
             task = Task(id=new_task_id(), request=request, metadata=safe_metadata)
@@ -306,6 +320,7 @@ class PersistentChatSession:
                 request=agent_request,
                 run_id=persistence.run.id,
                 node_run_id=persistence.node.id,
+                session_id=self._session_id,
             )
         )
         self._model_turn_count += outcome.model_turn_count

@@ -8,9 +8,11 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from anban.capability import (
+    CapabilityDescriptor,
     CapabilityKind,
     CapabilityResult,
     CapabilityResultStatus,
+    InventoryKind,
     InvocationContext,
 )
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
@@ -42,8 +44,11 @@ from anban.runtime.contracts import (
     CapabilitySufficiencyAssessment,
 )
 from anban.runtime.persistence_metadata import (
+    CAPABILITY_EVENT_METADATA,
     PERSISTENCE_DIAGNOSTIC_METADATA,
+    SKILL_CATALOG_EVENT_METADATA,
     error_metadata,
+    is_sha256,
     metadata_projection,
     outcome_metadata,
     terminal_statuses,
@@ -83,43 +88,7 @@ _MODEL_DIAGNOSTIC_METADATA = frozenset(
         "transport_retry_limit",
     }
 )
-_CAPABILITY_EVENT_METADATA = frozenset(
-    {
-        "argument_count",
-        "arguments_hash",
-        "artifact_count",
-        "cancelled",
-        "catalog_diagnostic_count",
-        "catalog_digest",
-        "catalog_skill_count",
-        "command",
-        "content_hash",
-        "cwd_scope",
-        "duration_ms",
-        "entry_count",
-        "exit_code",
-        "method",
-        "omitted_line_count",
-        "size_bytes",
-        "status_code",
-        "stderr_hash",
-        "stderr_size",
-        "skill_slug",
-        "skill_root",
-        "stdout_hash",
-        "stdout_size",
-        "timed_out",
-    }
-)
-_SKILL_CATALOG_EVENT_METADATA = frozenset(
-    {"catalog_diagnostic_count", "catalog_digest", "catalog_skill_count"}
-)
 InvocationPersistenceState = Literal["committed", "uncommitted", "unconfirmed"]
-_HEX_DIGITS = frozenset("0123456789abcdef")
-
-
-def _is_sha256(value: object) -> bool:
-    return isinstance(value, str) and len(value) == 64 and set(value) <= _HEX_DIGITS
 
 
 @dataclass(frozen=True)
@@ -385,7 +354,7 @@ class RunPersistence:
     async def finish_invocation(
         self,
         name: str,
-        kind: CapabilityKind | None,
+        descriptor: CapabilityDescriptor | None,
         context: InvocationContext,
         result: CapabilityResult,
     ) -> None:
@@ -401,7 +370,7 @@ class RunPersistence:
                 "status": status,
                 "finished_at": now_utc(),
                 "error_code": None if result.error is None else result.error.code,
-                "metadata": metadata_projection(result.metadata, _CAPABILITY_EVENT_METADATA),
+                "metadata": metadata_projection(result.metadata, CAPABILITY_EVENT_METADATA),
             }
         )
         artifacts = tuple(
@@ -423,7 +392,7 @@ class RunPersistence:
             for artifact in artifacts:
                 await repository.add_artifact(artifact)
 
-        projected = metadata_projection(result.metadata, _CAPABILITY_EVENT_METADATA)
+        projected = metadata_projection(result.metadata, CAPABILITY_EVENT_METADATA)
         metadata = SafeMetadata(
             {
                 **projected.root,
@@ -448,14 +417,15 @@ class RunPersistence:
         ]
         if (
             result.status is CapabilityResultStatus.COMPLETED
-            and kind is CapabilityKind.SKILL
+            and descriptor is not None
+            and descriptor.kind is CapabilityKind.SKILL
             and isinstance(projected.root.get("skill_slug"), str)
-            and _is_sha256(projected.root.get("content_hash"))
+            and is_sha256(projected.root.get("content_hash"))
         ):
             catalog_skill_count = projected.root.get("catalog_skill_count")
             catalog_diagnostic_count = projected.root.get("catalog_diagnostic_count")
             if (
-                _is_sha256(projected.root.get("catalog_digest"))
+                is_sha256(projected.root.get("catalog_digest"))
                 and type(catalog_skill_count) is int
                 and catalog_skill_count >= 1
                 and type(catalog_diagnostic_count) is int
@@ -464,7 +434,7 @@ class RunPersistence:
                 facts.append(
                     EventFact(
                         "skill.catalog_refreshed",
-                        metadata_projection(projected, _SKILL_CATALOG_EVENT_METADATA),
+                        metadata_projection(projected, SKILL_CATALOG_EVENT_METADATA),
                         node_run_id=context.node_run_id,
                         invocation_id=context.invocation_id,
                     )
@@ -477,6 +447,29 @@ class RunPersistence:
                     invocation_id=context.invocation_id,
                 )
             )
+        if descriptor is not None and descriptor.inventory_kind is InventoryKind.MEMORY:
+            memory_operation = projected.root.get("memory_operation")
+            event_type = (
+                {
+                    "read": "context.read",
+                    "remember": "context.recorded",
+                    "compress": "context.compressed",
+                    "expire": "context.expired",
+                }.get(memory_operation)
+                if isinstance(memory_operation, str)
+                else None
+            )
+            if result.status is not CapabilityResultStatus.COMPLETED:
+                event_type = "context.operation_failed"
+            if event_type is not None:
+                facts.append(
+                    EventFact(
+                        event_type,
+                        metadata,
+                        node_run_id=context.node_run_id,
+                        invocation_id=context.invocation_id,
+                    )
+                )
         facts.extend(
             EventFact(
                 "artifact.created",

@@ -9,8 +9,10 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import cast
 
-from anban.capability import local_capability_registry
+from anban.capability import MemoryContextCapability, local_capability_registry
+from anban.core.persistence import UnitOfWorkFactory
 
 REPOSITORY = Path(__file__).parents[2]
 ANBAN = REPOSITORY / "anban"
@@ -39,7 +41,11 @@ APPROVED_ADAPTER_TYPES = {
     "SQLAlchemyUnitOfWork",
     "SQLAlchemyUnitOfWorkFactory",
 }
-APPROVED_CAPABILITY_HANDLERS = {"ProcessCapability", "SkillActivationCapability"}
+APPROVED_CAPABILITY_HANDLERS = {
+    "MemoryContextCapability",
+    "ProcessCapability",
+    "SkillActivationCapability",
+}
 APPROVED_INTERACTION_TYPES = {"InteractionChatSession", "InteractionService"}
 FORBIDDEN_ACCEPTANCE_LITERALS = {
     "在 Workspace 的临时目录生成一份文本说明和一份 JSON 摘要",
@@ -105,8 +111,13 @@ def test_adapter_and_handler_types_are_fixed() -> None:
 
 def test_production_capability_names_are_fixed(tmp_path: Path) -> None:
     (tmp_path / "skills").mkdir()
-    registry = local_capability_registry(workspace_root=tmp_path)
+    memory = MemoryContextCapability(cast(UnitOfWorkFactory, object()))
+    registry = local_capability_registry(
+        workspace_root=tmp_path,
+        additional_handlers=(memory,),
+    )
     assert {descriptor.name for descriptor in registry.search()} == {
+        "memory.context",
         "process.execute",
         "skill.activate",
     }

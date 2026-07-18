@@ -22,6 +22,7 @@ from anban.capability.contracts import (
 )
 from anban.capability.inventory import UnifiedCapabilityInventory
 from anban.capability.local import local_capability_components, local_capability_registry
+from anban.capability.memory import MemoryContextCapability
 from anban.capability.registry import CapabilityRegistry
 from anban.capability.skill import (
     SkillActivationCapability,
@@ -48,6 +49,7 @@ __all__ = [
     "InventoryBoundary",
     "InventoryKind",
     "InvocationContext",
+    "MemoryContextCapability",
     "RiskLevel",
     "SideEffectLevel",
     "SkillActivationCapability",

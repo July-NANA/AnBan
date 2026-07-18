@@ -6,12 +6,15 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol, Self
 
+from anban.core.context import ContextEntry, ContextScope, ContextSummary
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    ContextEntryId,
     EventId,
     ExecutionRunId,
     NodeRunId,
+    SessionId,
     TaskId,
 )
 from anban.core.models import (
@@ -78,6 +81,22 @@ class ExecutionRepository(Protocol):
     async def list_runs(self, limit: int) -> tuple[ExecutionRun, ...]: ...
 
     async def list_events(self, run_id: ExecutionRunId) -> tuple[Event, ...]: ...
+
+    async def add_context_entry(self, entry: ContextEntry) -> None: ...
+
+    async def get_context_entry(self, entry_id: ContextEntryId) -> ContextEntry | None: ...
+
+    async def update_context_entry(self, entry: ContextEntry) -> None: ...
+
+    async def add_context_summary(self, summary: ContextSummary) -> None: ...
+
+    async def list_context_entries(
+        self, scope: ContextScope, identity: TaskId | SessionId
+    ) -> tuple[ContextEntry, ...]: ...
+
+    async def list_context_summaries(
+        self, scope: ContextScope, identity: TaskId | SessionId
+    ) -> tuple[ContextSummary, ...]: ...
 
 
 class UnitOfWork(Protocol):

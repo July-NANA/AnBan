@@ -485,6 +485,11 @@ class FixedGeneralAgent:
                     node_run_id=agent_input.node_run_id,
                     invocation_id=new_capability_invocation_id(),
                     deadline_at=deadline_at,
+                    metadata=SafeMetadata(
+                        {}
+                        if agent_input.session_id is None
+                        else {"session_id": str(agent_input.session_id)}
+                    ),
                 )
                 result = await self._invoke_capability(call, context, progress)
                 if isinstance(result, AgentOutcome):

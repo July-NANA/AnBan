@@ -13,7 +13,6 @@ from pydantic import JsonValue
 from anban.capability import (
     ArtifactReference,
     CapabilityDescriptor,
-    CapabilityKind,
     CapabilityPort,
     CapabilityResult,
     CapabilityResultStatus,
@@ -94,11 +93,11 @@ class PersistedCapabilityPort:
         context: InvocationContext,
         result: CapabilityResult,
     ) -> None:
-        capability_kind: CapabilityKind | None = None
+        descriptor: CapabilityDescriptor | None = None
         with suppress(AnbanError):
-            capability_kind = self._inner.describe(name).kind
+            descriptor = self._inner.describe(name)
         try:
-            await self._persistence.finish_invocation(name, capability_kind, context, result)
+            await self._persistence.finish_invocation(name, descriptor, context, result)
             return
         except AnbanError as exc:
             persistence_error = exc.info

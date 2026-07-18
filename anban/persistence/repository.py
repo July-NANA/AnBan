@@ -7,13 +7,16 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from anban.core.context import ContextEntry, ContextScope, ContextSummary
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    ContextEntryId,
     EventId,
     ExecutionRunId,
     NodeRunId,
+    SessionId,
     TaskId,
 )
 from anban.core.lifecycle import (
@@ -39,6 +42,11 @@ from anban.core.persistence import ExecutionRunAggregate
 from anban.persistence.mappers import (
     artifact_domain,
     artifact_record,
+    context_coverage_records,
+    context_entry_domain,
+    context_entry_record,
+    context_summary_domain,
+    context_summary_record,
     event_domain,
     event_record,
     invocation_domain,
@@ -53,6 +61,9 @@ from anban.persistence.mappers import (
 from anban.persistence.models import (
     ArtifactRecord,
     CapabilityInvocationRecord,
+    ContextEntryRecord,
+    ContextSummaryCoverageRecord,
+    ContextSummaryRecord,
     EventRecord,
     ExecutionRunRecord,
     NodeRunRecord,
@@ -186,6 +197,99 @@ class SQLAlchemyExecutionRepository:
     async def get_artifact(self, artifact_id: ArtifactId) -> Artifact | None:
         record = await self._session.get(ArtifactRecord, artifact_id)
         return None if record is None else artifact_domain(record)
+
+    async def add_context_entry(self, entry: ContextEntry) -> None:
+        self._session.add(context_entry_record(entry))
+        await self._session.flush()
+
+    async def get_context_entry(self, entry_id: ContextEntryId) -> ContextEntry | None:
+        record = await self._session.get(ContextEntryRecord, entry_id)
+        return None if record is None else context_entry_domain(record)
+
+    async def update_context_entry(self, entry: ContextEntry) -> None:
+        result = await self._session.execute(
+            select(ContextEntryRecord).where(ContextEntryRecord.id == entry.id).with_for_update()
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            raise missing_record("context_entry", entry.id)
+        replacement = context_entry_record(entry)
+        record.scope = replacement.scope
+        record.task_id = replacement.task_id
+        record.session_id = replacement.session_id
+        record.kind = replacement.kind
+        record.content = replacement.content
+        record.source_kind = replacement.source_kind
+        record.source_reference = replacement.source_reference
+        record.source_observed_at = replacement.source_observed_at
+        record.sensitivity = replacement.sensitivity
+        record.state = replacement.state
+        record.artifact_id = replacement.artifact_id
+        record.supersedes = replacement.supersedes
+        record.conflicts_with = replacement.conflicts_with
+        record.created_at = replacement.created_at
+        record.expires_at = replacement.expires_at
+        record.safe_metadata = replacement.safe_metadata
+
+    async def add_context_summary(self, summary: ContextSummary) -> None:
+        self._session.add(context_summary_record(summary))
+        await self._session.flush()
+        self._session.add_all(context_coverage_records(summary))
+        await self._session.flush()
+
+    async def list_context_entries(
+        self, scope: ContextScope, identity: TaskId | SessionId
+    ) -> tuple[ContextEntry, ...]:
+        identity_column = (
+            ContextEntryRecord.task_id
+            if scope is ContextScope.TASK
+            else ContextEntryRecord.session_id
+        )
+        records = await self._session.scalars(
+            select(ContextEntryRecord)
+            .where(ContextEntryRecord.scope == scope.value, identity_column == identity)
+            .order_by(ContextEntryRecord.created_at, ContextEntryRecord.id)
+        )
+        return tuple(context_entry_domain(record) for record in records.all())
+
+    async def list_context_summaries(
+        self, scope: ContextScope, identity: TaskId | SessionId
+    ) -> tuple[ContextSummary, ...]:
+        identity_column = (
+            ContextSummaryRecord.task_id
+            if scope is ContextScope.TASK
+            else ContextSummaryRecord.session_id
+        )
+        records = tuple(
+            (
+                await self._session.scalars(
+                    select(ContextSummaryRecord)
+                    .where(ContextSummaryRecord.scope == scope.value, identity_column == identity)
+                    .order_by(ContextSummaryRecord.created_at, ContextSummaryRecord.id)
+                )
+            ).all()
+        )
+        if not records:
+            return ()
+        coverage = await self._session.execute(
+            select(
+                ContextSummaryCoverageRecord.summary_id,
+                ContextSummaryCoverageRecord.entry_id,
+            )
+            .where(
+                ContextSummaryCoverageRecord.summary_id.in_(tuple(record.id for record in records))
+            )
+            .order_by(
+                ContextSummaryCoverageRecord.summary_id,
+                ContextSummaryCoverageRecord.ordinal,
+            )
+        )
+        grouped: dict[UUID, list[ContextEntryId]] = {}
+        for summary_id, entry_id in coverage.all():
+            grouped.setdefault(summary_id, []).append(ContextEntryId(entry_id))
+        return tuple(
+            context_summary_domain(record, tuple(grouped.get(record.id, ()))) for record in records
+        )
 
     async def add_event(self, event: Event) -> None:
         self._session.add(event_record(event))

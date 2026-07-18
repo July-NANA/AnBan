@@ -1,17 +1,26 @@
 # CLI Reference
 
 The production CLI commands include `workspace init`, `run`, `chat`, `runs`, `trace`, `artifacts`,
-and the v0.5 `capabilities` inspection group. Every command supports `--json`. Run failures use
-stable error codes; Trace and Artifact queries work from a new database-only Application.
+`context task`, `context session`, and the v0.5 `capabilities` inspection group. Every command
+supports `--json`. Run failures use stable error codes; Trace, Artifact, and Context queries work
+from a new database-only Application.
 
 `capabilities list` returns a point-in-time snapshot. `capabilities search [TEXT]` accepts repeated
 `--kind`, `--available-only`, and a bounded `--limit`. `capabilities describe KEY` requires an
 exact inventory key and fails explicitly for unknown keys. These commands compose the current
-Workspace Registry, Skill catalog, and model configuration without executing a Capability or
-opening model/database clients. MCP, Memory, and sub-agent paths remain visible as unavailable
-until their owning v0.5 deliveries implement them.
+Workspace Registry, Skill catalog, model configuration, and registered Memory Handler without
+executing a Capability or opening a model client. Memory is ready; MCP and sub-agent paths remain
+visible as unavailable until their owning v0.5 deliveries implement them.
 
-The Agent sees only `skill.activate` and `process.execute`. The Process input accepts `command`,
+The Agent sees `memory.context`, `skill.activate`, and `process.execute`. Memory accepts `read`,
+`remember`, `compress`, and `expire` operations over Runtime-owned Task or Session identity.
+`remember` can record superseding or conflicting relationships; `compress` requires explicit
+ordered Entry coverage and retains every raw row. `anban context task <task-id>` and
+`anban context session <session-id>` return only bounded safe metadata: identities,
+classifications, state, counts, timestamps, relationships, and SHA-256 hashes. Raw Context content
+and source references are not emitted.
+
+The Process input accepts `command`,
 string `args`, optional `cwd`, `env` name/value entries, text `stdin`, `timeout`, and declared
 `artifacts` with path and optional media type. Ordinary names resolve through inherited `PATH`;
 absolute executable paths must be executable regular files; relative executable paths are rejected.

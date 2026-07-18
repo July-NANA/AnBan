@@ -15,6 +15,13 @@ from anban.core import (
     Artifact,
     CapabilityInvocation,
     CapabilityInvocationStatus,
+    ContextConflictState,
+    ContextEntry,
+    ContextEntryKind,
+    ContextScope,
+    ContextSource,
+    ContextSourceKind,
+    ContextSummary,
     ErrorCode,
     Event,
     ExecutionRun,
@@ -30,13 +37,16 @@ from anban.core import (
     ensure_task_transition,
     new_artifact_id,
     new_capability_invocation_id,
+    new_context_entry_id,
+    new_context_summary_id,
     new_event_id,
     new_execution_run_id,
     new_node_run_id,
+    new_session_id,
     new_task_id,
 )
 from anban.persistence import SQLAlchemyUnitOfWorkFactory, create_database_engine
-from anban.persistence.models import TaskRecord
+from anban.persistence.models import ContextEntryRecord, ContextSummaryRecord, TaskRecord
 
 
 class RepositoryAcceptanceError(RuntimeError):
@@ -122,6 +132,37 @@ async def accept_repositories() -> None:
     engine = create_database_engine(load_configuration().database.require("test"))
     factory = SQLAlchemyUnitOfWorkFactory(engine)
     task, run, node, invocation, artifacts, events = records()
+    session_id = new_session_id()
+    task_entry = ContextEntry(
+        id=new_context_entry_id(),
+        scope=ContextScope.TASK,
+        task_id=task.id,
+        kind=ContextEntryKind.USER_FACT,
+        content="authoritative repository context",
+        source=ContextSource(
+            kind=ContextSourceKind.INTERACTION,
+            reference="interaction:repository-acceptance",
+        ),
+    )
+    session_entry = ContextEntry(
+        id=new_context_entry_id(),
+        scope=ContextScope.SESSION,
+        session_id=session_id,
+        kind=ContextEntryKind.SUPPLEMENT,
+        content="durable session context",
+        source=ContextSource(
+            kind=ContextSourceKind.RUNTIME,
+            reference="runtime:repository-acceptance",
+        ),
+    )
+    summary = ContextSummary(
+        id=new_context_summary_id(),
+        scope=ContextScope.TASK,
+        task_id=task.id,
+        covered_entry_ids=(task_entry.id,),
+        content="A bounded summary retaining the original entry identity.",
+    )
+    superseded_task_entry = task_entry.model_copy(update={"state": ContextConflictState.SUPERSEDED})
     failed_task = Task(id=new_task_id(), request="must roll back")
     failed_run = ExecutionRun(id=new_execution_run_id(), task_id=failed_task.id)
     cleanup_ids = (task.id, failed_task.id)
@@ -143,6 +184,10 @@ async def accept_repositories() -> None:
                 await unit.executions.add_artifact(artifact)
             for event in reversed(events):
                 await unit.executions.add_event(event)
+            await unit.executions.add_context_entry(task_entry)
+            await unit.executions.add_context_entry(session_entry)
+            await unit.executions.add_context_summary(summary)
+            await unit.executions.update_context_entry(superseded_task_entry)
             await unit.commit()
 
         async with factory() as unit:
@@ -158,6 +203,18 @@ async def accept_repositories() -> None:
                 raise RepositoryAcceptanceError("Artifact or Event reconstruction mismatch")
             if ordered != events:
                 raise RepositoryAcceptanceError("Event order is not deterministic")
+            if await unit.executions.list_context_entries(ContextScope.TASK, task.id) != (
+                superseded_task_entry,
+            ):
+                raise RepositoryAcceptanceError("Task Context reconstruction mismatch")
+            if await unit.executions.list_context_entries(ContextScope.SESSION, session_id) != (
+                session_entry,
+            ):
+                raise RepositoryAcceptanceError("Session Context reconstruction mismatch")
+            if await unit.executions.list_context_summaries(ContextScope.TASK, task.id) != (
+                summary,
+            ):
+                raise RepositoryAcceptanceError("Context summary reconstruction mismatch")
 
         ensure_task_transition(task.status, TaskStatus.RUNNING)
         ensure_execution_run_transition(run.status, ExecutionRunStatus.RUNNING)
@@ -192,6 +249,8 @@ async def accept_repositories() -> None:
                     raise RepositoryAcceptanceError("Artifact read mismatch")
             if await unit.executions.get_event(events[0].id) != events[0]:
                 raise RepositoryAcceptanceError("Event read mismatch")
+            if await unit.executions.get_context_entry(task_entry.id) != superseded_task_entry:
+                raise RepositoryAcceptanceError("Context entry read mismatch")
 
         try:
             async with factory() as unit:
@@ -222,6 +281,22 @@ async def accept_repositories() -> None:
         else:
             raise RepositoryAcceptanceError("invalid transaction unexpectedly committed")
 
+        invalid_summary = summary.model_copy(
+            update={
+                "id": new_context_summary_id(),
+                "covered_entry_ids": (new_context_entry_id(),),
+            }
+        )
+        try:
+            async with factory() as unit:
+                await unit.executions.add_context_summary(invalid_summary)
+                await unit.commit()
+        except AnbanError as exc:
+            if exc.info.code is not ErrorCode.PERSISTENCE_WRITE_FAILED:
+                raise RepositoryAcceptanceError("Context rollback error mismatch") from exc
+        else:
+            raise RepositoryAcceptanceError("invalid Context summary unexpectedly committed")
+
         async with factory() as unit:
             if await unit.executions.get_task(failed_task.id) is not None:
                 raise RepositoryAcceptanceError("failed transaction left partial Task state")
@@ -230,6 +305,14 @@ async def accept_repositories() -> None:
     finally:
         try:
             async with engine.begin() as connection:
+                await connection.execute(
+                    delete(ContextSummaryRecord).where(
+                        ContextSummaryRecord.session_id == session_id
+                    )
+                )
+                await connection.execute(
+                    delete(ContextEntryRecord).where(ContextEntryRecord.session_id == session_id)
+                )
                 await connection.execute(delete(TaskRecord).where(TaskRecord.id.in_(cleanup_ids)))
             async with engine.connect() as connection:
                 remaining = (
@@ -251,7 +334,10 @@ def main() -> int:
     except Exception as exc:
         print(f"repository acceptance: FAIL ({type(exc).__name__})", file=sys.stderr)
         return 1
-    print("repository acceptance: PASS - create, read, locked update, aggregate, order, rollback")
+    print(
+        "repository acceptance: PASS - create, read, locked update, aggregate, order, "
+        "Task/Session Context restart, summary coverage, rollback"
+    )
     return 0
 
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 from anban.capability import ArtifactReference
 from anban.config import policy
 from anban.core.errors import ErrorInfo
-from anban.core.ids import ExecutionRunId, NodeRunId, TaskId
+from anban.core.ids import ExecutionRunId, NodeRunId, SessionId, TaskId
 from anban.core.metadata import SafeMetadata, validate_safe_text
 from anban.core.models import UtcDateTime, now_utc
 
@@ -382,6 +382,7 @@ class AgentInput(RuntimeValue):
     request: str = Field(min_length=1, max_length=32_768)
     run_id: ExecutionRunId
     node_run_id: NodeRunId
+    session_id: SessionId | None = None
 
 
 class AgentOutcome(RuntimeValue):

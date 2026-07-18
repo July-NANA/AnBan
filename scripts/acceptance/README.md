@@ -5,11 +5,12 @@ These commands fail closed and emit only bounded evidence:
 - `python -m scripts.acceptance.check_migration_schema`: current migration head and schema
   constraints against the configured test database.
 - `pnpm run acceptance:persistence`: real PostgreSQL repository, transaction, aggregate, Artifact,
-  and Event-order checks.
+  Event-order, Task/Session Context restart, summary coverage, and rollback checks.
 - `pnpm run acceptance:model`: real ModelPort content, native Tool Call/Result, final response, and
   structured output.
 - `pnpm run acceptance:capability`: the production Registry surface plus real Process stdin, env,
-  multi-Artifact, nonzero exit, and partial Artifact failure behavior.
+  multi-Artifact, nonzero exit, partial Artifact failure behavior, and durable Memory
+  retention/recall through PostgreSQL.
 - `pnpm run acceptance:runtime`: Gate A in an isolated Workspace, then Gate B-D in a fresh isolated
   Workspace. It uses the normal production Application and natural-language prompts, performs real
   Process/file/HTTP/Artifact work, invokes the ordinary packaged ClawHub Skill, installs exactly one

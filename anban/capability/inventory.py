@@ -39,33 +39,13 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
 
     def snapshot(self) -> CapabilityInventorySnapshot:
         skills = () if self._skills is None else self._skills.refresh()
+        descriptors = self._capabilities.search()
+        implemented_kinds = {descriptor.inventory_kind for descriptor in descriptors}
         items = (
             self._model_item(),
-            *(self._capability_item(descriptor) for descriptor in self._capabilities.search()),
+            *(self._capability_item(descriptor) for descriptor in descriptors),
             *(self._skill_item(skill) for skill in skills),
-            self._unavailable_item(
-                key="mcp:runtime",
-                kind=InventoryKind.MCP,
-                name="MCP tools",
-                description="Discover and invoke structured tools through configured MCP servers.",
-                reason="MCP runtime is not implemented.",
-                side_effects=SideEffectLevel.EXTERNAL,
-            ),
-            self._unavailable_item(
-                key="memory:context",
-                kind=InventoryKind.MEMORY,
-                name="Durable context memory",
-                description="Read and retain bounded Task and Session context.",
-                reason="Durable context memory is not implemented.",
-            ),
-            self._unavailable_item(
-                key="sub_agent:runtime",
-                kind=InventoryKind.SUB_AGENT,
-                name="Sub-agent delegation",
-                description="Delegate bounded objectives to independently durable child Runs.",
-                reason="Sub-agent delegation is not implemented.",
-                side_effects=SideEffectLevel.EXTERNAL,
-            ),
+            *self._unavailable_paths(implemented_kinds),
         )
         return CapabilityInventorySnapshot(items=tuple(sorted(items, key=lambda item: item.key)))
 
@@ -130,6 +110,7 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
     @staticmethod
     def _capability_item(descriptor: CapabilityDescriptor) -> CapabilityInventoryItem:
         process = descriptor.inventory_kind is InventoryKind.PROCESS
+        memory = descriptor.inventory_kind is InventoryKind.MEMORY
         return CapabilityInventoryItem(
             key=descriptor.name,
             kind=descriptor.inventory_kind,
@@ -144,10 +125,18 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
             boundary=InventoryBoundary(
                 risk=RiskLevel.HIGH if process else RiskLevel.LOW,
                 cost=CostLevel.LOW,
-                side_effects=SideEffectLevel.EXTERNAL if process else SideEffectLevel.NONE,
+                side_effects=(
+                    SideEffectLevel.EXTERNAL
+                    if process
+                    else SideEffectLevel.REVERSIBLE
+                    if memory
+                    else SideEffectLevel.NONE
+                ),
                 summary=(
                     "General process execution may create external side effects within its bounds."
                     if process
+                    else "Durable Context writes are retained as reversible, inspectable facts."
+                    if memory
                     else "Structured invocation remains governed by the registered Capability."
                 ),
             ),
@@ -173,6 +162,49 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
                 summary="Activation supplies instructions; downstream effects remain governed.",
             ),
             version_digest=skill.content_hash,
+        )
+
+    @staticmethod
+    def _unavailable_paths(
+        implemented_kinds: set[InventoryKind],
+    ) -> tuple[CapabilityInventoryItem, ...]:
+        definitions = (
+            (
+                "mcp:runtime",
+                InventoryKind.MCP,
+                "MCP tools",
+                "Discover and invoke structured tools through configured MCP servers.",
+                "MCP runtime is not implemented.",
+                SideEffectLevel.EXTERNAL,
+            ),
+            (
+                "memory:context",
+                InventoryKind.MEMORY,
+                "Durable context memory",
+                "Read and retain bounded Task and Session context.",
+                "Durable context memory is not implemented.",
+                SideEffectLevel.NONE,
+            ),
+            (
+                "sub_agent:runtime",
+                InventoryKind.SUB_AGENT,
+                "Sub-agent delegation",
+                "Delegate bounded objectives to independently durable child Runs.",
+                "Sub-agent delegation is not implemented.",
+                SideEffectLevel.EXTERNAL,
+            ),
+        )
+        return tuple(
+            UnifiedCapabilityInventory._unavailable_item(
+                key=key,
+                kind=kind,
+                name=name,
+                description=description,
+                reason=reason,
+                side_effects=side_effects,
+            )
+            for key, kind, name, description, reason, side_effects in definitions
+            if kind not in implemented_kinds
         )
 
     @staticmethod

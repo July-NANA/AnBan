@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from anban.core.ids import ExecutionRunId
+from anban.core.ids import ExecutionRunId, SessionId, TaskId
 from anban.core.metadata import SafeMetadata
 from anban.interaction.contracts import InteractionEnvelope
 from anban.runtime import (
     ArtifactDetail,
+    ContextDetail,
     ExecutionQueryService,
     ExecutionResult,
     PersistentChatSession,
@@ -35,6 +36,10 @@ class InteractionChatSession:
     @property
     def can_continue(self) -> bool:
         return self._session.can_continue
+
+    @property
+    def session_id(self) -> SessionId:
+        return self._session.session_id
 
     @property
     def remaining_seconds(self) -> float:
@@ -87,6 +92,12 @@ class InteractionService:
 
     async def artifacts(self, run_id: ExecutionRunId) -> tuple[ArtifactDetail, ...]:
         return await self._query_service().artifacts(run_id)
+
+    async def task_context(self, task_id: TaskId) -> ContextDetail:
+        return await self._query_service().task_context(task_id)
+
+    async def session_context(self, session_id: SessionId) -> ContextDetail:
+        return await self._query_service().session_context(session_id)
 
     def _query_service(self) -> ExecutionQueryService:
         if self._queries is None:

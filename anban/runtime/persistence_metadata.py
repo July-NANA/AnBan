@@ -7,6 +7,46 @@ from anban.core.metadata import SafeMetadata, SafeScalar
 from anban.core.models import ExecutionRunStatus, NodeRunStatus, TaskStatus
 from anban.runtime.contracts import AgentOutcome, AgentOutcomeStatus
 
+CAPABILITY_EVENT_METADATA = frozenset(
+    {
+        "argument_count",
+        "arguments_hash",
+        "artifact_count",
+        "active_chars",
+        "cancelled",
+        "catalog_diagnostic_count",
+        "catalog_digest",
+        "catalog_skill_count",
+        "command",
+        "content_hash",
+        "context_entry_id",
+        "context_scope",
+        "context_summary_id",
+        "covered_entry_count",
+        "cwd_scope",
+        "duration_ms",
+        "entry_count",
+        "exit_code",
+        "method",
+        "memory_operation",
+        "omitted_line_count",
+        "observation_hash",
+        "original_entries_retained",
+        "size_bytes",
+        "status_code",
+        "summary_count",
+        "stderr_hash",
+        "stderr_size",
+        "skill_slug",
+        "skill_root",
+        "stdout_hash",
+        "stdout_size",
+        "timed_out",
+    }
+)
+SKILL_CATALOG_EVENT_METADATA = frozenset(
+    {"catalog_diagnostic_count", "catalog_digest", "catalog_skill_count"}
+)
 PERSISTENCE_DIAGNOSTIC_METADATA = frozenset(
     {
         "artifact_cleanup_attempted",
@@ -18,6 +58,11 @@ PERSISTENCE_DIAGNOSTIC_METADATA = frozenset(
         "reason",
     }
 )
+_HEX_DIGITS = frozenset("0123456789abcdef")
+
+
+def is_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and set(value) <= _HEX_DIGITS
 
 
 def error_metadata(

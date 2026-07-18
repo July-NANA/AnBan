@@ -87,6 +87,22 @@ def test_run_show_and_query_commands_dispatch_stable_ids(
     ]
 
 
+def test_context_commands_dispatch_stable_task_and_session_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = "00000000-0000-0000-0000-000000000456"
+    received: list[tuple[str, str, bool]] = []
+
+    async def show(scope: str, identifier: object, *, json_output: bool) -> int:
+        received.append((scope, str(identifier), json_output))
+        return cli.EXIT_SUCCESS
+
+    monkeypatch.setattr(cli, "show_context", show)
+    assert cli.main(["context", "task", identity, "--json"]) == cli.EXIT_SUCCESS
+    assert cli.main(["context", "session", identity]) == cli.EXIT_SUCCESS
+    assert received == [("task", identity, True), ("session", identity, False)]
+
+
 def test_raw_exception_text_is_never_emitted(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

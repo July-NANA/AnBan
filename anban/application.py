@@ -12,6 +12,7 @@ from anban.capability import (
     CapabilityInventoryQuery,
     CapabilityInventorySnapshot,
     InventoryKind,
+    MemoryContextCapability,
     local_capability_components,
 )
 from anban.capability.workspace import WorkspaceBoundary
@@ -58,6 +59,11 @@ class InventoryApplication:
     """Read-only composition for truthful inventory inspection without execution prerequisites."""
 
     inventory: CapabilityInventoryPort
+    _engine: AsyncEngine | None = None
+
+    async def close(self) -> None:
+        if self._engine is not None:
+            await self._engine.dispose()
 
     def snapshot(self) -> CapabilityInventorySnapshot:
         return self.inventory.snapshot()
@@ -93,6 +99,11 @@ async def build_application() -> Application:
     )
     engine = create_database_engine(configuration.database.require("development"))
     try:
+        unit_of_work = SQLAlchemyUnitOfWorkFactory(engine)
+        memory = MemoryContextCapability(
+            unit_of_work,
+            protected_values=configuration.protected_values(),
+        )
         capabilities, inventory = local_capability_components(
             workspace_root=configuration.workspace,
             process_default_timeout_seconds=configuration.process.default_timeout_seconds,
@@ -105,20 +116,21 @@ async def build_application() -> Application:
             artifact_max_bytes=configuration.process.artifact_max_bytes,
             protected_values=configuration.protected_values(),
             model_available=True,
+            additional_handlers=(memory,),
         )
         workspace_boundary = WorkspaceBoundary(configuration.workspace)
         sufficiency = CapabilitySufficiencyEvaluator(inventory)
         runtime = PersistentRuntime(
             model,
             capabilities,
-            SQLAlchemyUnitOfWorkFactory(engine),
+            unit_of_work,
             inventory=inventory,
             sufficiency=sufficiency,
             limits=AgentLimits(**configuration.agent.model_dump()),
             response_repair_retries=model_configuration.response_repair_retries,
             artifact_cleanup=workspace_boundary.delete_artifact,
         )
-        queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
+        queries = ExecutionQueryService(unit_of_work)
         return Application(
             InteractionService(runtime, queries), inventory, sufficiency, model, engine
         )
@@ -139,6 +151,12 @@ def build_inventory_application() -> InventoryApplication:
     """Compose inventory from current Workspace facts without opening model or database clients."""
 
     configuration = load_configuration()
+    engine = create_database_engine(configuration.database.require("development"))
+    unit_of_work = SQLAlchemyUnitOfWorkFactory(engine)
+    memory = MemoryContextCapability(
+        unit_of_work,
+        protected_values=configuration.protected_values(),
+    )
     _, inventory = local_capability_components(
         workspace_root=configuration.workspace,
         process_default_timeout_seconds=configuration.process.default_timeout_seconds,
@@ -151,5 +169,6 @@ def build_inventory_application() -> InventoryApplication:
         artifact_max_bytes=configuration.process.artifact_max_bytes,
         protected_values=configuration.protected_values(),
         model_available=configuration.model is not None,
+        additional_handlers=(memory,),
     )
-    return InventoryApplication(inventory)
+    return InventoryApplication(inventory, engine)

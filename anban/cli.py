@@ -19,11 +19,12 @@ from anban.application import (
     build_query_application,
 )
 from anban.core.errors import AnbanError, ErrorCategory, ErrorCode, ErrorInfo
-from anban.core.ids import ExecutionRunId, new_interaction_id
+from anban.core.ids import ExecutionRunId, SessionId, TaskId, new_interaction_id
 from anban.interaction import InteractionEnvelope
 from anban.runtime import (
     AgentOutcomeStatus,
     ArtifactDetail,
+    ContextDetail,
     ExecutionResult,
     RunDetail,
     RunObservability,
@@ -61,6 +62,12 @@ def parser() -> argparse.ArgumentParser:
     artifacts = commands.add_parser("artifacts", help="List logical Run Artifacts.")
     artifacts.add_argument("run_id")
     add_json_option(artifacts)
+    context = commands.add_parser("context", help="Inspect bounded durable Context.")
+    context_commands = context.add_subparsers(dest="context_scope", required=True)
+    for scope in ("task", "session"):
+        context_scope = context_commands.add_parser(scope, help=f"Inspect {scope} Context.")
+        context_scope.add_argument("identity")
+        add_json_option(context_scope)
     capabilities = commands.add_parser("capabilities", help="Inspect available Agent paths.")
     capability_commands = capabilities.add_subparsers(dest="capability_command", required=True)
     capability_list = capability_commands.add_parser("list", help="Show the inventory snapshot.")
@@ -102,6 +109,7 @@ async def execute_run(task: str, *, json_output: bool) -> int:
 async def execute_chat(*, json_output: bool) -> int:
     application: Application = await build_application()
     session = application.interactions.chat()
+    emit_session(session.session_id, json_output=json_output)
     exit_code = EXIT_SUCCESS
     try:
         while session.can_continue:
@@ -183,21 +191,38 @@ async def list_artifacts(run_id: ExecutionRunId, *, json_output: bool) -> int:
     return EXIT_SUCCESS
 
 
-def inspect_capabilities(arguments: argparse.Namespace, *, json_output: bool) -> int:
-    application = build_inventory_application()
-    if arguments.capability_command == "list":
-        snapshot = application.snapshot()
-        emit_inventory_snapshot(snapshot, json_output=json_output)
-    elif arguments.capability_command == "search":
-        items = application.search(
-            text=arguments.text,
-            kinds=tuple(arguments.kind),
-            include_unavailable=not arguments.available_only,
-            limit=arguments.limit,
+async def show_context(scope: str, identity: TaskId | SessionId, *, json_output: bool) -> int:
+    application = await build_query_application()
+    try:
+        detail = (
+            await application.interactions.task_context(TaskId(identity))
+            if scope == "task"
+            else await application.interactions.session_context(SessionId(identity))
         )
-        emit_inventory_items(items, json_output=json_output)
-    else:
-        emit_inventory_item(application.describe(arguments.key), json_output=json_output)
+    finally:
+        await application.close()
+    emit_context(detail, json_output=json_output)
+    return EXIT_SUCCESS
+
+
+async def inspect_capabilities(arguments: argparse.Namespace, *, json_output: bool) -> int:
+    application = build_inventory_application()
+    try:
+        if arguments.capability_command == "list":
+            snapshot = application.snapshot()
+            emit_inventory_snapshot(snapshot, json_output=json_output)
+        elif arguments.capability_command == "search":
+            items = application.search(
+                text=arguments.text,
+                kinds=tuple(arguments.kind),
+                include_unavailable=not arguments.available_only,
+                limit=arguments.limit,
+            )
+            emit_inventory_items(items, json_output=json_output)
+        else:
+            emit_inventory_item(application.describe(arguments.key), json_output=json_output)
+    finally:
+        await application.close()
     return EXIT_SUCCESS
 
 
@@ -267,6 +292,13 @@ def emit_workspace(result: WorkspaceInitialization, *, json_output: bool) -> Non
         print(json.dumps(payload, separators=(",", ":")))
     else:
         print("Workspace initialized.")
+
+
+def emit_session(session_id: SessionId, *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps({"session_id": str(session_id)}, separators=(",", ":")))
+    else:
+        print(f"Session: {session_id}")
 
 
 def emit_runs(runs: tuple[RunSummary, ...], *, json_output: bool) -> None:
@@ -343,6 +375,21 @@ def emit_artifacts(artifacts: tuple[ArtifactDetail, ...], *, json_output: bool) 
     print("ARTIFACT ID                           SIZE  MEDIA TYPE  LOGICAL URI")
     for artifact in artifacts:
         print(f"{artifact.id}  {artifact.size_bytes}  {artifact.media_type}  {artifact.uri}")
+
+
+def emit_context(detail: ContextDetail, *, json_output: bool) -> None:
+    if json_output:
+        print(detail.model_dump_json())
+        return
+    print(f"Context: {detail.scope.value} {detail.identity}")
+    print(f"Active entries: {detail.active_entry_count} ({detail.active_chars} chars)")
+    print(f"Stored entries: {len(detail.entries)}")
+    print(f"Summaries: {len(detail.summaries)}")
+    for summary in detail.summaries:
+        print(
+            f"  {summary.id}  covers={len(summary.covered_entry_ids)}  "
+            f"chars={summary.content_chars}  sha256={summary.content_hash}"
+        )
 
 
 def emit_inventory_snapshot(snapshot: Any, *, json_output: bool) -> None:
@@ -434,7 +481,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.command == "trace":
             return asyncio.run(show_trace(parse_run_id(arguments.run_id), json_output=json_output))
         if arguments.command == "capabilities":
-            return inspect_capabilities(arguments, json_output=json_output)
+            return asyncio.run(inspect_capabilities(arguments, json_output=json_output))
+        if arguments.command == "context":
+            identity = parse_context_id(arguments.context_scope, arguments.identity)
+            return asyncio.run(
+                show_context(arguments.context_scope, identity, json_output=json_output)
+            )
         return asyncio.run(list_artifacts(parse_run_id(arguments.run_id), json_output=json_output))
     except KeyboardInterrupt:
         emit_error("execution_interrupted", "Execution was interrupted", json_output=json_output)
@@ -455,6 +507,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def parse_run_id(value: str) -> ExecutionRunId:
     return ExecutionRunId(UUID(value))
+
+
+def parse_context_id(scope: str, value: str) -> TaskId | SessionId:
+    identifier = UUID(value)
+    return TaskId(identifier) if scope == "task" else SessionId(identifier)
 
 
 if __name__ == "__main__":

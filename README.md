@@ -2,18 +2,21 @@
 
 Anban v0.1 is an executable Agent Runtime for local development and real functional validation.
 One fixed General Agent uses a real OpenAI-compatible model, activates discovered Skills, executes
-real programs through `process.execute`, and persists Invocation, Artifact, Event, Audit, and Trace
-facts in PostgreSQL.
+real programs through `process.execute`, uses bounded Task/Session context through
+`memory.context`, and persists Invocation, Artifact, Context, Event, Audit, and Trace facts in
+PostgreSQL.
 
 ```text
 User task -> FixedGeneralAgent -> skill.activate -> process.execute
+                              -> memory.context
           -> PersistedCapabilityPort -> PostgreSQL / managed Artifacts / Event / Audit / Trace
 ```
 
-The production Capability surface is exactly `skill.activate` and `process.execute`. Skill is
-execution knowledge; Process is the general execution channel. A Skill never writes Anban business
-tables. Runtime and Persistence own Artifact snapshots and all durable facts. Supporting another
-concrete tool normally means adding a Skill, not adding a Capability Handler.
+The production Capability surface is `memory.context`, `skill.activate`, and `process.execute`.
+Skill is execution knowledge; Process is the general execution channel; Memory is structured,
+bounded durable context. A Skill never writes Anban business tables. Runtime and Persistence own
+Artifact snapshots and all durable facts. Supporting another concrete tool normally means adding
+a Skill, not adding a Capability Handler.
 
 All Skills use the same architecture regardless of whether they ship in the Anban package, were
 installed by ClawHub, were copied, or were created by a user. Production discovers `SKILL.md`,
@@ -32,6 +35,9 @@ anban chat
 anban runs
 anban trace <run-id>
 anban artifacts <run-id>
+anban context task <task-id>
+anban context session <session-id>
+anban capabilities list
 python -m scripts.doctor
 python -m scripts.doctor --online
 python -m scripts.doctor --web
@@ -40,6 +46,11 @@ python -m scripts.doctor --web
 Activate Python 3.12, install the frozen Python and pnpm dependencies, initialize an external
 Workspace, put runtime credentials only in its mode-0600 `secrets.env`, and apply both migration
 profiles with `alembic upgrade head` and `ANBAN_DATABASE_PROFILE=test alembic upgrade head`.
+
+`memory.context` can read, remember, supersede/conflict, compress, and expire bounded Task or
+Session context. Compression records ordered source Entry IDs and retains the authoritative raw
+rows. Secret-classified or configured protected values fail closed. CLI context inspection emits
+only identities, classifications, counts, and hashes—not raw content or source references.
 
 ## v0.1 execution boundary
 

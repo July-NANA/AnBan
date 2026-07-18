@@ -23,6 +23,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from anban.core.context import (
+    ContextConflictState,
+    ContextEntryKind,
+    ContextScope,
+    ContextSensitivity,
+    ContextSourceKind,
+)
 from anban.core.errors import ErrorCode
 from anban.core.models import CapabilityInvocationStatus, TaskStatus
 
@@ -42,6 +49,11 @@ def sql_enum_values(enum_type: type[StrEnum]) -> str:
 ACTIVE_STATUSES = sql_enum_values(TaskStatus)
 INVOCATION_STATUSES = sql_enum_values(CapabilityInvocationStatus)
 ERROR_CODES = sql_enum_values(ErrorCode)
+CONTEXT_SCOPES = sql_enum_values(ContextScope)
+CONTEXT_KINDS = sql_enum_values(ContextEntryKind)
+CONTEXT_SOURCES = sql_enum_values(ContextSourceKind)
+CONTEXT_SENSITIVITIES = sql_enum_values(ContextSensitivity)
+CONTEXT_STATES = sql_enum_values(ContextConflictState)
 
 
 class Base(DeclarativeBase):
@@ -232,3 +244,108 @@ class EventRecord(SafeMetadataMixin, Base):
     node_run_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     invocation_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     artifact_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+
+
+class ContextEntryRecord(SafeMetadataMixin, Base):
+    __tablename__ = "context_entries"
+    __table_args__ = (
+        CheckConstraint(f"scope IN ({CONTEXT_SCOPES})", name="scope_allowed"),
+        CheckConstraint(f"kind IN ({CONTEXT_KINDS})", name="kind_allowed"),
+        CheckConstraint(f"source_kind IN ({CONTEXT_SOURCES})", name="source_kind_allowed"),
+        CheckConstraint(
+            f"sensitivity IN ({CONTEXT_SENSITIVITIES}) AND sensitivity <> 'secret'",
+            name="sensitivity_allowed",
+        ),
+        CheckConstraint(f"state IN ({CONTEXT_STATES})", name="state_allowed"),
+        CheckConstraint(
+            "(scope = 'task' AND task_id IS NOT NULL AND session_id IS NULL) OR "
+            "(scope = 'session' AND session_id IS NOT NULL AND task_id IS NULL)",
+            name="scope_identity",
+        ),
+        CheckConstraint(
+            "(kind = 'artifact_reference') = (artifact_id IS NOT NULL)",
+            name="artifact_identity",
+        ),
+        CheckConstraint(
+            "state <> 'conflicting' OR conflicts_with IS NOT NULL",
+            name="conflict_identity",
+        ),
+        CheckConstraint("state <> 'expired' OR expires_at IS NOT NULL", name="expiry_identity"),
+        CheckConstraint(
+            "expires_at IS NULL OR expires_at > created_at", name="expiry_after_creation"
+        ),
+        CheckConstraint("id <> supersedes AND id <> conflicts_with", name="no_self_reference"),
+        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="metadata_object"),
+        Index("ix_context_entries_task_id_created_at", "task_id", "created_at"),
+        Index("ix_context_entries_session_id_created_at", "session_id", "created_at"),
+        Index("ix_context_entries_state_created_at", "state", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    task_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE")
+    )
+    session_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_reference: Mapped[str] = mapped_column(String(256), nullable=False)
+    source_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sensitivity: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    artifact_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("artifacts.id", ondelete="RESTRICT")
+    )
+    supersedes: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("context_entries.id", ondelete="RESTRICT")
+    )
+    conflicts_with: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("context_entries.id", ondelete="RESTRICT")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ContextSummaryRecord(SafeMetadataMixin, Base):
+    __tablename__ = "context_summaries"
+    __table_args__ = (
+        CheckConstraint(f"scope IN ({CONTEXT_SCOPES})", name="scope_allowed"),
+        CheckConstraint(
+            "(scope = 'task' AND task_id IS NOT NULL AND session_id IS NULL) OR "
+            "(scope = 'session' AND session_id IS NOT NULL AND task_id IS NULL)",
+            name="scope_identity",
+        ),
+        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="metadata_object"),
+        Index("ix_context_summaries_task_id_created_at", "task_id", "created_at"),
+        Index("ix_context_summaries_session_id_created_at", "session_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    task_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE")
+    )
+    session_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ContextSummaryCoverageRecord(Base):
+    __tablename__ = "context_summary_entries"
+    __table_args__ = (
+        CheckConstraint("ordinal >= 1 AND ordinal <= 128", name="ordinal_bounded"),
+        UniqueConstraint("summary_id", "entry_id", name="uq_context_summary_entry"),
+    )
+
+    summary_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("context_summaries.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    ordinal: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    entry_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("context_entries.id", ondelete="CASCADE"),
+        nullable=False,
+    )

@@ -9,9 +9,12 @@ import sys
 from datetime import timedelta
 from uuid import uuid4
 
+from sqlalchemy import delete
+
 from anban.capability import (
     CapabilityResultStatus,
     InvocationContext,
+    MemoryContextCapability,
     local_capability_components,
 )
 from anban.config import load_configuration
@@ -20,8 +23,12 @@ from anban.core.ids import (
     new_capability_invocation_id,
     new_execution_run_id,
     new_node_run_id,
+    new_task_id,
 )
-from anban.core.models import now_utc
+from anban.core.metadata import SafeMetadata
+from anban.core.models import ExecutionRun, NodeRun, Task, now_utc
+from anban.persistence import SQLAlchemyUnitOfWorkFactory, create_database_engine
+from anban.persistence.models import TaskRecord
 
 
 class CapabilityAcceptanceError(RuntimeError):
@@ -39,19 +46,68 @@ def context() -> InvocationContext:
 
 async def accept_capabilities() -> None:
     configuration = load_configuration()
+    engine = create_database_engine(configuration.database.require("test"))
+    factory = SQLAlchemyUnitOfWorkFactory(engine)
+    memory = MemoryContextCapability(
+        factory,
+        protected_values=configuration.protected_values(),
+    )
     registry, inventory = local_capability_components(
         workspace_root=configuration.workspace,
         protected_values=configuration.protected_values(),
         model_available=configuration.model is not None,
+        additional_handlers=(memory,),
     )
-    if tuple(item.name for item in registry.search()) != ("process.execute", "skill.activate"):
-        raise CapabilityAcceptanceError("production Capability surface mismatch")
     work = configuration.workspace / "tmp" / f"acceptance-{new_execution_run_id()}"
-    work.mkdir(mode=0o700)
     skill_name = f"skill-{uuid4().hex[:12]}"
     skill_root = configuration.workspace / "skills" / skill_name
     invocation = context()
+    memory_task = Task(id=new_task_id(), request="local Memory Capability acceptance")
+    memory_run = ExecutionRun(id=new_execution_run_id(), task_id=memory_task.id)
+    memory_node = NodeRun(id=new_node_run_id(), run_id=memory_run.id, node_name="general_agent")
     try:
+        if tuple(item.name for item in registry.search()) != (
+            "memory.context",
+            "process.execute",
+            "skill.activate",
+        ):
+            raise CapabilityAcceptanceError("production Capability surface mismatch")
+        work.mkdir(mode=0o700)
+        async with factory() as unit:
+            await unit.executions.add_task(memory_task)
+            await unit.executions.add_run(memory_run)
+            await unit.executions.add_node_run(memory_node)
+            await unit.commit()
+
+        memory_context = InvocationContext(
+            run_id=memory_run.id,
+            node_run_id=memory_node.id,
+            invocation_id=new_capability_invocation_id(),
+            deadline_at=now_utc() + timedelta(seconds=30),
+            metadata=SafeMetadata(),
+        )
+        retained = await registry.invoke(
+            "memory.context",
+            {
+                "operation": "remember",
+                "scope": "task",
+                "kind": "user_fact",
+                "content": "A unique bounded acceptance fact.",
+            },
+            memory_context,
+        )
+        recalled = await registry.invoke(
+            "memory.context",
+            {"operation": "read", "scope": "task"},
+            memory_context.model_copy(update={"invocation_id": new_capability_invocation_id()}),
+        )
+        if (
+            retained.status is not CapabilityResultStatus.COMPLETED
+            or recalled.status is not CapabilityResultStatus.COMPLETED
+            or "A unique bounded acceptance fact." not in (recalled.observation or "")
+        ):
+            raise CapabilityAcceptanceError("real Memory retention or recall mismatch")
+
         completed = await registry.invoke(
             "process.execute",
             {
@@ -142,12 +198,17 @@ async def accept_capabilities() -> None:
         else:
             raise CapabilityAcceptanceError("removed Skill remained in the runtime catalog")
     finally:
-        shutil.rmtree(work, ignore_errors=True)
-        shutil.rmtree(skill_root, ignore_errors=True)
-        shutil.rmtree(
-            configuration.workspace / "artifacts" / str(invocation.run_id),
-            ignore_errors=True,
-        )
+        try:
+            shutil.rmtree(work, ignore_errors=True)
+            shutil.rmtree(skill_root, ignore_errors=True)
+            shutil.rmtree(
+                configuration.workspace / "artifacts" / str(invocation.run_id),
+                ignore_errors=True,
+            )
+            async with engine.begin() as connection:
+                await connection.execute(delete(TaskRecord).where(TaskRecord.id == memory_task.id))
+        finally:
+            await engine.dispose()
 
 
 def main() -> int:
@@ -161,7 +222,7 @@ def main() -> int:
         return 1
     print(
         "local Capability acceptance: PASS - surface, process, stdin, env, multi-Artifact, "
-        "runtime Skill refresh, failures"
+        "runtime Skill refresh, durable Memory retention/restart, failures"
     )
     return 0
 

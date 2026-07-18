@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
+from anban.capability.contracts import CapabilityHandler
 from anban.capability.inventory import UnifiedCapabilityInventory
 from anban.capability.process import ProcessCapability
 from anban.capability.registry import CapabilityRegistry
@@ -25,6 +27,7 @@ def local_capability_registry(
     max_artifacts: int = policy.PROCESS_ARTIFACTS_MAX,
     artifact_max_bytes: int = policy.PROCESS_ARTIFACT_MAX_BYTES,
     protected_values: tuple[str, ...] = (),
+    additional_handlers: Iterable[CapabilityHandler] = (),
 ) -> CapabilityRegistry:
     """Build the only production Registry wiring for local v0.1 handlers."""
 
@@ -40,6 +43,7 @@ def local_capability_registry(
         artifact_max_bytes=artifact_max_bytes,
         protected_values=protected_values,
         model_available=True,
+        additional_handlers=additional_handlers,
     )
     return registry
 
@@ -57,6 +61,7 @@ def local_capability_components(
     artifact_max_bytes: int = policy.PROCESS_ARTIFACT_MAX_BYTES,
     protected_values: tuple[str, ...] = (),
     model_available: bool,
+    additional_handlers: Iterable[CapabilityHandler] = (),
 ) -> tuple[CapabilityRegistry, UnifiedCapabilityInventory]:
     """Build the one Registry and its read-only inventory projection."""
 
@@ -88,7 +93,9 @@ def local_capability_components(
         resolved_root,
         protected_values=protected_values,
     )
-    registry = CapabilityRegistry((process, SkillActivationCapability(skills)))
+    registry = CapabilityRegistry(
+        (process, SkillActivationCapability(skills), *tuple(additional_handlers))
+    )
     return registry, UnifiedCapabilityInventory(
         registry,
         skills,

@@ -17,6 +17,7 @@ from sqlalchemy.sql.base import Executable
 from anban.config import load_configuration
 from anban.persistence.models import (
     CapabilityInvocationRecord,
+    ContextEntryRecord,
     EventRecord,
     ExecutionRunRecord,
     NodeRunRecord,
@@ -30,6 +31,9 @@ EXPECTED_TABLES = {
     "capability_invocations",
     "artifacts",
     "events",
+    "context_entries",
+    "context_summaries",
+    "context_summary_entries",
 }
 
 
@@ -134,6 +138,22 @@ async def accept_schema() -> None:
                         safe_metadata={},
                     )
                 )
+                await connection.execute(
+                    insert(ContextEntryRecord).values(
+                        id=uuid4(),
+                        scope="task",
+                        task_id=task_one,
+                        kind="user_fact",
+                        content="bounded migration context",
+                        source_kind="interaction",
+                        source_reference="interaction:migration",
+                        source_observed_at=now,
+                        sensitivity="internal",
+                        state="active",
+                        created_at=now,
+                        safe_metadata={},
+                    )
+                )
 
                 await expect_integrity_failure(
                     connection,
@@ -141,6 +161,41 @@ async def accept_schema() -> None:
                         id=uuid4(),
                         request="invalid status",
                         status="unknown",
+                        created_at=now,
+                        safe_metadata={},
+                    ),
+                )
+                await expect_integrity_failure(
+                    connection,
+                    insert(ContextEntryRecord).values(
+                        id=uuid4(),
+                        scope="task",
+                        task_id=task_one,
+                        session_id=uuid4(),
+                        kind="user_fact",
+                        content="ambiguous scope",
+                        source_kind="interaction",
+                        source_reference="interaction:invalid",
+                        source_observed_at=now,
+                        sensitivity="internal",
+                        state="active",
+                        created_at=now,
+                        safe_metadata={},
+                    ),
+                )
+                await expect_integrity_failure(
+                    connection,
+                    insert(ContextEntryRecord).values(
+                        id=uuid4(),
+                        scope="session",
+                        session_id=uuid4(),
+                        kind="user_fact",
+                        content="forbidden secret classification",
+                        source_kind="interaction",
+                        source_reference="interaction:invalid",
+                        source_observed_at=now,
+                        sensitivity="secret",
+                        state="active",
                         created_at=now,
                         safe_metadata={},
                     ),
@@ -183,7 +238,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print("migration schema acceptance: PASS - head, tables, statuses, relationships, event order")
+    print(
+        "migration schema acceptance: PASS - head, tables, statuses, relationships, event order, "
+        "Context scope and Secret constraints"
+    )
     return 0
 
 

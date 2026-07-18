@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from pydantic import Field
 
+from anban.core.context import (
+    ContextConflictState,
+    ContextEntry,
+    ContextEntryKind,
+    ContextScope,
+    ContextSensitivity,
+    ContextSourceKind,
+    ContextSummary,
+)
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    ContextEntryId,
+    ContextSummaryId,
     ExecutionRunId,
     NodeRunId,
+    SessionId,
     TaskId,
 )
 from anban.core.metadata import SafeMetadata
@@ -23,6 +37,7 @@ from anban.core.models import (
     NodeRunStatus,
     TaskStatus,
     UtcDateTime,
+    now_utc,
 )
 from anban.core.persistence import ExecutionRunAggregate, UnitOfWorkFactory
 from anban.runtime.contracts import RuntimeValue
@@ -34,6 +49,8 @@ MAX_NODES = 8
 MAX_INVOCATIONS = 64
 MAX_ARTIFACTS = 256
 MAX_EVENTS = 512
+MAX_CONTEXT_ENTRIES = 512
+MAX_CONTEXT_SUMMARIES = 64
 
 
 class RunSummary(RuntimeValue):
@@ -95,6 +112,38 @@ class RunDetail(RuntimeValue):
     observability: RunObservability
 
 
+class ContextEntryDetail(RuntimeValue):
+    id: ContextEntryId
+    kind: ContextEntryKind
+    sensitivity: ContextSensitivity
+    state: ContextConflictState
+    source_kind: ContextSourceKind
+    source_reference_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_chars: int = Field(ge=1, le=8192)
+    supersedes: ContextEntryId | None = None
+    conflicts_with: ContextEntryId | None = None
+    created_at: UtcDateTime
+    expires_at: UtcDateTime | None = None
+
+
+class ContextSummaryDetail(RuntimeValue):
+    id: ContextSummaryId
+    covered_entry_ids: tuple[ContextEntryId, ...] = Field(min_length=1, max_length=128)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_chars: int = Field(ge=1, le=8192)
+    created_at: UtcDateTime
+
+
+class ContextDetail(RuntimeValue):
+    scope: ContextScope
+    identity: str = Field(min_length=36, max_length=36)
+    entries: tuple[ContextEntryDetail, ...] = Field(max_length=MAX_CONTEXT_ENTRIES)
+    summaries: tuple[ContextSummaryDetail, ...] = Field(max_length=MAX_CONTEXT_SUMMARIES)
+    active_entry_count: int = Field(ge=0, le=MAX_CONTEXT_ENTRIES)
+    active_chars: int = Field(ge=0, le=131_072)
+
+
 class ExecutionQueryService:
     """Load authoritative PostgreSQL state through the Core persistence Port."""
 
@@ -147,6 +196,50 @@ class ExecutionQueryService:
         aggregate = await self._load(run_id)
         enforce_aggregate_bounds(aggregate)
         return tuple(artifact_detail(artifact) for artifact in aggregate.artifacts)
+
+    async def task_context(self, task_id: TaskId) -> ContextDetail:
+        return await self._context(ContextScope.TASK, task_id)
+
+    async def session_context(self, session_id: SessionId) -> ContextDetail:
+        return await self._context(ContextScope.SESSION, session_id)
+
+    async def _context(self, scope: ContextScope, identity: TaskId | SessionId) -> ContextDetail:
+        try:
+            async with self._unit_of_work() as unit:
+                if (
+                    scope is ContextScope.TASK
+                    and await unit.executions.get_task(TaskId(identity)) is None
+                ):
+                    raise context_missing()
+                entries = await unit.executions.list_context_entries(scope, identity)
+                summaries = await unit.executions.list_context_summaries(scope, identity)
+        except AnbanError:
+            raise
+        except Exception:
+            raise query_failure() from None
+        if scope is ContextScope.SESSION and not entries and not summaries:
+            raise context_missing()
+        if len(entries) > MAX_CONTEXT_ENTRIES or len(summaries) > MAX_CONTEXT_SUMMARIES:
+            raise AnbanError(
+                ErrorInfo(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message="Context inspection exceeds its bounded limit",
+                )
+            )
+        active = tuple(
+            entry
+            for entry in entries
+            if entry.state in {ContextConflictState.ACTIVE, ContextConflictState.CONFLICTING}
+            and (entry.expires_at is None or entry.expires_at > now_utc())
+        )
+        return ContextDetail(
+            scope=scope,
+            identity=str(identity),
+            entries=tuple(context_entry_detail(entry) for entry in entries),
+            summaries=tuple(context_summary_detail(summary) for summary in summaries),
+            active_entry_count=len(active),
+            active_chars=sum(len(entry.content) for entry in active),
+        )
 
     async def _load(self, run_id: ExecutionRunId) -> ExecutionRunAggregate:
         try:
@@ -229,6 +322,42 @@ def artifact_detail(artifact: Artifact) -> ArtifactDetail:
         size_bytes=artifact.size_bytes,
         media_type=artifact.media_type,
         created_at=artifact.created_at,
+    )
+
+
+def context_entry_detail(entry: ContextEntry) -> ContextEntryDetail:
+    return ContextEntryDetail(
+        id=entry.id,
+        kind=entry.kind,
+        sensitivity=entry.sensitivity,
+        state=entry.state,
+        source_kind=entry.source.kind,
+        source_reference_hash=hashlib.sha256(entry.source.reference.encode()).hexdigest(),
+        content_hash=hashlib.sha256(entry.content.encode()).hexdigest(),
+        content_chars=len(entry.content),
+        supersedes=entry.supersedes,
+        conflicts_with=entry.conflicts_with,
+        created_at=entry.created_at,
+        expires_at=entry.expires_at,
+    )
+
+
+def context_summary_detail(summary: ContextSummary) -> ContextSummaryDetail:
+    return ContextSummaryDetail(
+        id=summary.id,
+        covered_entry_ids=summary.covered_entry_ids,
+        content_hash=hashlib.sha256(summary.content.encode()).hexdigest(),
+        content_chars=len(summary.content),
+        created_at=summary.created_at,
+    )
+
+
+def context_missing() -> AnbanError:
+    return AnbanError(
+        ErrorInfo(
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Context does not exist",
+        )
     )
 
 

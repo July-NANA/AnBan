@@ -77,10 +77,14 @@ The v0.5 background Process extension does not broaden automatic retry. Runtime 
 bounded progress while awaiting one already-started process, and cancellation targets that exact
 Invocation. Async execution persists `checkpoint.created`, `checkpoint.waiting`, and `run.waiting`
 before returning control. Resume or cancel first commits its Checkpoint and Run Events, then releases
-or terminates the live execution. A failed transition write leaves the execution waiting and is safe
-to retry; a completed or uncertain Capability is never invoked again. Fresh query services
-reconstruct accepted/progress/Checkpoint/terminal correlation, but an in-flight operation is not
-yet recoverable after a full service-process exit; that requires the later restart coordinator.
+or terminates the live execution. Detach is distinct from cancel: it unwinds only the local Agent
+coroutine and leaves the Checkpoint and Invocation non-terminal. A failed transition write leaves
+the execution waiting and is safe to retry; a completed or uncertain Capability is never invoked
+again. After service exit, recovery requires the original deadline fact, restores the Capability by
+Invocation identity, records one recovery attempt, and consumes its real result. Missing, corrupt,
+expired, or dead-worker state fails explicitly. A recovered result is quoted to the Model as bounded
+non-executable evidence, never reconstructed as a provider Tool Call and never used to open another
+execution channel.
 
 The v0.5 Main Agent adds bounded replanning without broadening automatic retries. Completion
 assessment is a structured Model decision, not another Capability call. A replan consumes one of a

@@ -19,11 +19,14 @@ from anban.capability.contracts import (
     ArtifactReference,
     CapabilityDescriptor,
     CapabilityProgress,
-    CapabilityProgressStatus,
     CapabilityResult,
     CapabilityResultStatus,
     InventoryKind,
     InvocationContext,
+)
+from anban.capability.process_background import (
+    BackgroundProcessSettings,
+    DurableProcessSupervisor,
 )
 from anban.capability.workspace import WorkspaceBoundary, capability_error
 from anban.config import policy
@@ -73,10 +76,21 @@ class ProcessCapability:
         self._max_artifacts = max_artifacts
         self._artifact_max_bytes = artifact_max_bytes
         self._processes: dict[str, asyncio.subprocess.Process] = {}
-        self._background_tasks: dict[str, asyncio.Task[CapabilityResult]] = {}
-        self._background_started: dict[str, float] = {}
-        self._progress_sequences: dict[str, int] = {}
         self._cancelled: set[str] = set()
+        self._background = DurableProcessSupervisor(
+            boundary,
+            self._protected_values,
+            BackgroundProcessSettings(
+                default_timeout_seconds=default_timeout_seconds,
+                max_timeout_seconds=max_timeout_seconds,
+                stdout_max_bytes=stdout_max_bytes,
+                stderr_max_bytes=stderr_max_bytes,
+                stdin_max_bytes=stdin_max_bytes,
+                max_arguments=max_arguments,
+                max_artifacts=max_artifacts,
+                artifact_max_bytes=artifact_max_bytes,
+            ),
+        )
         self._descriptor = self._build_descriptor()
 
     @property
@@ -91,80 +105,26 @@ class ProcessCapability:
             raise self._arguments_error("background_type")
         if not background:
             return await self._execute(arguments, context)
-
-        readiness = asyncio.get_running_loop().create_future()
-        execution = asyncio.create_task(self._execute(arguments, context, readiness))
-        try:
-            done, _ = await asyncio.wait(
-                (execution, readiness), return_when=asyncio.FIRST_COMPLETED
-            )
-        except asyncio.CancelledError:
-            execution.cancel()
-            await asyncio.gather(execution, return_exceptions=True)
-            raise
-        if execution in done:
-            return await execution
-        key = str(context.invocation_id)
-        self._background_tasks[key] = execution
-        self._background_started[key] = time.monotonic()
-        self._progress_sequences[key] = 0
-        return CapabilityResult(
-            status=CapabilityResultStatus.ACCEPTED,
-            metadata=SafeMetadata(
-                {
-                    "background": True,
-                    "result_correlation_id": key,
-                }
-            ),
-        )
+        return await self._background.start(arguments, context)
 
     async def progress(self, context: InvocationContext) -> CapabilityProgress:
-        key = str(context.invocation_id)
-        execution = self._background_tasks.get(key)
-        started = self._background_started.get(key)
-        if execution is None or started is None:
-            raise self._background_unavailable()
-        sequence = self._progress_sequences[key] + 1
-        self._progress_sequences[key] = sequence
-        return CapabilityProgress(
-            sequence=sequence,
-            status=(
-                CapabilityProgressStatus.RESULT_READY
-                if execution.done()
-                else CapabilityProgressStatus.RUNNING
-            ),
-            metadata=SafeMetadata(
-                {
-                    "background": True,
-                    "result_correlation_id": key,
-                    "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
-                }
-            ),
-        )
+        return await self._background.progress(context)
 
     async def wait(self, context: InvocationContext) -> CapabilityResult:
-        key = str(context.invocation_id)
-        execution = self._background_tasks.get(key)
-        if execution is None:
-            raise self._background_unavailable()
-        try:
-            result = await asyncio.shield(execution)
-            return result.model_copy(
-                update={
-                    "metadata": SafeMetadata(
-                        {
-                            **result.metadata.root,
-                            "background": True,
-                            "result_correlation_id": key,
-                        }
-                    )
-                }
-            )
-        finally:
-            if execution.done():
-                self._background_tasks.pop(key, None)
-                self._background_started.pop(key, None)
-                self._progress_sequences.pop(key, None)
+        return await self._background.wait(context)
+
+    async def recover(self, context: InvocationContext, progress_sequence: int) -> None:
+        await self._background.recover(context, progress_sequence)
+
+    async def execute_supervised(
+        self,
+        arguments: dict[str, JsonValue],
+        context: InvocationContext,
+        readiness: asyncio.Future[None],
+    ) -> CapabilityResult:
+        """Run the existing implementation inside the independent durable worker."""
+
+        return await self._execute(arguments, context, readiness)
 
     async def _execute(
         self,
@@ -352,6 +312,7 @@ class ProcessCapability:
         key = str(context.invocation_id)
         process = self._processes.get(key)
         if process is None:
+            await self._background.cancel(context)
             return
         self._cancelled.add(key)
         await self._stop_process(process)

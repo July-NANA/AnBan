@@ -70,6 +70,43 @@ def test_async_run_command_dispatches_continuation_path(
     assert received == [("durable continuation", True)]
 
 
+def test_detached_start_and_fresh_checkpoint_commands_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint_id = "00000000-0000-0000-0000-000000000789"
+    received: list[tuple[object, ...]] = []
+
+    async def start(task: str, *, json_output: bool, detach: bool = False) -> int:
+        received.append(("start", task, json_output, detach))
+        return cli.EXIT_SUCCESS
+
+    async def continue_checkpoint(
+        identifier: object,
+        *,
+        cancel: bool,
+        json_output: bool,
+    ) -> int:
+        received.append(("checkpoint", str(identifier), cancel, json_output))
+        return cli.EXIT_SUCCESS
+
+    monkeypatch.setattr(cli, "execute_run_async", start)
+    monkeypatch.setattr(cli, "execute_checkpoint", continue_checkpoint)
+
+    assert cli.main(["run", "detached work", "--async", "--detach", "--json"]) == cli.EXIT_SUCCESS
+    assert cli.main(["run", "resume", checkpoint_id, "--json"]) == cli.EXIT_SUCCESS
+    assert cli.main(["run", "cancel", checkpoint_id]) == cli.EXIT_SUCCESS
+    assert received == [
+        ("start", "detached work", True, True),
+        ("checkpoint", checkpoint_id, False, True),
+        ("checkpoint", checkpoint_id, True, False),
+    ]
+
+
+def test_detach_requires_async_mode(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["run", "detached work", "--detach"]) == cli.EXIT_USAGE
+    assert "validation_failed" in capsys.readouterr().err
+
+
 def test_run_show_and_query_commands_dispatch_stable_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

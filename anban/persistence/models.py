@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
+from pydantic import JsonValue
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
@@ -169,6 +170,10 @@ class NodeRunRecord(SafeMetadataMixin, Base):
         CheckConstraint(
             f"error_code IS NULL OR error_code IN ({ERROR_CODES})", name="error_code_allowed"
         ),
+        CheckConstraint(
+            "output IS NULL OR (status = 'succeeded' AND jsonb_typeof(output) = 'object')",
+            name="output_object",
+        ),
         CheckConstraint("jsonb_typeof(metadata) = 'object'", name="metadata_object"),
         UniqueConstraint("id", "run_id", name="uq_node_runs_id_run_id"),
         Index("ix_node_runs_run_id_created_at", "run_id", "created_at"),
@@ -185,6 +190,7 @@ class NodeRunRecord(SafeMetadataMixin, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    output: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
     error_code: Mapped[str | None] = mapped_column(String(64))
 
 

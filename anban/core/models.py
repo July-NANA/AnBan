@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Self
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from anban.core.errors import ErrorCode
 from anban.core.ids import (
@@ -124,8 +124,15 @@ class NodeRun(DomainModel):
     created_at: UtcDateTime = Field(default_factory=now_utc)
     started_at: UtcDateTime | None = None
     finished_at: UtcDateTime | None = None
+    output: dict[str, JsonValue] | None = None
     error_code: ErrorCode | None = None
     metadata: SafeMetadata = Field(default_factory=SafeMetadata)
+
+    @model_validator(mode="after")
+    def validate_output_state(self) -> Self:
+        if self.output is not None and self.status is not NodeRunStatus.SUCCEEDED:
+            raise ValueError("NodeRun output requires succeeded status")
+        return self
 
 
 class CapabilityInvocation(DomainModel):

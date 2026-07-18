@@ -8,9 +8,12 @@ from a new database-only Application.
 `anban run --async <request>` uses the ordinary Interaction and Runtime Composition Root. It emits
 each durable waiting Checkpoint, resumes it, and emits the eventual terminal result; it does not
 reinvoke the accepted Capability. `anban run show <run-id>` lists bounded Checkpoint projections,
-and `anban trace <run-id>` includes their Run, Node, Invocation, and Checkpoint correlations. The
-current command can continue only while the originating service process remains alive; full
-process-exit recovery is a separate delivery.
+and `anban trace <run-id>` includes their Run, Node, Invocation, and Checkpoint correlations.
+`anban run <request> --async --detach` emits the first durable waiting projection, releases local
+coroutine ownership, and exits without cancelling the external work. A new process continues it
+with `anban run resume <checkpoint-id>` or requests real cancellation with
+`anban run cancel <checkpoint-id>`. Resume reconstructs through the ordinary production
+Composition Root and never reinvokes the accepted Capability.
 
 `capabilities list` returns a point-in-time snapshot. `capabilities search [TEXT]` accepts repeated
 `--kind`, `--available-only`, and a bounded `--limit`. `capabilities describe KEY` requires an

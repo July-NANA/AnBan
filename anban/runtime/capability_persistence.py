@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from typing import cast
 
 from pydantic import JsonValue
 
@@ -226,6 +227,30 @@ class PersistedCapabilityPort:
 
     async def cancel(self, context: InvocationContext) -> None:
         await self._inner.cancel(context)
+
+    async def restore_background(
+        self,
+        name: str,
+        context: InvocationContext,
+        checkpoint_id: CheckpointId,
+        progress_sequence: int,
+    ) -> None:
+        restore = getattr(self._inner, "restore", None)
+        if not callable(restore):
+            raise AnbanError(
+                ErrorInfo(
+                    code=ErrorCode.CAPABILITY_UNAVAILABLE,
+                    message="Capability recovery is unavailable",
+                )
+            )
+        recovery = cast(
+            Callable[[str, InvocationContext, int], Awaitable[None]],
+            restore,
+        )
+        await recovery(name, context, progress_sequence)
+        key = str(context.invocation_id)
+        self._background_names[key] = name
+        self._checkpoint_ids[key] = checkpoint_id
 
     def _background_name(self, context: InvocationContext) -> str:
         name = self._background_names.get(str(context.invocation_id))

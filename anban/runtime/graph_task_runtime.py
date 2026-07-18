@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
@@ -16,7 +18,7 @@ from anban.capability import (
 )
 from anban.core import ErrorCode, ErrorInfo, SafeMetadata, TaskGraphNode, TaskGraphSpec
 from anban.core.ids import new_node_run_id
-from anban.core.models import NodeRun
+from anban.core.models import NodeRun, NodeRunStatus
 from anban.runtime.agent import FixedGeneralAgent
 from anban.runtime.capability_persistence import PersistedCapabilityPort
 from anban.runtime.completion import CompletionEvaluator
@@ -38,6 +40,16 @@ from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
 _MAX_NODE_REQUEST_CHARS = 32_768
 _JSON_OBJECT = TypeAdapter(dict[str, JsonValue])
 
+RecoveredGraphAction = Callable[[TaskGraphNode, dict[str, JsonValue]], Awaitable[AgentOutcome]]
+
+
+@dataclass(frozen=True, slots=True)
+class GraphActionReplay:
+    """One persisted graph action occurrence consumed in execution order."""
+
+    node_run: NodeRun
+    outcome: AgentOutcome | None
+
 
 class PersistentGraphTaskRunner:
     """Bind generic graph actions to the existing real Agent and durable Run path."""
@@ -58,6 +70,8 @@ class PersistentGraphTaskRunner:
             Callable[[InvocationContext, CapabilityResult], Awaitable[None]] | None
         ) = None,
         checkpoint_background: bool = False,
+        replay_actions: tuple[GraphActionReplay, ...] = (),
+        recovered_action: RecoveredGraphAction | None = None,
     ) -> None:
         self._model = model
         self._capabilities = capabilities
@@ -70,6 +84,10 @@ class PersistentGraphTaskRunner:
         self._metadata = metadata
         self._continuation_waiter = continuation_waiter
         self._checkpoint_background = checkpoint_background
+        self._replay_actions = defaultdict[str, deque[GraphActionReplay]](deque)
+        for replay in replay_actions:
+            self._replay_actions[replay.node_run.node_name].append(replay)
+        self._recovered_action = recovered_action
         self._action_lock = asyncio.Lock()
         self._outcomes: list[AgentOutcome] = []
 
@@ -88,6 +106,10 @@ class PersistentGraphTaskRunner:
                 graph_input,
                 action_executor=self._execute_action,
             )
+            if any(self._replay_actions.values()):
+                raise TaskGraphExecutionError(
+                    TaskGraphExecutionFailureReason.RECOVERY_STATE_INVALID
+                )
             artifacts = self._artifacts()
             if len(artifacts) > 32:
                 raise TaskGraphExecutionError(TaskGraphExecutionFailureReason.ACTION_OUTPUT_INVALID)
@@ -103,7 +125,13 @@ class PersistentGraphTaskRunner:
                 artifacts=artifacts,
             )
         except TaskGraphExecutionError as exc:
-            return self._failure_outcome(exc.reason, routing_model_turns)
+            outcome = self._failure_outcome(exc.reason, routing_model_turns)
+            if (
+                self._recovered_action is not None
+                and self._persistence.node.status is NodeRunStatus.RUNNING
+            ):
+                await self._persistence.finish_node(outcome)
+            return outcome
 
     async def _execute_action(
         self,
@@ -111,6 +139,9 @@ class PersistentGraphTaskRunner:
         node_input: dict[str, JsonValue],
     ) -> dict[str, JsonValue]:
         async with self._action_lock:
+            replay = self._next_replay(node)
+            if replay is not None:
+                return await self._execute_replay(node, node_input, replay)
             node_run = NodeRun(
                 id=new_node_run_id(),
                 run_id=self._persistence.run.id,
@@ -125,7 +156,7 @@ class PersistentGraphTaskRunner:
             )
             await self._persistence.add_node(node_run)
             await self._persistence.start_node()
-            request = self._node_request(node, node_input)
+            request = self.node_request(node, node_input)
             if request is None:
                 outcome = self._node_contract_failure(TaskGraphExecutionFailureReason.INPUT_INVALID)
                 await self._persistence.finish_node(outcome)
@@ -169,12 +200,54 @@ class PersistentGraphTaskRunner:
                 await self._persistence.finish_node(failure)
                 self._outcomes.append(failure)
                 raise TaskGraphExecutionError(TaskGraphExecutionFailureReason.ACTION_OUTPUT_INVALID)
-            await self._persistence.finish_node(outcome)
+            await self._persistence.finish_node(outcome, output=output)
             self._outcomes.append(outcome)
             return output
 
+    def _next_replay(self, node: TaskGraphNode) -> GraphActionReplay | None:
+        queued = self._replay_actions.get(node.id)
+        return None if not queued else queued.popleft()
+
+    async def _execute_replay(
+        self,
+        node: TaskGraphNode,
+        node_input: dict[str, JsonValue],
+        replay: GraphActionReplay,
+    ) -> dict[str, JsonValue]:
+        node_run = replay.node_run
+        if replay.outcome is not None:
+            if node_run.status is not NodeRunStatus.SUCCEEDED or node_run.output is None:
+                raise TaskGraphExecutionError(
+                    TaskGraphExecutionFailureReason.RECOVERY_STATE_INVALID
+                )
+            self._outcomes.append(replay.outcome)
+            return node_run.output
+        if (
+            node_run.status is not NodeRunStatus.RUNNING
+            or self._recovered_action is None
+            or node_run.id != self._persistence.node.id
+        ):
+            raise TaskGraphExecutionError(TaskGraphExecutionFailureReason.RECOVERY_STATE_INVALID)
+        outcome = await self._recovered_action(node, node_input)
+        if outcome.status is not AgentOutcomeStatus.SUCCEEDED:
+            await self._persistence.finish_node(outcome)
+            self._outcomes.append(outcome)
+            raise TaskGraphExecutionError(TaskGraphExecutionFailureReason.ACTION_FAILED)
+        output = self._parse_node_output(outcome.final_text)
+        if output is None:
+            failure = self._node_contract_failure(
+                TaskGraphExecutionFailureReason.ACTION_OUTPUT_INVALID,
+                source=outcome,
+            )
+            await self._persistence.finish_node(failure)
+            self._outcomes.append(failure)
+            raise TaskGraphExecutionError(TaskGraphExecutionFailureReason.ACTION_OUTPUT_INVALID)
+        await self._persistence.finish_node(outcome, output=output)
+        self._outcomes.append(outcome)
+        return output
+
     @staticmethod
-    def _node_request(
+    def node_request(
         node: TaskGraphNode,
         node_input: dict[str, JsonValue],
     ) -> str | None:

@@ -129,6 +129,9 @@ class InteractionService:
     async def cancel_async(self, checkpoint_id: CheckpointId) -> ExecutionResult:
         return await self._runtime_service().cancel_async(checkpoint_id)
 
+    async def detach_async(self, checkpoint_id: CheckpointId) -> None:
+        await self._runtime_service().detach_async(checkpoint_id)
+
     def chat(self) -> InteractionChatSession:
         return InteractionChatSession(self._runtime_service().chat())
 

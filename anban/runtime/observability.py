@@ -29,6 +29,7 @@ _AUDIT_EVENT_PREFIXES = (
     "run.final",
     "run.error",
     "run.graph_",
+    "run.recovery_",
 )
 _CAPABILITY_TERMINAL_EVENTS = frozenset(
     {"capability.completed", "capability.failed", "capability.cancelled", "capability.timed_out"}
@@ -107,11 +108,14 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "repair_attempts_exhausted",
         "repairable",
         "remaining_attempts",
+        "recovery_attempt",
+        "recovered_status",
         "requires_clarification",
         "rationale_hash",
         "repeated_reusable_need",
         "response_variant",
         "result_correlation_id",
+        "restart_recoverable",
         "route",
         "reason",
         "result_kind",
@@ -119,6 +123,7 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "should_acquire_skill",
         "should_replan",
         "side_effect_completed",
+        "side_effect_replayed",
         "size_bytes",
         "status_code",
         "state_hash",

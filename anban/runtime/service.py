@@ -54,6 +54,7 @@ from anban.runtime.graph_routing import (
 from anban.runtime.graph_task_runtime import PersistentGraphTaskRunner
 from anban.runtime.model_persistence import PersistedModelPort
 from anban.runtime.persistence import RunPersistence
+from anban.runtime.recovery import RuntimeRecovery
 from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
 
 _STORAGE_FAILURE_DETAILS = frozenset(
@@ -122,10 +123,26 @@ class PersistentRuntime:
         )
 
     async def resume_async(self, checkpoint_id: CheckpointId) -> ContinuationResult:
-        return await self._continuations.resume(checkpoint_id)
+        if self._continuations.contains(checkpoint_id):
+            return await self._continuations.resume(checkpoint_id)
+        return await self._recovery().resume(checkpoint_id)
 
     async def cancel_async(self, checkpoint_id: CheckpointId) -> ExecutionResult:
-        return await self._continuations.cancel(checkpoint_id)
+        if self._continuations.contains(checkpoint_id):
+            return await self._continuations.cancel(checkpoint_id)
+        return await self._recovery().resume(checkpoint_id, cancel=True)
+
+    async def detach_async(self, checkpoint_id: CheckpointId) -> None:
+        await self._continuations.abandon(checkpoint_id)
+
+    def _recovery(self) -> RuntimeRecovery:
+        return RuntimeRecovery(
+            self._model,
+            self._capabilities,
+            self._unit_of_work,
+            self._sufficiency,
+            artifact_cleanup=self._artifact_cleanup,
+        )
 
     async def _execute(
         self,

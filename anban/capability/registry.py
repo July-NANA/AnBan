@@ -211,6 +211,41 @@ class CapabilityRegistry(CapabilityPort):
                 handler.descriptor.name,
             ) from exc
 
+    async def restore(
+        self,
+        name: str,
+        context: InvocationContext,
+        progress_sequence: int,
+    ) -> None:
+        handler = self._get_handler(name)
+        recovery = getattr(handler, "recover", None)
+        if not callable(recovery):
+            raise self._error(
+                ErrorCode.CAPABILITY_UNAVAILABLE,
+                "Capability does not support durable recovery",
+                name,
+            )
+        key = str(context.invocation_id)
+        if key in self._active or progress_sequence < 0:
+            raise self._error(
+                ErrorCode.CAPABILITY_EXECUTION_FAILED,
+                "Capability recovery state is invalid",
+                name,
+            )
+        recover = cast(Callable[[InvocationContext, int], Awaitable[None]], recovery)
+        try:
+            await recover(context, progress_sequence)
+        except AnbanError:
+            raise
+        except Exception as exc:
+            raise self._error(
+                ErrorCode.CAPABILITY_EXECUTION_FAILED,
+                "Capability recovery failed",
+                name,
+            ) from exc
+        self._active[key] = (handler, context)
+        self._progress_sequences[key] = progress_sequence
+
     def _active_invocation(
         self, context: InvocationContext
     ) -> tuple[CapabilityHandler, InvocationContext]:

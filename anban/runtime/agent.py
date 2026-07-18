@@ -175,8 +175,6 @@ class FixedGeneralAgent(AgentExecutionSupport):
         return outcome
 
     def graph_edges(self) -> tuple[tuple[str, str], ...]:
-        """Expose topology facts for deterministic acceptance without a second scheduler."""
-
         graph = self._graph.get_graph()
         return tuple((edge.source, edge.target) for edge in graph.edges)
 
@@ -581,9 +579,15 @@ class FixedGeneralAgent(AgentExecutionSupport):
                     invocation_id=new_capability_invocation_id(),
                     deadline_at=deadline_at,
                     metadata=SafeMetadata(
-                        {}
-                        if agent_input.session_id is None
-                        else {"session_id": str(agent_input.session_id)}
+                        {
+                            "call_signature": signature,
+                            "deadline_epoch_ms": int(deadline_at.timestamp() * 1000),
+                            **(
+                                {}
+                                if agent_input.session_id is None
+                                else {"session_id": str(agent_input.session_id)}
+                            ),
+                        }
                     ),
                 )
                 result = await self._invoke_capability(call, context, progress)

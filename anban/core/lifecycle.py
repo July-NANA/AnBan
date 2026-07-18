@@ -88,6 +88,7 @@ CHECKPOINT_TRANSITIONS: Mapping[CheckpointStatus, frozenset[CheckpointStatus]] =
     ),
     CheckpointStatus.CANCEL_REQUESTED: frozenset(
         {
+            CheckpointStatus.COMPLETED,
             CheckpointStatus.FAILED,
             CheckpointStatus.CANCELLED,
             CheckpointStatus.TIMED_OUT,

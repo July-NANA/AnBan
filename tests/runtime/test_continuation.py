@@ -292,6 +292,36 @@ async def test_unknown_and_repeated_checkpoint_operations_fail_explicitly(
     assert (tmp_path / "known.txt").read_text() == "done"
 
 
+async def test_detach_releases_local_coroutine_without_cancelling_worker(tmp_path: Path) -> None:
+    factory = MemoryUnitOfWorkFactory()
+    runtime = runtime_for(
+        tmp_path,
+        factory,
+        [
+            background_turn(
+                "detach",
+                "import time;from pathlib import Path;time.sleep(.2);"
+                "Path('detached.txt').write_text('durable')",
+            )
+        ],
+    )
+
+    waiting = await runtime.start_async("Detach local ownership from durable external work.")
+    assert isinstance(waiting, WaitingExecution)
+    await runtime.detach_async(waiting.checkpoint_id)
+    await asyncio.sleep(0.3)
+
+    assert (tmp_path / "detached.txt").read_text() == "durable"
+    state = tmp_path / ".anban" / "process" / str(waiting.invocation_id)
+    assert (state / "result.json").is_file()
+    assert not (state / "cancel").exists()
+    aggregate = await load(factory, waiting)
+    assert aggregate is not None
+    assert aggregate.run.status.value == "running"
+    assert aggregate.invocations[0].status.value == "running"
+    assert aggregate.checkpoints[0].status is CheckpointStatus.WAITING
+
+
 async def test_graph_node_uses_the_same_checkpoint_continuation_path(tmp_path: Path) -> None:
     factory = MemoryUnitOfWorkFactory()
     spec = one_action_graph()

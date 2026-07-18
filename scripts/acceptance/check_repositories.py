@@ -377,6 +377,21 @@ async def accept_repositories() -> None:
             if await unit.executions.get_context_entry(task_entry.id) != superseded_task_entry:
                 raise RepositoryAcceptanceError("Context entry read mismatch")
 
+        ensure_node_run_transition(running_node.status, NodeRunStatus.SUCCEEDED)
+        output_node = running_node.model_copy(
+            update={
+                "status": NodeRunStatus.SUCCEEDED,
+                "finished_at": checkpoint.created_at,
+                "output": {"result": "durable graph output"},
+            }
+        )
+        async with factory() as unit:
+            await unit.executions.update_node_run(output_node)
+            await unit.commit()
+        async with factory() as unit:
+            if await unit.executions.get_node_run(node.id) != output_node:
+                raise RepositoryAcceptanceError("Node output update was not durable")
+
         try:
             async with factory() as unit:
                 await unit.executions.update_task(running_task)
@@ -461,7 +476,8 @@ def main() -> int:
         return 1
     print(
         "repository acceptance: PASS - create, read, locked update, aggregate, order, "
-        "Task/Session Context restart, immutable Graph revisions, summary coverage, rollback"
+        "Task/Session Context restart, immutable Graph revisions, durable Node output, "
+        "summary coverage, rollback"
     )
     return 0
 

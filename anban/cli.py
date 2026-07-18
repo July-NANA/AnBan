@@ -19,7 +19,7 @@ from anban.application import (
     build_query_application,
 )
 from anban.core.errors import AnbanError, ErrorCategory, ErrorCode, ErrorInfo
-from anban.core.ids import ExecutionRunId, SessionId, TaskId, new_interaction_id
+from anban.core.ids import CheckpointId, ExecutionRunId, SessionId, TaskId, new_interaction_id
 from anban.interaction import InteractionEnvelope
 from anban.runtime import (
     AgentOutcomeStatus,
@@ -52,6 +52,7 @@ def parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="Execute one durable task.")
     run.add_argument("values", nargs="+")
     run.add_argument("--async", dest="async_mode", action="store_true")
+    run.add_argument("--detach", action="store_true")
     add_json_option(run)
     chat = commands.add_parser("chat", help="Start one bounded temporary chat.")
     add_json_option(chat)
@@ -108,7 +109,7 @@ async def execute_run(task: str, *, json_output: bool) -> int:
     return result_exit_code(result)
 
 
-async def execute_run_async(task: str, *, json_output: bool) -> int:
+async def execute_run_async(task: str, *, json_output: bool, detach: bool = False) -> int:
     application = await build_application()
     waiting: WaitingExecution | None = None
     try:
@@ -116,6 +117,9 @@ async def execute_run_async(task: str, *, json_output: bool) -> int:
         while isinstance(current, WaitingExecution):
             waiting = current
             emit_waiting(waiting, json_output=json_output)
+            if detach:
+                await application.interactions.detach_async(waiting.checkpoint_id)
+                return EXIT_SUCCESS
             current = await application.interactions.resume_async(waiting.checkpoint_id)
         emit_result(current, json_output=json_output)
         return result_exit_code(current)
@@ -126,6 +130,28 @@ async def execute_run_async(task: str, *, json_output: bool) -> int:
             )
             emit_result(terminal, json_output=json_output)
         raise
+    finally:
+        await asyncio.shield(application.close())
+
+
+async def execute_checkpoint(
+    checkpoint_id: CheckpointId,
+    *,
+    cancel: bool,
+    json_output: bool,
+) -> int:
+    application = await build_application()
+    try:
+        current = (
+            await application.interactions.cancel_async(checkpoint_id)
+            if cancel
+            else await application.interactions.resume_async(checkpoint_id)
+        )
+        while isinstance(current, WaitingExecution):
+            emit_waiting(current, json_output=json_output)
+            current = await application.interactions.resume_async(current.checkpoint_id)
+        emit_result(current, json_output=json_output)
+        return result_exit_code(current)
     finally:
         await asyncio.shield(application.close())
 
@@ -512,10 +538,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.command == "run":
             values = list(arguments.values)
             if values[0] == "show":
-                if len(values) != 2 or arguments.async_mode:
+                if len(values) != 2 or arguments.async_mode or arguments.detach:
                     raise ValueError("run show requires one Run ID")
                 return asyncio.run(show_run(parse_run_id(values[1]), json_output=json_output))
+            if values[0] in {"resume", "cancel"}:
+                if len(values) != 2 or arguments.async_mode or arguments.detach:
+                    raise ValueError("run continuation requires one Checkpoint ID")
+                return asyncio.run(
+                    execute_checkpoint(
+                        parse_checkpoint_id(values[1]),
+                        cancel=values[0] == "cancel",
+                        json_output=json_output,
+                    )
+                )
+            if arguments.detach and not arguments.async_mode:
+                raise ValueError("run detach requires async mode")
             if arguments.async_mode:
+                if arguments.detach:
+                    return asyncio.run(
+                        execute_run_async(" ".join(values), json_output=json_output, detach=True)
+                    )
                 return asyncio.run(execute_run_async(" ".join(values), json_output=json_output))
             return asyncio.run(execute_run(" ".join(values), json_output=json_output))
         if arguments.command == "chat":
@@ -551,6 +593,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def parse_run_id(value: str) -> ExecutionRunId:
     return ExecutionRunId(UUID(value))
+
+
+def parse_checkpoint_id(value: str) -> CheckpointId:
+    return CheckpointId(UUID(value))
 
 
 def parse_context_id(scope: str, value: str) -> TaskId | SessionId:

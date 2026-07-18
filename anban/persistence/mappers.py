@@ -244,6 +244,7 @@ def node_record(node: NodeRun) -> NodeRunRecord:
         created_at=node.created_at,
         started_at=node.started_at,
         finished_at=node.finished_at,
+        output=node.output,
         error_code=None if node.error_code is None else node.error_code.value,
         safe_metadata=dict(node.metadata.root),
     )
@@ -258,6 +259,7 @@ def node_domain(record: NodeRunRecord) -> NodeRun:
         created_at=record.created_at,
         started_at=record.started_at,
         finished_at=record.finished_at,
+        output=record.output,
         error_code=error_code(record.error_code),
         metadata=metadata(record.safe_metadata),
     )

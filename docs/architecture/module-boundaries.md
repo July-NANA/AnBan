@@ -52,8 +52,12 @@ waits for the real terminal result before exposing a Tool Result. It does not re
 side effect. For asynchronous execution, Runtime creates a durable Checkpoint after real background
 acceptance, returns a bounded waiting projection, and resumes or cancels only after the requested
 Checkpoint transition commits. The fixed Agent and every Task Graph action use the same path.
-Live continuation handles remain in the current service process; reconstructing and continuing an
-in-flight operation after a full service-process exit belongs to the restart coordinator delivery.
+Runtime can explicitly detach local coroutine ownership while leaving the durable waiting state
+intact. A fresh Application rebuilds the Invocation context and Event sequence from PostgreSQL,
+restores the already-started Capability through its optional recovery contract, and continues from
+the authoritative result. Task Graph recovery reconstructs control state from immutable revision
+data and persisted structured NodeRun outputs: completed actions are reused, the active action
+consumes the recovered result, and only previously unstarted actions may execute.
 
 ## Model
 
@@ -77,8 +81,11 @@ Handler. No Skill source or installer receives a special branch. MCP and externa
 future categories. `process.execute` can launch the same governed process in background mode only
 after real spawn succeeds. The Registry retains its authoritative Runtime-supplied Invocation
 context, enforces monotonic progress, supports cancellation and waiting, and correlates the result
-with the system Invocation identity rather than a model argument. No queue or background-specific
-Tool/Handler exists.
+with the system Invocation identity rather than a model argument. Its independent worker retains
+physical process ownership across service exit. Raw arguments and protected values cross a private
+stdin pipe and are never written to recovery state; the Workspace `.anban/process` area stores only
+bounded start, cancel, and validated result facts. No queue or background-specific Tool/Handler
+exists.
 
 ## Persistence
 
@@ -96,9 +103,11 @@ Checkpoint rows durably correlate one Run, Node, and Invocation, retain only a h
 continuation state, and transition through waiting, resumed or cancel-requested, then one terminal
 state. Their ordered Events share the Run sequence and system-owned Checkpoint identity. Background
 Process acceptance, progress, Checkpoint, and terminal Events are reconstructable by a fresh query
-Application; the Invocation remains `running` until the actual result transaction. Recovering an
-in-flight OS process and live continuation after service-process exit requires the later restart
-coordinator delivery.
+Application; the Invocation remains `running` until the actual result transaction. Structured
+NodeRun outputs are nullable JSON objects used to reconstruct prior Task Graph action state without
+re-execution. Recovery appends `run.recovery_started`, `run.recovery_completed`, or
+`run.recovery_failed`; terminal Capability, Checkpoint, Artifact, Node, Run, and Task writes remain
+short PostgreSQL transactions in the original ordered Event stream.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
 

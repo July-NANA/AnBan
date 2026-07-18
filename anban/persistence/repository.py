@@ -229,6 +229,7 @@ class SQLAlchemyExecutionRepository:
         record.status = node_run.status.value
         record.started_at = node_run.started_at
         record.finished_at = node_run.finished_at
+        record.output = node_run.output
         record.error_code = None if node_run.error_code is None else node_run.error_code.value
         record.safe_metadata = dict(node_run.metadata.root)
 

@@ -36,6 +36,7 @@ CAPABILITY_EVENT_METADATA = frozenset(
         "progress_sequence",
         "progress_status",
         "result_correlation_id",
+        "restart_recoverable",
         "size_bytes",
         "status_code",
         "summary_count",

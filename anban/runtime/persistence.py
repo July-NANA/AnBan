@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
+from pydantic import JsonValue
+
 from anban.capability import (
     CapabilityDescriptor,
     CapabilityKind,
@@ -52,6 +54,7 @@ from anban.runtime.contracts import (
     CompletionAssessment,
     ReplanDecision,
 )
+from anban.runtime.persistence_errors import audit_trace_error, persistence_error
 from anban.runtime.persistence_events import EventFact, task_route_transition
 from anban.runtime.persistence_metadata import (
     CAPABILITY_EVENT_METADATA,
@@ -63,6 +66,7 @@ from anban.runtime.persistence_metadata import (
     outcome_metadata,
     terminal_statuses,
 )
+from anban.runtime.recovery_persistence import RecoveryPersistence
 
 _MODEL_EVENT_METADATA = frozenset(
     {
@@ -101,26 +105,6 @@ _MODEL_DIAGNOSTIC_METADATA = frozenset(
 InvocationPersistenceState = Literal["committed", "uncommitted", "unconfirmed"]
 
 
-def persistence_error(stage: str) -> AnbanError:
-    return AnbanError(
-        ErrorInfo(
-            code=ErrorCode.PERSISTENCE_WRITE_FAILED,
-            message="Runtime persistence operation failed",
-            details=SafeMetadata({"stage": stage}),
-        )
-    )
-
-
-def audit_trace_error(stage: str) -> AnbanError:
-    return AnbanError(
-        ErrorInfo(
-            code=ErrorCode.AUDIT_TRACE_WRITE_FAILED,
-            message="Runtime Event persistence failed",
-            details=SafeMetadata({"stage": stage}),
-        )
-    )
-
-
 class RunPersistence:
     """Own one Run's deterministic Event sequence and short transactions."""
 
@@ -130,13 +114,15 @@ class RunPersistence:
         task: Task,
         run: ExecutionRun,
         node: NodeRun,
+        sequence: int = 0,
     ) -> None:
         self._factory = factory
         self.task = task
         self.run = run
         self.node = node
-        self._sequence = 0
+        self._sequence = sequence
         self.checkpoints = CheckpointPersistence(factory, self._write)
+        self.recovery = RecoveryPersistence(self._write)
 
     async def initialize(self) -> None:
         async def operation(repository: ExecutionRepository) -> None:
@@ -659,13 +645,19 @@ class RunPersistence:
         await self._write("finish", operation, facts)
         self.task, self.run, self.node = task, run, node
 
-    async def finish_node(self, outcome: AgentOutcome) -> None:
+    async def finish_node(
+        self,
+        outcome: AgentOutcome,
+        *,
+        output: dict[str, JsonValue] | None = None,
+    ) -> None:
         _, _, node_status = terminal_statuses(outcome.status)
         error_code = None if outcome.error is None else outcome.error.code
         node = self.node.model_copy(
             update={
                 "status": node_status,
                 "finished_at": now_utc(),
+                "output": output,
                 "error_code": error_code,
             }
         )

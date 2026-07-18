@@ -253,6 +253,18 @@ async def accept_schema() -> None:
                 )
                 await expect_integrity_failure(
                     connection,
+                    insert(NodeRunRecord).values(
+                        id=uuid4(),
+                        run_id=run_one,
+                        node_name="invalid_output",
+                        status="created",
+                        created_at=now,
+                        output=["not", "an", "object"],
+                        safe_metadata={},
+                    ),
+                )
+                await expect_integrity_failure(
+                    connection,
                     insert(CheckpointRecord).values(
                         id=uuid4(),
                         run_id=run_two,
@@ -292,7 +304,7 @@ def main() -> int:
         return 1
     print(
         "migration schema acceptance: PASS - head, tables, statuses, relationships, event order, "
-        "Checkpoint correlation, Context scope and Secret constraints"
+        "Checkpoint correlation, Node output shape, Context scope and Secret constraints"
     )
     return 0
 

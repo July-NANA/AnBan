@@ -344,6 +344,31 @@ async def test_background_process_reports_monotonic_progress_and_correlated_resu
     assert repeated.value.info.code is ErrorCode.CAPABILITY_UNAVAILABLE
 
 
+async def test_background_process_restores_into_a_fresh_registry(tmp_path: Path) -> None:
+    original = registry(tmp_path)
+    invocation_context = context()
+    accepted = await original.invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": ["-c", "import time;time.sleep(.2);print('restored result')"],
+            "background": True,
+        },
+        invocation_context,
+    )
+    assert accepted.status is CapabilityResultStatus.ACCEPTED
+    assert (await original.progress(invocation_context)).sequence == 1
+
+    restarted = registry(tmp_path)
+    await restarted.restore("process.execute", invocation_context, 1)
+    assert (await restarted.progress(invocation_context)).sequence == 2
+    result = await restarted.wait(invocation_context)
+
+    assert result.status is CapabilityResultStatus.COMPLETED
+    assert observation(result)["stdout"] == "restored result\n"
+    assert result.metadata.root["restart_recoverable"] is True
+
+
 async def test_background_process_cancel_and_timeout_are_real_terminal_results(
     tmp_path: Path,
 ) -> None:

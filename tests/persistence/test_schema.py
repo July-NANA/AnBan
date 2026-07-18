@@ -85,8 +85,8 @@ def test_alembic_has_one_reversible_head_revision() -> None:
     configuration = Config(repository / "alembic.ini")
     scripts = ScriptDirectory.from_config(configuration)
     head = scripts.get_current_head()
-    assert head == "0006_checkpoints"
+    assert head == "0007_node_run_outputs"
     revision = scripts.get_revision(head)
     assert revision is not None
-    assert revision.down_revision == "0005_graph_revisions"
+    assert revision.down_revision == "0006_checkpoints"
     assert callable(revision.module.downgrade)

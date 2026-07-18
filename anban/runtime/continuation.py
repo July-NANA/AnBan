@@ -23,6 +23,7 @@ class _WaitingState:
     value: WaitingExecution
     persistence: RunPersistence
     gate: asyncio.Event
+    abandoned: bool = False
 
 
 @dataclass
@@ -63,6 +64,8 @@ class ContinuationControl:
         )
         await self._waiting.put(waiting)
         await waiting.gate.wait()
+        if waiting.abandoned:
+            raise _ContinuationAbandoned()
 
     async def next_waiting(self) -> _WaitingState:
         return await self._waiting.get()
@@ -83,6 +86,9 @@ class ContinuationManager:
 
     def __init__(self) -> None:
         self._active: dict[CheckpointId, _ActiveContinuation] = {}
+
+    def contains(self, checkpoint_id: CheckpointId) -> bool:
+        return checkpoint_id in self._active
 
     async def start(self, executor: ContinuationExecutor) -> ContinuationResult:
         control = ContinuationControl()
@@ -120,6 +126,19 @@ class ContinuationManager:
         active.execution.cancel()
         try:
             return await active.execution
+        finally:
+            self._active.pop(checkpoint_id, None)
+
+    async def abandon(self, checkpoint_id: CheckpointId) -> None:
+        """Release local coroutine ownership without cancelling durable external work."""
+
+        active = self._get(checkpoint_id)
+        if active.resumed:
+            raise self._error("checkpoint_already_resumed")
+        active.waiting.abandoned = True
+        active.waiting.gate.set()
+        try:
+            await asyncio.gather(active.execution, return_exceptions=True)
         finally:
             self._active.pop(checkpoint_id, None)
 
@@ -163,3 +182,7 @@ class ContinuationManager:
                 details=SafeMetadata({"reason": reason}),
             )
         )
+
+
+class _ContinuationAbandoned(BaseException):
+    """Internal non-cancellation unwind after durable ownership is detached."""

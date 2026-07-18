@@ -46,6 +46,7 @@ class TaskGraphExecutionFailureReason(StrEnum):
     LOOP_BUDGET_EXCEEDED = "loop_budget_exceeded"
     NODE_TIMED_OUT = "node_timed_out"
     GRAPH_TIMED_OUT = "graph_timed_out"
+    RECOVERY_STATE_INVALID = "recovery_state_invalid"
 
 
 class TaskGraphExecutionError(RuntimeError):

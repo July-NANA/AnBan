@@ -47,8 +47,10 @@ work retains the fixed Agent, while materially structured work must supply a ful
 The selected route is durable; a graph route atomically appends and links its initial
 `GraphRevision`, then each real action executes as its own durable Node through the existing Agent,
 Model, Capability, Invocation, Artifact, and Event path. Invalid planning or node JSON fails the
-Run rather than falling back to the fixed Agent. Checkpoints, background continuation, and restart
-recovery remain later deliveries.
+Run rather than falling back to the fixed Agent. Runtime now also recognizes the existing
+Capability lifecycle's non-terminal `accepted` result, records bounded monotonic progress, and
+waits for the real terminal result before exposing a Tool Result. It does not replay a background
+side effect. Checkpoints, detached continuation, and restart recovery remain later deliveries.
 
 ## Model
 
@@ -69,7 +71,11 @@ execution channel. Production Capability names are `memory.context`, `skill.acti
 `process.execute`. The Memory Handler uses the existing Unit of Work Port and the same Registry;
 it does not define another backend or discovery path. A concrete tool normally adds a Skill, not a
 Handler. No Skill source or installer receives a special branch. MCP and external Agents remain
-future categories.
+future categories. `process.execute` can launch the same governed process in background mode only
+after real spawn succeeds. The Registry retains its authoritative Runtime-supplied Invocation
+context, enforces monotonic progress, supports cancellation and waiting, and correlates the result
+with the system Invocation identity rather than a model argument. No queue or background-specific
+Tool/Handler exists.
 
 ## Persistence
 
@@ -83,7 +89,10 @@ composite foreign keys keep Runs and predecessors on the same Task. Repository m
 update, partial unique indexes prevent a second initial or sibling successor, and a database
 trigger rejects direct UPDATE statements. The chain tail is the current revision without mutating
 older rows.
-Checkpoints are not implemented in v0.1.
+Checkpoints are not implemented in v0.1. Background Process acceptance, progress, and terminal
+Events are durable against fresh queries; the Invocation remains `running` until the actual result
+transaction. Recovering an in-flight OS process after service-process exit requires the later
+Checkpoint/restart delivery.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
 

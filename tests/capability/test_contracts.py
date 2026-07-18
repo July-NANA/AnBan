@@ -96,3 +96,13 @@ def test_failed_result_requires_structured_error() -> None:
 
     with pytest.raises(ValidationError):
         CapabilityResult(status=CapabilityResultStatus.FAILED)
+
+
+def test_accepted_result_is_strictly_non_terminal() -> None:
+    accepted = CapabilityResult(status=CapabilityResultStatus.ACCEPTED)
+    assert accepted.observation is None
+    with pytest.raises(ValidationError):
+        CapabilityResult(
+            status=CapabilityResultStatus.ACCEPTED,
+            observation="not terminal",
+        )

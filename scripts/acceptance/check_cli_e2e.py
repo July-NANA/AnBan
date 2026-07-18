@@ -322,10 +322,11 @@ async def gate_a() -> dict[str, object]:
             f"endpoint {endpoint} using an available command-line or Python program and verify its "
             "gate-http-ok response, demonstrate stdin or an environment override, and generate "
             "gate-a-result.txt and gate-a-summary.json, collecting both together as declared "
-            "Artifacts from one successful process execution. Do not claim completion unless "
-            "every operation really ran. Once those operations and Artifact collection have "
-            "succeeded, stop executing commands and summarize; do not add redundant verification "
-            "commands."
+            "Artifacts from one successful process execution. Run that Artifact-producing "
+            "process with process.execute background=true so its real accepted, progress, and "
+            "terminal lifecycle can be verified. Do not claim completion unless every operation "
+            "really ran. Once those operations and Artifact collection have succeeded, stop "
+            "executing commands and summarize; do not add redundant verification commands."
         )
     require_success(result, "Gate A")
     observation = await trace(result.run_id)
@@ -365,8 +366,43 @@ async def gate_a() -> dict[str, object]:
     }
     if not any(summary_keys <= set(entry.metadata.root) for entry in capability_events):
         raise RuntimeGateError("Gate A Process summary is incomplete")
-    if not any(entry.metadata.root.get("artifact_count") == 2 for entry in capability_events):
+    background_terminal = next(
+        (
+            entry
+            for entry in capability_events
+            if entry.metadata.root.get("artifact_count") == 2
+            and entry.metadata.root.get("background") is True
+        ),
+        None,
+    )
+    if background_terminal is None:
         raise RuntimeGateError("Gate A did not collect two Artifacts in one Process invocation")
+    correlation = str(background_terminal.invocation_id)
+    if background_terminal.metadata.root.get("result_correlation_id") != correlation:
+        raise RuntimeGateError("Gate A background terminal correlation is invalid")
+    background_started = tuple(
+        entry
+        for entry in observation.audit
+        if entry.event_type == "capability.background_started"
+        and entry.invocation_id == background_terminal.invocation_id
+    )
+    progress = tuple(
+        entry
+        for entry in observation.audit
+        if entry.event_type == "capability.progressed"
+        and entry.invocation_id == background_terminal.invocation_id
+    )
+    if (
+        len(background_started) != 1
+        or not progress
+        or background_started[0].metadata.root.get("result_correlation_id") != correlation
+        or any(
+            entry.metadata.root.get("result_correlation_id") != correlation for entry in progress
+        )
+        or tuple(entry.metadata.root.get("progress_sequence") for entry in progress)
+        != tuple(range(1, len(progress) + 1))
+    ):
+        raise RuntimeGateError("Gate A background progress correlation is incomplete")
     application = await build_query_application()
     try:
         artifacts = await application.interactions.artifacts(result.run_id)
@@ -376,12 +412,16 @@ async def gate_a() -> dict[str, object]:
     if (
         len(artifacts) != 2
         or len({artifact.invocation_id for artifact in artifacts}) != 1
-        or artifacts[0].invocation_id is None
+        or artifacts[0].invocation_id != background_terminal.invocation_id
         or not detail.observability.complete
         or detail.observability.inconsistencies
     ):
         raise RuntimeGateError("Gate A restart query is incomplete")
-    return {"run_id": str(result.run_id), "artifact_ids": [str(item.id) for item in artifacts]}
+    return {
+        "run_id": str(result.run_id),
+        "background_invocation_id": correlation,
+        "artifact_ids": [str(item.id) for item in artifacts],
+    }
 
 
 async def gate_recoverable_artifacts() -> dict[str, object]:

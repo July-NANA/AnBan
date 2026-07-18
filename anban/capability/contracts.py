@@ -175,10 +175,17 @@ class CapabilityInventoryPort(Protocol):
 
 
 class CapabilityResultStatus(StrEnum):
+    ACCEPTED = "accepted"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
     TIMED_OUT = "timed_out"
+
+
+class CapabilityProgressStatus(StrEnum):
+    ACCEPTED = "accepted"
+    RUNNING = "running"
+    RESULT_READY = "result_ready"
 
 
 class CapabilityDescriptor(CapabilityValue):
@@ -223,6 +230,14 @@ class ArtifactReference(CapabilityValue):
     media_type: str = Field(min_length=1, max_length=128)
 
 
+class CapabilityProgress(CapabilityValue):
+    """One system-correlated, monotonic observation of an active invocation."""
+
+    sequence: int = Field(ge=0)
+    status: CapabilityProgressStatus
+    metadata: SafeMetadata = Field(default_factory=SafeMetadata)
+
+
 class CapabilityResult(CapabilityValue):
     status: CapabilityResultStatus
     observation: str | None = Field(default=None, max_length=1_048_576)
@@ -235,6 +250,9 @@ class CapabilityResult(CapabilityValue):
         if self.status is CapabilityResultStatus.COMPLETED:
             if self.observation is None or self.error is not None:
                 raise ValueError("completed Capability requires an observation and no error")
+        elif self.status is CapabilityResultStatus.ACCEPTED:
+            if self.observation is not None or self.error is not None or self.artifacts:
+                raise ValueError("accepted Capability cannot contain a terminal outcome")
         elif self.error is None:
             raise ValueError("non-completed Capability requires an error")
         return self
@@ -262,5 +280,9 @@ class CapabilityPort(Protocol):
         arguments: dict[str, JsonValue],
         context: InvocationContext,
     ) -> CapabilityResult: ...
+
+    async def progress(self, context: InvocationContext) -> CapabilityProgress: ...
+
+    async def wait(self, context: InvocationContext) -> CapabilityResult: ...
 
     async def cancel(self, context: InvocationContext) -> None: ...

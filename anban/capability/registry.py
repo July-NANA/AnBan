@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
+from typing import cast
 
 from pydantic import JsonValue
 
@@ -10,7 +11,9 @@ from anban.capability.contracts import (
     CapabilityDescriptor,
     CapabilityHandler,
     CapabilityPort,
+    CapabilityProgress,
     CapabilityResult,
+    CapabilityResultStatus,
     InvocationContext,
 )
 from anban.capability.schema import (
@@ -29,6 +32,7 @@ class CapabilityRegistry(CapabilityPort):
     def __init__(self, handlers: Iterable[CapabilityHandler] = ()) -> None:
         self._handlers: dict[str, CapabilityHandler] = {}
         self._active: dict[str, tuple[CapabilityHandler, InvocationContext]] = {}
+        self._progress_sequences: dict[str, int] = {}
         for handler in handlers:
             self.register(handler)
 
@@ -92,9 +96,23 @@ class CapabilityRegistry(CapabilityPort):
                 name,
             )
         self._active[invocation_key] = (handler, context)
+        retain = False
         try:
             result = await handler.invoke(arguments, context)
-            return CapabilityResult.model_validate(result)
+            validated = CapabilityResult.model_validate(result)
+            if validated.status is CapabilityResultStatus.ACCEPTED:
+                if not callable(getattr(handler, "progress", None)) or not callable(
+                    getattr(handler, "wait", None)
+                ):
+                    raise self._error(
+                        ErrorCode.CAPABILITY_EXECUTION_FAILED,
+                        "Capability accepted background work without lifecycle support",
+                        name,
+                    )
+                validated = self._correlate(validated, context)
+                self._progress_sequences[invocation_key] = 0
+                retain = True
+            return validated
         except AnbanError:
             raise
         except Exception as exc:
@@ -104,9 +122,98 @@ class CapabilityRegistry(CapabilityPort):
                 name,
             ) from exc
         finally:
-            self._active.pop(invocation_key, None)
+            if not retain:
+                self._active.pop(invocation_key, None)
+
+    async def progress(self, context: InvocationContext) -> CapabilityProgress:
+        handler, authoritative_context = self._active_invocation(context)
+        progress = getattr(handler, "progress", None)
+        if not callable(progress):
+            raise self._error(
+                ErrorCode.CAPABILITY_UNAVAILABLE,
+                "Capability does not support background progress",
+                handler.descriptor.name,
+            )
+        inspect_progress = cast(Callable[[InvocationContext], Awaitable[object]], progress)
+        try:
+            validated = CapabilityProgress.model_validate(
+                await inspect_progress(authoritative_context)
+            )
+            key = str(context.invocation_id)
+            previous = self._progress_sequences.get(key)
+            if previous is None or validated.sequence <= previous:
+                raise self._error(
+                    ErrorCode.CAPABILITY_EXECUTION_FAILED,
+                    "Capability progress sequence is not monotonic",
+                    handler.descriptor.name,
+                )
+            self._progress_sequences[key] = validated.sequence
+            return validated.model_copy(
+                update={
+                    "metadata": SafeMetadata(
+                        {
+                            **validated.metadata.root,
+                            "result_correlation_id": key,
+                        }
+                    )
+                }
+            )
+        except AnbanError:
+            raise
+        except Exception as exc:
+            raise self._error(
+                ErrorCode.CAPABILITY_EXECUTION_FAILED,
+                "Capability progress inspection failed",
+                handler.descriptor.name,
+            ) from exc
+
+    async def wait(self, context: InvocationContext) -> CapabilityResult:
+        handler, authoritative_context = self._active_invocation(context)
+        waiter = getattr(handler, "wait", None)
+        if not callable(waiter):
+            raise self._error(
+                ErrorCode.CAPABILITY_UNAVAILABLE,
+                "Capability does not support background result waiting",
+                handler.descriptor.name,
+            )
+        wait_for_result = cast(Callable[[InvocationContext], Awaitable[object]], waiter)
+        try:
+            result = CapabilityResult.model_validate(await wait_for_result(authoritative_context))
+            if result.status is CapabilityResultStatus.ACCEPTED:
+                raise self._error(
+                    ErrorCode.CAPABILITY_EXECUTION_FAILED,
+                    "Capability wait returned a non-terminal result",
+                    handler.descriptor.name,
+                )
+            result = self._correlate(result, context)
+        except AnbanError:
+            raise
+        except Exception as exc:
+            raise self._error(
+                ErrorCode.CAPABILITY_EXECUTION_FAILED,
+                "Capability result wait failed",
+                handler.descriptor.name,
+            ) from exc
+        self._active.pop(str(context.invocation_id), None)
+        self._progress_sequences.pop(str(context.invocation_id), None)
+        return result
 
     async def cancel(self, context: InvocationContext) -> None:
+        handler, authoritative_context = self._active_invocation(context)
+        try:
+            await handler.cancel(authoritative_context)
+        except AnbanError:
+            raise
+        except Exception as exc:
+            raise self._error(
+                ErrorCode.CAPABILITY_EXECUTION_FAILED,
+                "Capability cancellation failed",
+                handler.descriptor.name,
+            ) from exc
+
+    def _active_invocation(
+        self, context: InvocationContext
+    ) -> tuple[CapabilityHandler, InvocationContext]:
         active = self._active.get(str(context.invocation_id))
         if active is None:
             raise self._error(
@@ -120,16 +227,20 @@ class CapabilityRegistry(CapabilityPort):
                 "Capability invocation context does not match",
                 handler.descriptor.name,
             )
-        try:
-            await handler.cancel(authoritative_context)
-        except AnbanError:
-            raise
-        except Exception as exc:
-            raise self._error(
-                ErrorCode.CAPABILITY_EXECUTION_FAILED,
-                "Capability cancellation failed",
-                handler.descriptor.name,
-            ) from exc
+        return handler, authoritative_context
+
+    @staticmethod
+    def _correlate(result: CapabilityResult, context: InvocationContext) -> CapabilityResult:
+        return result.model_copy(
+            update={
+                "metadata": SafeMetadata(
+                    {
+                        **result.metadata.root,
+                        "result_correlation_id": str(context.invocation_id),
+                    }
+                )
+            }
+        )
 
     def _get_handler(self, name: str) -> CapabilityHandler:
         handler = self._handlers.get(name)

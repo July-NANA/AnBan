@@ -311,6 +311,95 @@ async def test_process_can_be_cancelled_through_registry(tmp_path: Path) -> None
     assert result.metadata.root["cancelled"] is True
 
 
+async def test_background_process_reports_monotonic_progress_and_correlated_result(
+    tmp_path: Path,
+) -> None:
+    gateway = registry(tmp_path)
+    invocation_context = context()
+    accepted = await gateway.invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": ["-c", "import time;time.sleep(.2);print('background result')"],
+            "background": True,
+        },
+        invocation_context,
+    )
+
+    assert accepted.status is CapabilityResultStatus.ACCEPTED
+    correlation = str(invocation_context.invocation_id)
+    assert accepted.metadata.root["result_correlation_id"] == correlation
+    first = await gateway.progress(invocation_context)
+    second = await gateway.progress(invocation_context)
+    assert (first.sequence, second.sequence) == (1, 2)
+    assert first.metadata.root["result_correlation_id"] == correlation
+
+    result = await gateway.wait(invocation_context)
+    assert result.status is CapabilityResultStatus.COMPLETED
+    assert observation(result)["stdout"] == "background result\n"
+    assert result.metadata.root["background"] is True
+    assert result.metadata.root["result_correlation_id"] == correlation
+    with pytest.raises(AnbanError) as repeated:
+        await gateway.wait(invocation_context)
+    assert repeated.value.info.code is ErrorCode.CAPABILITY_UNAVAILABLE
+
+
+async def test_background_process_cancel_and_timeout_are_real_terminal_results(
+    tmp_path: Path,
+) -> None:
+    gateway = registry(tmp_path)
+    cancelled_context = context()
+    accepted = await gateway.invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": ["-c", "import time;time.sleep(5)"],
+            "background": True,
+        },
+        cancelled_context,
+    )
+    assert accepted.status is CapabilityResultStatus.ACCEPTED
+    await gateway.cancel(cancelled_context)
+    cancelled = await gateway.wait(cancelled_context)
+    assert cancelled.status is CapabilityResultStatus.CANCELLED
+
+    timeout_context = context()
+    accepted = await gateway.invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": ["-c", "import time;time.sleep(5)"],
+            "timeout": 1,
+            "background": True,
+        },
+        timeout_context,
+    )
+    assert accepted.status is CapabilityResultStatus.ACCEPTED
+    timed_out = await gateway.wait(timeout_context)
+    assert timed_out.status is CapabilityResultStatus.TIMED_OUT
+
+
+async def test_background_lifecycle_rejects_non_authoritative_context(tmp_path: Path) -> None:
+    gateway = registry(tmp_path)
+    authoritative = context()
+    accepted = await gateway.invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": ["-c", "import time;time.sleep(5)"],
+            "background": True,
+        },
+        authoritative,
+    )
+    assert accepted.status is CapabilityResultStatus.ACCEPTED
+    mismatched = authoritative.model_copy(update={"run_id": new_execution_run_id()})
+    with pytest.raises(AnbanError) as failure:
+        await gateway.progress(mismatched)
+    assert failure.value.info.code is ErrorCode.CAPABILITY_ARGUMENTS_INVALID
+    await gateway.cancel(authoritative)
+    assert (await gateway.wait(authoritative)).status is CapabilityResultStatus.CANCELLED
+
+
 async def test_single_and_multiple_declared_artifacts_are_snapshotted(tmp_path: Path) -> None:
     invocation_context = context()
     result = await registry(tmp_path).invoke(

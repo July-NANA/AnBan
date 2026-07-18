@@ -20,6 +20,12 @@ records never return to an active state.
 | CapabilityInvocation | `running` | `requested` | `succeeded`, `failed`, `cancelled`, `timed_out` |
 | CapabilityInvocation | terminal states | `running` | none |
 
+For v0.5 background execution, `accepted` is a Capability result signal rather than a Core record
+state. The Invocation remains `running`; `capability.background_started` and one or more
+`capability.progressed` Events share its system-owned identity. Only the real completed, failed,
+cancelled, or timed-out result performs the existing terminal transition and Artifact transaction.
+Progress sequence must increase monotonically, and a repeated wait cannot replay the operation.
+
 The Core guards reject same-state updates, skipped states, and every transition out of a terminal
 state with `invalid_transition`. They do not write timestamps or persistence records; Runtime and
 Persistence will coordinate those operations at their own boundaries.
@@ -63,6 +69,12 @@ model response may trigger at most three contract-only repair requests shared by
 Events record the structural reason, attempt, repairability, exhaustion, and safe transport retry
 count without the response, Prompt, or Tool arguments. Waiting/resume and checkpoint behavior
 remain outside v0.1.
+
+The v0.5 background Process extension does not broaden automatic retry. Runtime may inspect
+bounded progress while awaiting one already-started process, and cancellation targets that exact
+Invocation. Fresh query services reconstruct accepted/progress/terminal correlation, but an
+in-flight operation is not yet recoverable after a full service-process exit; that requires the
+later durable Checkpoint and restart coordinator.
 
 The v0.5 Main Agent adds bounded replanning without broadening automatic retries. Completion
 assessment is a structured Model decision, not another Capability call. A replan consumes one of a

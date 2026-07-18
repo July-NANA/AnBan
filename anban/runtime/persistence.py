@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from typing import Literal
 
 from anban.capability import (
     CapabilityDescriptor,
     CapabilityKind,
+    CapabilityProgress,
+    CapabilityProgressStatus,
     CapabilityResult,
     CapabilityResultStatus,
     InventoryKind,
@@ -17,9 +18,7 @@ from anban.capability import (
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.graph import GraphRevision
 from anban.core.ids import (
-    ArtifactId,
     CapabilityInvocationId,
-    NodeRunId,
     new_event_id,
 )
 from anban.core.metadata import SafeMetadata, SafeScalar
@@ -52,6 +51,7 @@ from anban.runtime.contracts import (
     CompletionAssessment,
     ReplanDecision,
 )
+from anban.runtime.persistence_events import EventFact, task_route_transition
 from anban.runtime.persistence_metadata import (
     CAPABILITY_EVENT_METADATA,
     PERSISTENCE_DIAGNOSTIC_METADATA,
@@ -98,15 +98,6 @@ _MODEL_DIAGNOSTIC_METADATA = frozenset(
     }
 )
 InvocationPersistenceState = Literal["committed", "uncommitted", "unconfirmed"]
-
-
-@dataclass(frozen=True)
-class EventFact:
-    event_type: str
-    metadata: SafeMetadata = field(default_factory=SafeMetadata)
-    node_run_id: NodeRunId | None = None
-    invocation_id: CapabilityInvocationId | None = None
-    artifact_id: ArtifactId | None = None
 
 
 def persistence_error(stage: str) -> AnbanError:
@@ -224,44 +215,16 @@ class RunPersistence:
         revision: GraphRevision | None = None,
     ) -> None:
         """Persist the selected path and atomically attach an optional initial graph."""
-
-        if revision is not None and (
-            revision.task_id != self.task.id or self.run.graph_revision_id is not None
-        ):
-            raise ValueError("Graph revision cannot be attached to this Run")
-        run = self.run.model_copy(
-            update={
-                "graph_revision_id": (
-                    self.run.graph_revision_id if revision is None else revision.id
-                )
-            }
+        transition = task_route_transition(
+            self.task,
+            self.run,
+            self.node.id,
+            route,
+            rationale_hash,
+            revision,
         )
-
-        async def operation(repository: ExecutionRepository) -> None:
-            if revision is not None:
-                await repository.add_graph_revision(revision)
-                await repository.update_run(run)
-
-        metadata = SafeMetadata(
-            {
-                "route": route,
-                "graph_selected": revision is not None,
-                "graph_revision_id": None if revision is None else str(revision.id),
-                "graph_spec_hash": None if revision is None else revision.spec_hash,
-                "graph_node_count": None if revision is None else len(revision.spec.nodes),
-                "rationale_hash": rationale_hash,
-            }
-        )
-        facts = [EventFact("agent.route_selected", metadata, node_run_id=self.node.id)]
-        if revision is not None:
-            facts.extend(
-                (
-                    EventFact("graph.revision_created", metadata, node_run_id=self.node.id),
-                    EventFact("run.graph_revision_linked", metadata, node_run_id=self.node.id),
-                )
-            )
-        await self._write("task_route_selected", operation, tuple(facts))
-        self.run = run
+        await self._write("task_route_selected", transition.operation, transition.facts)
+        self.run = transition.run
 
     async def model_requested(self, turn_number: int, request: ModelRequest) -> None:
         metadata = SafeMetadata(
@@ -373,6 +336,38 @@ class RunPersistence:
             ),
         )
         await self._write("capability_started", operation, facts)
+
+    async def capability_progressed(
+        self,
+        name: str,
+        context: InvocationContext,
+        progress: CapabilityProgress,
+    ) -> None:
+        projected = metadata_projection(progress.metadata, CAPABILITY_EVENT_METADATA)
+        metadata = SafeMetadata(
+            {
+                **projected.root,
+                "capability_name": name,
+                "progress_sequence": progress.sequence,
+                "progress_status": progress.status.value,
+            }
+        )
+        event_type = (
+            "capability.background_started"
+            if progress.status is CapabilityProgressStatus.ACCEPTED
+            else "capability.progressed"
+        )
+        await self._events_only(
+            "capability_progressed",
+            (
+                EventFact(
+                    event_type,
+                    metadata,
+                    node_run_id=context.node_run_id,
+                    invocation_id=context.invocation_id,
+                ),
+            ),
+        )
 
     async def finish_invocation(
         self,
@@ -538,8 +533,13 @@ class RunPersistence:
             event
             for event in aggregate.events
             if event.invocation_id == context.invocation_id
-            and event.event_type.startswith("capability.")
-            and event.event_type not in {"capability.requested", "capability.started"}
+            and event.event_type
+            in {
+                "capability.completed",
+                "capability.failed",
+                "capability.cancelled",
+                "capability.timed_out",
+            }
         )
         artifact_events = {
             event.artifact_id

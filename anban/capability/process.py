@@ -18,6 +18,8 @@ from pydantic import JsonValue
 from anban.capability.contracts import (
     ArtifactReference,
     CapabilityDescriptor,
+    CapabilityProgress,
+    CapabilityProgressStatus,
     CapabilityResult,
     CapabilityResultStatus,
     InventoryKind,
@@ -71,6 +73,9 @@ class ProcessCapability:
         self._max_artifacts = max_artifacts
         self._artifact_max_bytes = artifact_max_bytes
         self._processes: dict[str, asyncio.subprocess.Process] = {}
+        self._background_tasks: dict[str, asyncio.Task[CapabilityResult]] = {}
+        self._background_started: dict[str, float] = {}
+        self._progress_sequences: dict[str, int] = {}
         self._cancelled: set[str] = set()
         self._descriptor = self._build_descriptor()
 
@@ -80,6 +85,92 @@ class ProcessCapability:
 
     async def invoke(
         self, arguments: dict[str, JsonValue], context: InvocationContext
+    ) -> CapabilityResult:
+        background = arguments.get("background", False)
+        if not isinstance(background, bool):
+            raise self._arguments_error("background_type")
+        if not background:
+            return await self._execute(arguments, context)
+
+        readiness = asyncio.get_running_loop().create_future()
+        execution = asyncio.create_task(self._execute(arguments, context, readiness))
+        try:
+            done, _ = await asyncio.wait(
+                (execution, readiness), return_when=asyncio.FIRST_COMPLETED
+            )
+        except asyncio.CancelledError:
+            execution.cancel()
+            await asyncio.gather(execution, return_exceptions=True)
+            raise
+        if execution in done:
+            return await execution
+        key = str(context.invocation_id)
+        self._background_tasks[key] = execution
+        self._background_started[key] = time.monotonic()
+        self._progress_sequences[key] = 0
+        return CapabilityResult(
+            status=CapabilityResultStatus.ACCEPTED,
+            metadata=SafeMetadata(
+                {
+                    "background": True,
+                    "result_correlation_id": key,
+                }
+            ),
+        )
+
+    async def progress(self, context: InvocationContext) -> CapabilityProgress:
+        key = str(context.invocation_id)
+        execution = self._background_tasks.get(key)
+        started = self._background_started.get(key)
+        if execution is None or started is None:
+            raise self._background_unavailable()
+        sequence = self._progress_sequences[key] + 1
+        self._progress_sequences[key] = sequence
+        return CapabilityProgress(
+            sequence=sequence,
+            status=(
+                CapabilityProgressStatus.RESULT_READY
+                if execution.done()
+                else CapabilityProgressStatus.RUNNING
+            ),
+            metadata=SafeMetadata(
+                {
+                    "background": True,
+                    "result_correlation_id": key,
+                    "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+                }
+            ),
+        )
+
+    async def wait(self, context: InvocationContext) -> CapabilityResult:
+        key = str(context.invocation_id)
+        execution = self._background_tasks.get(key)
+        if execution is None:
+            raise self._background_unavailable()
+        try:
+            result = await asyncio.shield(execution)
+            return result.model_copy(
+                update={
+                    "metadata": SafeMetadata(
+                        {
+                            **result.metadata.root,
+                            "background": True,
+                            "result_correlation_id": key,
+                        }
+                    )
+                }
+            )
+        finally:
+            if execution.done():
+                self._background_tasks.pop(key, None)
+                self._background_started.pop(key, None)
+                self._progress_sequences.pop(key, None)
+
+    async def _execute(
+        self,
+        arguments: dict[str, JsonValue],
+        context: InvocationContext,
+        readiness: asyncio.Future[None] | None = None,
     ) -> CapabilityResult:
         command = arguments.get("command")
         args = arguments.get("args", [])
@@ -151,6 +242,8 @@ class ProcessCapability:
             )
         key = str(context.invocation_id)
         self._processes[key] = process
+        if readiness is not None and not readiness.done():
+            readiness.set_result(None)
         try:
             try:
                 stdout, stderr, exceeded = await asyncio.wait_for(
@@ -262,6 +355,14 @@ class ProcessCapability:
             return
         self._cancelled.add(key)
         await self._stop_process(process)
+
+    def _background_unavailable(self) -> AnbanError:
+        return capability_error(
+            ErrorCode.CAPABILITY_UNAVAILABLE,
+            "Background Capability invocation is unavailable",
+            reason="background_invocation_unavailable",
+            capability_name=self.descriptor.name,
+        )
 
     def _resolve_executable(self, command: str, environment: dict[str, str]) -> Path:
         if not command or "\x00" in command:
@@ -568,7 +669,8 @@ class ProcessCapability:
             name="process.execute",
             description=(
                 "Execute an available program without an implicit shell; supports bounded I/O, "
-                "environment overrides, working directories, and declared output Artifacts."
+                "environment overrides, working directories, declared output Artifacts, and "
+                "system-correlated background progress."
             ),
             inventory_kind=InventoryKind.PROCESS,
             input_schema={
@@ -600,6 +702,7 @@ class ProcessCapability:
                         "minimum": 1,
                         "maximum": self._max_timeout_seconds,
                     },
+                    "background": {"type": "boolean"},
                     "artifacts": {
                         "type": "array",
                         "items": {

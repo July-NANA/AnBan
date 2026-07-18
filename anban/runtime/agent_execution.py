@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 
 from anban.capability import (
@@ -31,6 +32,7 @@ from anban.runtime.contracts import (
 )
 
 _CANCELLATION_TIMEOUT_SECONDS = 2.0
+_BACKGROUND_PROGRESS_INTERVAL_SECONDS = 1.0
 
 
 @dataclass
@@ -157,9 +159,7 @@ class AgentExecutionSupport:
         progress: ExecutionProgress,
     ) -> CapabilityResult | AgentOutcome:
         progress.capability_calls += 1
-        invocation = asyncio.create_task(
-            self._capabilities.invoke(call.name, call.arguments, context)
-        )
+        invocation = asyncio.create_task(self._invoke_to_terminal(call, context))
         try:
             result = await asyncio.shield(invocation)
         except asyncio.CancelledError:
@@ -223,6 +223,32 @@ class AgentExecutionSupport:
                 ),
             )
         return self._failure_outcome(result.error, progress, result.status)
+
+    async def _invoke_to_terminal(
+        self, call: ToolCall, context: InvocationContext
+    ) -> CapabilityResult:
+        result = await self._capabilities.invoke(call.name, call.arguments, context)
+        if result.status is not CapabilityResultStatus.ACCEPTED:
+            return result
+
+        waiter: asyncio.Task[CapabilityResult] | None = None
+        try:
+            await self._capabilities.progress(context)
+            waiter = asyncio.create_task(self._capabilities.wait(context))
+            while True:
+                done, _ = await asyncio.wait(
+                    (waiter,), timeout=_BACKGROUND_PROGRESS_INTERVAL_SECONDS
+                )
+                if done:
+                    return await waiter
+                await self._capabilities.progress(context)
+        except Exception:
+            with suppress(Exception):
+                await self._capabilities.cancel(context)
+            if waiter is None:
+                waiter = asyncio.create_task(self._capabilities.wait(context))
+            await asyncio.gather(waiter, return_exceptions=True)
+            raise
 
     @staticmethod
     def _validate_turn(turn: ModelTurn) -> ErrorInfo | None:

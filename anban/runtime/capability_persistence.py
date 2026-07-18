@@ -14,6 +14,8 @@ from anban.capability import (
     ArtifactReference,
     CapabilityDescriptor,
     CapabilityPort,
+    CapabilityProgress,
+    CapabilityProgressStatus,
     CapabilityResult,
     CapabilityResultStatus,
     InvocationContext,
@@ -39,6 +41,7 @@ class PersistedCapabilityPort:
         self._inner = inner
         self._persistence = persistence
         self._artifact_cleanup = artifact_cleanup
+        self._background_names: dict[str, str] = {}
 
     def search(self, query: str | None = None) -> tuple[CapabilityDescriptor, ...]:
         return self._inner.search(query)
@@ -84,7 +87,68 @@ class PersistedCapabilityPort:
                 CapabilityResult(status=CapabilityResultStatus.FAILED, error=error),
             )
             raise AnbanError(error) from None
+        if result.status is CapabilityResultStatus.ACCEPTED:
+            self._background_names[str(context.invocation_id)] = name
+            try:
+                await self._persistence.capability_progressed(
+                    name,
+                    context,
+                    CapabilityProgress(
+                        sequence=0,
+                        status=CapabilityProgressStatus.ACCEPTED,
+                        metadata=result.metadata,
+                    ),
+                )
+            except Exception:
+                await self._abort_background(name, context)
+                raise
+            return result
         await self._persist_terminal(name, context, result)
+        return result
+
+    async def progress(self, context: InvocationContext) -> CapabilityProgress:
+        name = self._background_name(context)
+        progress = await self._inner.progress(context)
+        await self._persistence.capability_progressed(name, context, progress)
+        return progress
+
+    async def wait(self, context: InvocationContext) -> CapabilityResult:
+        name = self._background_name(context)
+        try:
+            result = await self._inner.wait(context)
+        except asyncio.CancelledError:
+            error = ErrorInfo(
+                code=ErrorCode.EXECUTION_INTERRUPTED,
+                message="Capability execution was interrupted",
+            )
+            await self._persist_terminal(
+                name,
+                context,
+                CapabilityResult(status=CapabilityResultStatus.CANCELLED, error=error),
+            )
+            raise
+        except AnbanError as exc:
+            await self._persist_terminal(
+                name,
+                context,
+                CapabilityResult(status=CapabilityResultStatus.FAILED, error=exc.info),
+            )
+            raise
+        except Exception:
+            error = ErrorInfo(
+                code=ErrorCode.CAPABILITY_EXECUTION_FAILED,
+                message="Capability result wait failed",
+            )
+            await self._persist_terminal(
+                name,
+                context,
+                CapabilityResult(status=CapabilityResultStatus.FAILED, error=error),
+            )
+            raise AnbanError(error) from None
+        try:
+            await self._persist_terminal(name, context, result)
+        finally:
+            self._background_names.pop(str(context.invocation_id), None)
         return result
 
     async def _persist_terminal(
@@ -148,6 +212,25 @@ class PersistedCapabilityPort:
 
     async def cancel(self, context: InvocationContext) -> None:
         await self._inner.cancel(context)
+
+    def _background_name(self, context: InvocationContext) -> str:
+        name = self._background_names.get(str(context.invocation_id))
+        if name is None:
+            raise AnbanError(
+                ErrorInfo(
+                    code=ErrorCode.CAPABILITY_UNAVAILABLE,
+                    message="Background Capability invocation is unavailable",
+                )
+            )
+        return name
+
+    async def _abort_background(self, name: str, context: InvocationContext) -> None:
+        await self._inner.cancel(context)
+        result = await self._inner.wait(context)
+        try:
+            await self._persist_terminal(name, context, result)
+        finally:
+            self._background_names.pop(str(context.invocation_id), None)
 
 
 def error_with_details(error: ErrorInfo, **details: SafeScalar) -> ErrorInfo:

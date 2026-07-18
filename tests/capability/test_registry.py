@@ -11,6 +11,8 @@ from pydantic import JsonValue
 from anban.capability import (
     CapabilityDescriptor,
     CapabilityPort,
+    CapabilityProgress,
+    CapabilityProgressStatus,
     CapabilityRegistry,
     CapabilityResult,
     CapabilityResultStatus,
@@ -22,6 +24,7 @@ from anban.core.ids import (
     new_execution_run_id,
     new_node_run_id,
 )
+from anban.core.metadata import SafeMetadata
 
 
 class RecordingHandler:
@@ -64,6 +67,38 @@ class RecordingHandler:
         assert context == self.received_context
         self.cancelled = True
         self.release.set()
+
+
+class AcceptedWithoutLifecycleHandler(RecordingHandler):
+    async def invoke(
+        self, arguments: dict[str, JsonValue], context: InvocationContext
+    ) -> CapabilityResult:
+        return CapabilityResult(status=CapabilityResultStatus.ACCEPTED)
+
+
+class NonMonotonicBackgroundHandler(RecordingHandler):
+    async def invoke(
+        self, arguments: dict[str, JsonValue], context: InvocationContext
+    ) -> CapabilityResult:
+        self.received_context = context
+        return CapabilityResult(
+            status=CapabilityResultStatus.ACCEPTED,
+            metadata=SafeMetadata({"result_correlation_id": "untrusted-correlation"}),
+        )
+
+    async def progress(self, context: InvocationContext) -> CapabilityProgress:
+        return CapabilityProgress(
+            sequence=1,
+            status=CapabilityProgressStatus.RUNNING,
+            metadata=SafeMetadata({"result_correlation_id": "untrusted-correlation"}),
+        )
+
+    async def wait(self, context: InvocationContext) -> CapabilityResult:
+        return CapabilityResult(
+            status=CapabilityResultStatus.COMPLETED,
+            observation="real terminal result",
+            metadata=SafeMetadata({"result_correlation_id": "untrusted-correlation"}),
+        )
 
 
 def context() -> InvocationContext:
@@ -131,6 +166,29 @@ async def test_unexpected_handler_error_is_replaced_with_safe_error() -> None:
     assert failure.value.info.code is ErrorCode.CAPABILITY_EXECUTION_FAILED
     assert canary not in str(failure.value)
     assert canary not in str(failure.value.as_dict())
+
+
+async def test_handler_cannot_accept_background_work_without_lifecycle_support() -> None:
+    handler = AcceptedWithoutLifecycleHandler()
+    registry = CapabilityRegistry((handler,))
+    with pytest.raises(AnbanError) as failure:
+        await registry.invoke("test.action", {"path": "result.txt"}, context())
+    assert failure.value.info.code is ErrorCode.CAPABILITY_EXECUTION_FAILED
+
+
+async def test_registry_owns_correlation_and_rejects_non_monotonic_progress() -> None:
+    registry = CapabilityRegistry((NonMonotonicBackgroundHandler(),))
+    invocation_context = context()
+    accepted = await registry.invoke("test.action", {"path": "result.txt"}, invocation_context)
+    correlation = str(invocation_context.invocation_id)
+    assert accepted.metadata.root["result_correlation_id"] == correlation
+    progress = await registry.progress(invocation_context)
+    assert progress.metadata.root["result_correlation_id"] == correlation
+    with pytest.raises(AnbanError) as failure:
+        await registry.progress(invocation_context)
+    assert failure.value.info.code is ErrorCode.CAPABILITY_EXECUTION_FAILED
+    result = await registry.wait(invocation_context)
+    assert result.metadata.root["result_correlation_id"] == correlation
 
 
 async def test_cancel_uses_the_authoritative_active_context() -> None:

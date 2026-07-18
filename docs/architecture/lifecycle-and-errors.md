@@ -95,7 +95,10 @@ budget, missing clarification, and absence of a safe alternative remain explicit
 
 The v0.5 Interaction contract treats correlation as external evidence, never as authority over a
 system identity. Malformed and already-expired keys fail envelope validation; one value cannot be
-both the resume and deduplication key. A later durable resolver must reject `unknown`, `expired`,
-`conflicting`, and `ineligible` resume requests explicitly rather than silently creating new work
-or selecting a Run. This delivery defines that closed failure vocabulary but does not perform
-lookup, expiry persistence, or Run lifecycle transitions.
+both the resume and deduplication key. D22 resolves only the opaque key emitted for a durable
+waiting Checkpoint. Unknown, conflicting, and terminal/ineligible bindings fail explicitly rather
+than creating new work. A valid supplemental update is classified before recovery; Context and an
+optional replacement revision commit atomically. Fixed-Agent work accepts context-only updates but
+rejects structural replacement because no safe graph action identity exists. Started graph actions
+must remain identical, so a completed or active side effect is never replayed. General expiry,
+deduplication, and inbox lifecycle remain later scope.

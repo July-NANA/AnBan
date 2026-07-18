@@ -37,12 +37,15 @@ semantic input kind and explicitly requests either a new Task or resumption of a
 The request never carries a system Task/Run/Session/Invocation identity: it uses bounded external
 resume correlation instead, with an independent deduplication correlation when needed. System
 code assigns the Interaction ID, receipt time, and trusted Adapter source. Malformed, expired,
-conflicting, unknown, and ineligible correlation is fail-closed vocabulary; this contract delivery
-does not implement lookup or claim that a Run is eligible. Audit/Trace metadata receives only
-correlation namespace and SHA-256 fingerprint, never the external correlation value.
-The existing CLI service accepts only its original uncorrelated CLI user-message path; it rejects
-all other envelope kinds, sources, resume requests, and deduplication keys until the durable
-Gateway owns those semantics.
+conflicting, unknown, and ineligible correlation is fail-closed vocabulary. D22 implements one
+durable lookup for waiting continuations. Every waiting result receives an opaque resume key;
+PostgreSQL stores only its namespace and SHA-256 fingerprint. Supplemental input resolves that key
+through Interaction, persists bounded Task Context, and asks the independent Model Port whether
+the change is context-only or structural. Context-only input retains the revision. Structural
+input appends a complete replacement revision while requiring every started action to remain
+identical. Runtime then reconstructs the Checkpoint without replaying its side effect. Audit/Trace
+never receives the raw key or update. General inbox, deduplication, and other envelope kinds remain
+in their later deliveries.
 
 Every Skill follows `SKILL.md -> uniform parser -> SkillPackage -> skill.activate ->
 process.execute`. No production code selects behavior by source, installer, registry, publisher,

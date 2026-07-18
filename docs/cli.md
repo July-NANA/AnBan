@@ -14,6 +14,12 @@ coroutine ownership, and exits without cancelling the external work. A new proce
 with `anban run resume <checkpoint-id>` or requests real cancellation with
 `anban run cancel <checkpoint-id>`. Resume reconstructs through the ordinary production
 Composition Root and never reinvokes the accepted Capability.
+Every waiting projection also includes an opaque resume namespace and correlation value. A fresh
+process applies supplemental input with
+`anban run update <namespace> <correlation-value> <content...>`. This constructs the ordinary
+supplemental `InteractionEnvelope`; it does not call Runtime by Checkpoint identity. The raw key is
+shown to the caller but never stored in PostgreSQL or Audit/Trace. Unknown or terminal correlation
+fails explicitly.
 
 `capabilities list` returns a point-in-time snapshot. `capabilities search [TEXT]` accepts repeated
 `--kind`, `--available-only`, and a bounded `--limit`. `capabilities describe KEY` requires an

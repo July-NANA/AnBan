@@ -9,10 +9,11 @@ route is either new Task or requested eligible-Run resumption. Resume and dedupl
 separate bounded external `CorrelationKey` values; neither is a Task, Run, Session, Invocation, or
 other system identity. External normalization assigns the Interaction identity, receipt time, and
 trusted Adapter source and rejects attempts to supply system-owned fields. Audit projection hashes
-correlation values. Interaction does not yet own durable lookup, inbox, deduplication, expiry
-records, background delivery, Trigger behavior, domain lifecycle, or execution scheduling.
-The existing CLI service therefore rejects every non-CLI kind and every resume/deduplication key
-instead of silently treating unsupported input as new work.
+correlation values. D22 adds one durable continuation lookup: Interaction assigns an opaque resume
+key to a waiting projection and routes correlated supplemental input to that eligible Checkpoint.
+Unknown and terminal correlations fail explicitly. Interaction still does not own a general inbox,
+deduplication, expiry records, background delivery, Trigger behavior, domain lifecycle, or
+execution scheduling; unsupported forms still fail instead of becoming new work.
 
 ## Core
 
@@ -58,6 +59,12 @@ restores the already-started Capability through its optional recovery contract, 
 the authoritative result. Task Graph recovery reconstructs control state from immutable revision
 data and persisted structured NodeRun outputs: completed actions are reused, the active action
 consumes the recovered result, and only previously unstarted actions may execute.
+For correlated supplemental input, Runtime persists bounded Task Context and a closed Model
+decision before recovery. Context-only input retains the revision. A structural decision carries a
+complete replacement graph and preserves every started action exactly; Runtime atomically appends
+the revision and relinks only the active Run. Recovery shares the configured response-repair budget
+across sufficiency, final-response, and completion decisions and never replays the started
+Capability.
 
 ## Model
 
@@ -108,6 +115,10 @@ NodeRun outputs are nullable JSON objects used to reconstruct prior Task Graph a
 re-execution. Recovery appends `run.recovery_started`, `run.recovery_completed`, or
 `run.recovery_failed`; terminal Capability, Checkpoint, Artifact, Node, Run, and Task writes remain
 short PostgreSQL transactions in the original ordered Event stream.
+Continuation correlations are Event facts rather than a new domain table. Partial unique indexes
+enforce one binding per Checkpoint, one namespace/fingerprint binding, and one received update per
+Interaction identity. Task Context holds the raw supplemental content; Events retain only hashes,
+logical classification, revision identity, and `side_effect_replayed=false`.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -12,6 +13,8 @@ from anban.capability import (
     CapabilityRegistry,
     CapabilityResult,
     CapabilityResultStatus,
+    SkillActivationCapability,
+    WorkspaceSkillCatalog,
 )
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.metadata import SafeMetadata
@@ -245,6 +248,60 @@ async def test_skill_activation_is_distinct_and_uses_logical_reference() -> None
     assert skill_event.metadata.root["skill_root"] == "skills/@owner/example"
     assert "skill_version" not in skill_event.metadata.root
     assert "capability.completed" in {entry.event_type for entry in observation.audit}
+
+
+async def test_catalog_backed_activation_persists_a_safe_refresh_event(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    workspace = tmp_path / "workspace"
+    name = f"skill-{uuid4().hex[:10]}"
+    skill_root = workspace / "skills" / "@fixture" / name
+    skill_root.mkdir(parents=True)
+    skill_root.joinpath("SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Use dynamic bounded instructions.\n---\n",
+        encoding="utf-8",
+    )
+    capability = SkillActivationCapability(
+        WorkspaceSkillCatalog(workspace, package_skills_root=package_root)
+    )
+    factory = MemoryUnitOfWorkFactory()
+    result = await PersistentRuntime(
+        TransactionCheckingModel(
+            factory,
+            [
+                ModelTurn(
+                    tool_calls=(
+                        ToolCall(
+                            id="dynamic-skill-call",
+                            name="skill.activate",
+                            arguments={"name": f"@fixture/{name}"},
+                        ),
+                    ),
+                    finish_reason="tool_calls",
+                ),
+                final_turn(),
+            ],
+        ),
+        CapabilityRegistry((capability,)),
+        factory,
+    ).execute("Activate one dynamically discovered Skill.")
+
+    observation = await ExecutionQueryService(factory).trace(result.run_id)
+    event_types = [entry.event_type for entry in observation.audit]
+    refresh_index = event_types.index("skill.catalog_refreshed")
+    activation_index = event_types.index("skill.activated")
+    refresh = observation.audit[refresh_index]
+    activation = observation.audit[activation_index]
+
+    assert observation.complete
+    assert refresh_index < activation_index
+    assert refresh.invocation_id == activation.invocation_id
+    assert refresh.metadata.root["catalog_skill_count"] == 1
+    assert refresh.metadata.root["catalog_diagnostic_count"] == 0
+    assert len(str(refresh.metadata.root["catalog_digest"])) == 64
+    assert str(tmp_path) not in refresh.model_dump_json()
 
 
 async def test_tool_metadata_cannot_spoof_a_skill_activation_event() -> None:

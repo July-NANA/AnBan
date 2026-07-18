@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,8 +16,8 @@ from anban.capability import (
     CapabilityResult,
     InventoryKind,
     InvocationContext,
-    SkillPackage,
     UnifiedCapabilityInventory,
+    WorkspaceSkillCatalog,
     local_capability_components,
 )
 from anban.core.errors import AnbanError, ErrorCode
@@ -56,25 +55,24 @@ class NeverInvokedHandler:
         raise AssertionError("inventory inspection cancelled a Capability")
 
 
-def dynamic_skill(name: str) -> SkillPackage:
-    instructions = f"---\nname: {name}\ndescription: Inspect dynamic data.\n---\n"
-    return SkillPackage(
-        slug=f"@fixture/{name}",
-        name=name,
-        description="Inspect dynamic data through ordinary Skill activation.",
-        skill_root=f"skills/@fixture/{name}",
-        content_hash=hashlib.sha256(instructions.encode()).hexdigest(),
-        instructions=instructions,
-    )
-
-
-def test_snapshot_uses_registry_skill_and_model_facts_without_execution() -> None:
+def test_snapshot_uses_registry_skill_and_model_facts_without_execution(tmp_path: Path) -> None:
     capability_name = f"fixture.{uuid4().hex}"
     handler = NeverInvokedHandler(capability_name)
-    skill = dynamic_skill(f"skill-{uuid4().hex[:12]}")
+    name = f"skill-{uuid4().hex[:12]}"
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    workspace = tmp_path / "workspace"
+    skill_root = workspace / "skills" / "@fixture" / name
+    skill_root.mkdir(parents=True)
+    skill_root.joinpath("SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Inspect dynamic data.\n---\n",
+        encoding="utf-8",
+    )
+    catalog = WorkspaceSkillCatalog(workspace, package_skills_root=package_root)
+    skill = catalog.refresh()[0]
     inventory = UnifiedCapabilityInventory(
         CapabilityRegistry((handler,)),
-        (skill,),
+        catalog,
         model_available=True,
     )
 

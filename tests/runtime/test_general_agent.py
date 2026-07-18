@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from collections.abc import Callable
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -17,9 +17,10 @@ from anban.capability import (
     CapabilityResult,
     CapabilityResultStatus,
     InvocationContext,
-    SkillPackage,
     UnifiedCapabilityInventory,
+    WorkspaceSkillCatalog,
 )
+from anban.config import policy
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import new_execution_run_id, new_node_run_id
 from anban.core.metadata import SafeMetadata
@@ -147,17 +148,19 @@ def assessment_turn(
     )
 
 
-def skill_package() -> SkillPackage:
-    name = f"skill-{uuid4().hex[:12]}"
-    instructions = f"---\nname: {name}\ndescription: Use dynamic instructions.\n---\n"
-    return SkillPackage(
-        slug=f"@fixture/{name}",
-        name=name,
-        description="Use dynamic instructions for one bounded operation.",
-        skill_root=f"skills/@fixture/{name}",
-        content_hash=hashlib.sha256(instructions.encode()).hexdigest(),
-        instructions=instructions,
-    )
+def skill_catalog(tmp_path: Path) -> WorkspaceSkillCatalog:
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    workspace = tmp_path / "workspace"
+    for _ in range(2):
+        name = f"skill-{uuid4().hex[:12]}"
+        root = workspace / "skills" / "@fixture" / name
+        root.mkdir(parents=True)
+        root.joinpath("SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: Use dynamic instructions.\n---\n",
+            encoding="utf-8",
+        )
+    return WorkspaceSkillCatalog(workspace, package_skills_root=package_root)
 
 
 def invalid_response(*, repairable: bool = True) -> AnbanError:
@@ -314,8 +317,9 @@ async def test_nonterminal_observation_can_select_a_distinct_capability_path(
     )
 
 
-async def test_one_run_can_activate_multiple_dynamic_skills() -> None:
-    first, second = skill_package(), skill_package()
+async def test_one_run_can_activate_multiple_dynamic_skills(tmp_path: Path) -> None:
+    catalog = skill_catalog(tmp_path)
+    first, second = catalog.refresh()
     handler = RecordingHandler(
         capability_name="skill.activate",
         argument_name="name",
@@ -340,13 +344,45 @@ async def test_one_run_can_activate_multiple_dynamic_skills() -> None:
         model,
         registry,
         sufficiency=CapabilitySufficiencyEvaluator(
-            UnifiedCapabilityInventory(registry, (first, second), model_available=True)
+            UnifiedCapabilityInventory(
+                registry,
+                catalog,
+                model_available=True,
+            )
         ),
     ).execute(agent_input())
 
     assert outcome.status is AgentOutcomeStatus.SUCCEEDED
     assert outcome.capability_call_count == 2
     assert [call[0]["name"] for call in handler.calls] == [first.slug, second.slug]
+    composed = [
+        message.tool_result.content
+        for message in model.requests[-1].messages
+        if message.tool_result is not None
+    ]
+    assert composed == ["activated-1", "activated-2"]
+
+
+async def test_multi_skill_context_fails_closed_at_the_shared_hard_limit() -> None:
+    payload = "x" * (policy.AGENT_SKILL_CONTEXT_MAX_CHARS // 5)
+    handler = RecordingHandler(
+        capability_kind=CapabilityKind.SKILL,
+        observation=lambda count: f"skill-{count}:{payload}",
+    )
+    turns: list[ModelTurn | Exception] = [
+        tool_turn(call(f"call-{index}", f"skill-{index}")) for index in range(1, 6)
+    ]
+
+    outcome = await FixedGeneralAgent(
+        ScriptedModel(turns),
+        CapabilityRegistry((handler,)),
+    ).execute(agent_input())
+
+    assert outcome.status is AgentOutcomeStatus.FAILED
+    assert outcome.error is not None
+    assert outcome.error.details.root["reason"] == "skill_context_budget"
+    assert outcome.capability_call_count == 5
+    assert len(handler.calls) == 5
 
 
 async def test_user_visible_final_may_report_an_absolute_result_path() -> None:

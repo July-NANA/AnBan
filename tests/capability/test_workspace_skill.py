@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -15,6 +16,7 @@ from anban.capability import (
     InvocationContext,
     SkillActivationCapability,
     WorkspaceSkillCatalog,
+    local_capability_components,
     local_capability_registry,
 )
 from anban.core.errors import AnbanError, ErrorCode
@@ -323,8 +325,7 @@ async def test_activation_is_stateless_idempotent_and_allows_multiple_skills(
         "@owner/other",
         SOURCE.replace("name: runner", "name: other"),
     )
-    packages = catalog(workspace, package_root).discover()
-    registry = CapabilityRegistry((SkillActivationCapability(packages),))
+    registry = CapabilityRegistry((SkillActivationCapability(catalog(workspace, package_root)),))
 
     first = await registry.invoke("skill.activate", {"name": "@owner/runner"}, context())
     repeated = await registry.invoke("skill.activate", {"name": "@owner/runner"}, context())
@@ -343,9 +344,7 @@ async def test_unknown_skill_fails_explicitly(tmp_path: Path) -> None:
     package_root = tmp_path / "package"
     workspace = tmp_path / "workspace"
     write_skill(package_root, "@owner/runner")
-    registry = CapabilityRegistry(
-        (SkillActivationCapability(catalog(workspace, package_root).discover()),)
-    )
+    registry = CapabilityRegistry((SkillActivationCapability(catalog(workspace, package_root)),))
 
     with pytest.raises(AnbanError) as failure:
         await registry.invoke("skill.activate", {"name": "@owner/unknown"}, context())
@@ -370,18 +369,77 @@ async def test_packaged_clawhub_instructions_are_an_ordinary_discovered_skill(
     assert "new Anban Application or session" in (result.observation or "")
 
 
-def test_new_registry_discovers_newly_installed_skill_only_after_rebuild(tmp_path: Path) -> None:
+async def test_existing_registry_and_inventory_refresh_a_newly_installed_skill(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "workspace"
     (workspace / "skills").mkdir(parents=True)
-    first = local_capability_registry(workspace_root=workspace)
-    assert "@local/later" not in first.describe("skill.activate").input_schema.__repr__()
+    registry, inventory = local_capability_components(
+        workspace_root=workspace,
+        model_available=True,
+    )
+    names = tuple(f"skill-{uuid4().hex[:10]}" for _ in range(3))
+    digests: list[str] = []
+    content_digests: dict[str, str] = {}
+    for index, name in enumerate(names, start=1):
+        slug = f"@local/{name}"
+        with pytest.raises(AnbanError) as missing:
+            inventory.describe(slug)
+        assert missing.value.info.code is ErrorCode.CAPABILITY_UNKNOWN
+        source = SOURCE.replace("name: runner", f"name: {name}").replace(
+            "Run a documented command", f"Run documented command variant {index}"
+        )
+        write_skill(workspace / "skills", name, source)
 
-    later = SOURCE.replace("name: runner", "name: later")
-    write_skill(workspace / "skills", "later", later)
-    second = local_capability_registry(workspace_root=workspace)
+        discovered = inventory.describe(slug)
+        activated = await registry.invoke("skill.activate", {"name": slug}, context())
 
-    assert "@local/later" not in first.describe("skill.activate").input_schema.__repr__()
-    assert "@local/later" in second.describe("skill.activate").input_schema.__repr__()
+        version_digest = discovered.version_digest
+        assert isinstance(version_digest, str)
+        assert version_digest == hashlib.sha256(source.encode()).hexdigest()
+        content_digests[name] = version_digest
+        assert activated.status is CapabilityResultStatus.COMPLETED
+        assert activated.metadata.root["skill_slug"] == slug
+        catalog_skill_count = activated.metadata.root["catalog_skill_count"]
+        assert isinstance(catalog_skill_count, int) and catalog_skill_count >= index + 1
+        digests.append(str(activated.metadata.root["catalog_digest"]))
+
+    assert len(set(digests)) == 3
+    assert all(len(digest) == 64 for digest in digests)
+
+    changed_name = names[1]
+    changed_source = SOURCE.replace("name: runner", f"name: {changed_name}").replace(
+        "# Runner", "# Changed Runtime Instructions"
+    )
+    write_skill(workspace / "skills", changed_name, changed_source)
+    changed = inventory.describe(f"@local/{changed_name}")
+    changed_activation = await registry.invoke(
+        "skill.activate", {"name": f"@local/{changed_name}"}, context()
+    )
+
+    assert changed.version_digest != content_digests[changed_name]
+    assert "Changed Runtime Instructions" in (changed_activation.observation or "")
+    assert changed_activation.metadata.root["catalog_digest"] != digests[-1]
+
+
+async def test_catalog_refresh_does_not_reuse_a_now_invalid_skill(tmp_path: Path) -> None:
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    workspace = tmp_path / "workspace"
+    name = f"skill-{uuid4().hex[:10]}"
+    source = SOURCE.replace("name: runner", f"name: {name}")
+    target = write_skill(workspace / "skills", f"@owner/{name}", source)
+    registry = CapabilityRegistry((SkillActivationCapability(catalog(workspace, package_root)),))
+
+    slug = f"@owner/{name}"
+    first = await registry.invoke("skill.activate", {"name": slug}, context())
+    target.write_bytes(b"\xff\xfe")
+
+    with pytest.raises(AnbanError) as invalid:
+        await registry.invoke("skill.activate", {"name": slug}, context())
+
+    assert first.status is CapabilityResultStatus.COMPLETED
+    assert invalid.value.info.code is ErrorCode.CAPABILITY_ARGUMENTS_INVALID
 
 
 def test_protected_value_and_external_symlink_are_skipped(tmp_path: Path) -> None:

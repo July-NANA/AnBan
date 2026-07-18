@@ -49,6 +49,9 @@ AGENT_REPEATED_CALL_LIMIT_MIN = 0
 # 连续相同调用阈值的安全硬上限；防止重复副作用。
 AGENT_REPEATED_CALL_LIMIT_MAX = 8
 
+# 同一 Agent Node 通过原生 Tool Result 组合的 Skill 指令字符总量硬上限。
+AGENT_SKILL_CONTEXT_MAX_CHARS = 65_536
+
 # process.execute 的默认超时，单位为秒；用户可在安全范围内调整。
 PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS = 60
 # process.execute 默认超时的最小值，单位为秒。

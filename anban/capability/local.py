@@ -87,7 +87,7 @@ def local_capability_components(
     skills = WorkspaceSkillCatalog(
         resolved_root,
         protected_values=protected_values,
-    ).discover()
+    )
     registry = CapabilityRegistry((process, SkillActivationCapability(skills)))
     return registry, UnifiedCapabilityInventory(
         registry,

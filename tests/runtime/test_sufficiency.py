@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -14,8 +14,8 @@ from anban.capability import (
     CapabilityResult,
     InventoryKind,
     InvocationContext,
-    SkillPackage,
     UnifiedCapabilityInventory,
+    WorkspaceSkillCatalog,
 )
 from anban.core.errors import AnbanError, ErrorCode
 from anban.model import ModelRequest, ModelTurn
@@ -82,7 +82,7 @@ def decision(
 def evaluator(
     *handlers: NeverInvokedHandler,
     model_available: bool = True,
-    skills: tuple[SkillPackage, ...] = (),
+    skills: WorkspaceSkillCatalog | None = None,
 ) -> CapabilitySufficiencyEvaluator:
     inventory = UnifiedCapabilityInventory(
         CapabilityRegistry(handlers),
@@ -92,25 +92,26 @@ def evaluator(
     return CapabilitySufficiencyEvaluator(inventory)
 
 
-def dynamic_skill() -> SkillPackage:
+def dynamic_skill_catalog(tmp_path: Path) -> WorkspaceSkillCatalog:
     name = f"skill-{uuid4().hex[:12]}"
-    instructions = f"---\nname: {name}\ndescription: Execute a dynamic workflow.\n---\n"
-    return SkillPackage(
-        slug=f"@fixture/{name}",
-        name=name,
-        description="Execute a dynamic workflow through ordinary activation.",
-        skill_root=f"skills/@fixture/{name}",
-        content_hash=hashlib.sha256(instructions.encode()).hexdigest(),
-        instructions=instructions,
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    workspace = tmp_path / "workspace"
+    root = workspace / "skills" / "@fixture" / name
+    root.mkdir(parents=True)
+    root.joinpath("SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Execute a dynamic workflow.\n---\n",
+        encoding="utf-8",
     )
+    return WorkspaceSkillCatalog(workspace, package_skills_root=package_root)
 
 
-async def test_direct_answer_assesses_every_inventory_category() -> None:
+async def test_direct_answer_assesses_every_inventory_category(tmp_path: Path) -> None:
     model = DecisionModel(decision(ExecutionStrategy.DIRECT_ANSWER))
     result = await evaluator(
         NeverInvokedHandler(f"fixture.{uuid4().hex}", InventoryKind.CAPABILITY),
         NeverInvokedHandler(f"fixture.{uuid4().hex}", InventoryKind.PROCESS),
-        skills=(dynamic_skill(),),
+        skills=dynamic_skill_catalog(tmp_path),
     ).assess(f"Explain a bounded concept using task {uuid4().hex}.", model)
 
     assert result.sufficient

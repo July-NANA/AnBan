@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
 
 from anban.capability.contracts import (
     AvailabilityStatus,
@@ -20,7 +19,7 @@ from anban.capability.contracts import (
     RiskLevel,
     SideEffectLevel,
 )
-from anban.capability.skill import SkillPackage
+from anban.capability.skill import SkillPackage, WorkspaceSkillCatalog
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 
 
@@ -30,19 +29,20 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
     def __init__(
         self,
         capabilities: CapabilityPort,
-        skills: Iterable[SkillPackage] = (),
+        skills: WorkspaceSkillCatalog | None = None,
         *,
         model_available: bool,
     ) -> None:
         self._capabilities = capabilities
-        self._skills = tuple(skills)
+        self._skills = skills
         self._model_available = model_available
 
     def snapshot(self) -> CapabilityInventorySnapshot:
+        skills = () if self._skills is None else self._skills.refresh()
         items = (
             self._model_item(),
             *(self._capability_item(descriptor) for descriptor in self._capabilities.search()),
-            *(self._skill_item(skill) for skill in self._skills),
+            *(self._skill_item(skill) for skill in skills),
             self._unavailable_item(
                 key="mcp:runtime",
                 kind=InventoryKind.MCP,

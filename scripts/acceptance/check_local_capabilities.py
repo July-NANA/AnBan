@@ -7,10 +7,15 @@ import json
 import shutil
 import sys
 from datetime import timedelta
+from uuid import uuid4
 
-from anban.capability import CapabilityResultStatus, InvocationContext, local_capability_registry
+from anban.capability import (
+    CapabilityResultStatus,
+    InvocationContext,
+    local_capability_components,
+)
 from anban.config import load_configuration
-from anban.core.errors import AnbanError
+from anban.core.errors import AnbanError, ErrorCode
 from anban.core.ids import (
     new_capability_invocation_id,
     new_execution_run_id,
@@ -34,14 +39,17 @@ def context() -> InvocationContext:
 
 async def accept_capabilities() -> None:
     configuration = load_configuration()
-    registry = local_capability_registry(
+    registry, inventory = local_capability_components(
         workspace_root=configuration.workspace,
         protected_values=configuration.protected_values(),
+        model_available=configuration.model is not None,
     )
     if tuple(item.name for item in registry.search()) != ("process.execute", "skill.activate"):
         raise CapabilityAcceptanceError("production Capability surface mismatch")
     work = configuration.workspace / "tmp" / f"acceptance-{new_execution_run_id()}"
     work.mkdir(mode=0o700)
+    skill_name = f"skill-{uuid4().hex[:12]}"
+    skill_root = configuration.workspace / "skills" / skill_name
     invocation = context()
     try:
         completed = await registry.invoke(
@@ -101,8 +109,41 @@ async def accept_capabilities() -> None:
             or missing_artifact.status is not CapabilityResultStatus.FAILED
         ):
             raise CapabilityAcceptanceError("Process failure paths returned success")
+
+        skill_root.mkdir(mode=0o700)
+        skill_root.joinpath("SKILL.md").write_text(
+            "---\n"
+            f"name: {skill_name}\n"
+            "description: Validate real runtime catalog refresh.\n"
+            "---\n\n"
+            "Use only ordinary governed Capabilities.\n",
+            encoding="utf-8",
+        )
+        skill_slug = f"@local/{skill_name}"
+        discovered = inventory.describe(skill_slug)
+        activated = await registry.invoke(
+            "skill.activate",
+            {"name": skill_slug},
+            context(),
+        )
+        if (
+            discovered.version_digest is None
+            or activated.status is not CapabilityResultStatus.COMPLETED
+            or activated.metadata.root.get("skill_slug") != skill_slug
+            or not isinstance(activated.metadata.root.get("catalog_digest"), str)
+        ):
+            raise CapabilityAcceptanceError("runtime Skill refresh or activation mismatch")
+        shutil.rmtree(skill_root)
+        try:
+            inventory.describe(skill_slug)
+        except AnbanError as exc:
+            if exc.info.code is not ErrorCode.CAPABILITY_UNKNOWN:
+                raise
+        else:
+            raise CapabilityAcceptanceError("removed Skill remained in the runtime catalog")
     finally:
         shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(skill_root, ignore_errors=True)
         shutil.rmtree(
             configuration.workspace / "artifacts" / str(invocation.run_id),
             ignore_errors=True,
@@ -119,7 +160,8 @@ def main() -> int:
         print(f"local Capability acceptance: FAIL ({type(exc).__name__})", file=sys.stderr)
         return 1
     print(
-        "local Capability acceptance: PASS - surface, process, stdin, env, multi-Artifact, failures"
+        "local Capability acceptance: PASS - surface, process, stdin, env, multi-Artifact, "
+        "runtime Skill refresh, failures"
     )
     return 0
 

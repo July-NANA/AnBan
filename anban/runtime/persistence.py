@@ -39,8 +39,14 @@ from anban.model import ModelRequest, ModelTurn
 from anban.runtime.contracts import (
     AgentObservation,
     AgentOutcome,
-    AgentOutcomeStatus,
     CapabilitySufficiencyAssessment,
+)
+from anban.runtime.persistence_metadata import (
+    PERSISTENCE_DIAGNOSTIC_METADATA,
+    error_metadata,
+    metadata_projection,
+    outcome_metadata,
+    terminal_statuses,
 )
 
 _MODEL_EVENT_METADATA = frozenset(
@@ -83,6 +89,9 @@ _CAPABILITY_EVENT_METADATA = frozenset(
         "arguments_hash",
         "artifact_count",
         "cancelled",
+        "catalog_diagnostic_count",
+        "catalog_digest",
+        "catalog_skill_count",
         "command",
         "content_hash",
         "cwd_scope",
@@ -102,19 +111,15 @@ _CAPABILITY_EVENT_METADATA = frozenset(
         "timed_out",
     }
 )
-_PERSISTENCE_DIAGNOSTIC_METADATA = frozenset(
-    {
-        "artifact_cleanup_attempted",
-        "artifact_cleanup_failed",
-        "artifact_cleanup_succeeded",
-        "compensation_error_code",
-        "invocation_compensation_failed",
-        "persistence_state_unconfirmed",
-        "reason",
-    }
+_SKILL_CATALOG_EVENT_METADATA = frozenset(
+    {"catalog_diagnostic_count", "catalog_digest", "catalog_skill_count"}
 )
-
 InvocationPersistenceState = Literal["committed", "uncommitted", "unconfirmed"]
+_HEX_DIGITS = frozenset("0123456789abcdef")
+
+
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and set(value) <= _HEX_DIGITS
 
 
 @dataclass(frozen=True)
@@ -408,7 +413,7 @@ class RunPersistence:
                     {}
                     if result.error is None
                     else error_metadata(
-                        result.error, allowed_details=_PERSISTENCE_DIAGNOSTIC_METADATA
+                        result.error, allowed_details=PERSISTENCE_DIAGNOSTIC_METADATA
                     ).root
                 ),
             }
@@ -425,8 +430,25 @@ class RunPersistence:
             result.status is CapabilityResultStatus.COMPLETED
             and kind is CapabilityKind.SKILL
             and isinstance(projected.root.get("skill_slug"), str)
-            and isinstance(projected.root.get("content_hash"), str)
+            and _is_sha256(projected.root.get("content_hash"))
         ):
+            catalog_skill_count = projected.root.get("catalog_skill_count")
+            catalog_diagnostic_count = projected.root.get("catalog_diagnostic_count")
+            if (
+                _is_sha256(projected.root.get("catalog_digest"))
+                and type(catalog_skill_count) is int
+                and catalog_skill_count >= 1
+                and type(catalog_diagnostic_count) is int
+                and catalog_diagnostic_count >= 0
+            ):
+                facts.append(
+                    EventFact(
+                        "skill.catalog_refreshed",
+                        metadata_projection(projected, _SKILL_CATALOG_EVENT_METADATA),
+                        node_run_id=context.node_run_id,
+                        invocation_id=context.invocation_id,
+                    )
+                )
             facts.append(
                 EventFact(
                     "skill.activated",
@@ -534,7 +556,7 @@ class RunPersistence:
             {
                 "capability_name": name,
                 "artifact_count": 0,
-                **error_metadata(error, allowed_details=_PERSISTENCE_DIAGNOSTIC_METADATA).root,
+                **error_metadata(error, allowed_details=PERSISTENCE_DIAGNOSTIC_METADATA).root,
             }
         )
         await self._write(
@@ -733,64 +755,3 @@ class RunPersistence:
         except Exception:
             return
         self._sequence = 0 if not events else events[-1].sequence
-
-
-def error_metadata(
-    error: ErrorInfo,
-    *,
-    turn_number: int | None = None,
-    allowed_details: frozenset[str] = frozenset(),
-) -> SafeMetadata:
-    values: dict[str, SafeScalar] = {
-        "error_code": error.code.value,
-        "error_category": error.category.value,
-        **{key: value for key, value in error.details.root.items() if key in allowed_details},
-    }
-    if turn_number is not None:
-        values["turn_number"] = turn_number
-    return SafeMetadata(values)
-
-
-def metadata_projection(metadata: SafeMetadata, allowed: frozenset[str]) -> SafeMetadata:
-    """Project adapter metadata through an explicit Event/record allowlist."""
-
-    return SafeMetadata({key: value for key, value in metadata.root.items() if key in allowed})
-
-
-def terminal_statuses(
-    status: AgentOutcomeStatus,
-) -> tuple[TaskStatus, ExecutionRunStatus, NodeRunStatus]:
-    return (
-        TaskStatus(status.value),
-        ExecutionRunStatus(status.value),
-        NodeRunStatus(status.value),
-    )
-
-
-def outcome_metadata(
-    outcome: AgentOutcome,
-    *,
-    model_turn_count: int | None = None,
-    capability_call_count: int | None = None,
-    artifact_count: int | None = None,
-) -> SafeMetadata:
-    return SafeMetadata(
-        {
-            "model_turn_count": (
-                outcome.model_turn_count if model_turn_count is None else model_turn_count
-            ),
-            "capability_call_count": (
-                outcome.capability_call_count
-                if capability_call_count is None
-                else capability_call_count
-            ),
-            "artifact_count": len(outcome.artifacts) if artifact_count is None else artifact_count,
-            **(
-                {}
-                if outcome.error is None
-                else error_metadata(
-                    outcome.error, allowed_details=_PERSISTENCE_DIAGNOSTIC_METADATA
-                ).root
-            ),
-        }
-    )

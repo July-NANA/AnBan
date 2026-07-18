@@ -28,8 +28,13 @@ Owns `CapabilityPort`, `CapabilityHandler`, the Registry, uniform `SKILL.md` dis
 the general Process Handler, and the read-only `CapabilityInventoryPort` projection. The unified
 inventory describes the independently configured Model, registered Capabilities, ready Skills,
 Process, and explicitly unavailable future MCP, Memory, and sub-agent paths without invoking any
-of them or creating a second Registry. Production Capability names are exactly `skill.activate`
-and `process.execute`. A concrete tool normally adds a Skill, not a Handler. No Skill source or
+of them or creating a second Registry. The shared Workspace catalog refreshes through the same
+parser, bounds, protected-value checks, conflict rules, and logical identities for both inventory
+and `skill.activate`; an Application rebuild is not required to observe an installed, changed, or
+removed Skill. Multiple activated Skill instructions remain authoritative native Tool Results in
+the same bounded model exchange, with a shared hard context limit rather than a second prompt or
+execution channel. Production Capability names are exactly `skill.activate` and
+`process.execute`. A concrete tool normally adds a Skill, not a Handler. No Skill source or
 installer receives a special branch. MCP and external Agents remain future categories.
 
 ## Persistence

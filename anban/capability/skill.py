@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +19,7 @@ from anban.capability.contracts import (
 )
 from anban.capability.workspace import capability_error
 from anban.core.errors import ErrorCode
-from anban.core.metadata import SafeMetadata
+from anban.core.metadata import SafeMetadata, SafeScalar
 from scripts.workspace_bootstrap import resolve_workspace
 
 MAX_SKILL_SOURCE_BYTES = 65_536
@@ -76,6 +77,13 @@ class WorkspaceSkillCatalog:
         return self._diagnostics
 
     def discover(self) -> tuple[SkillPackage, ...]:
+        """Return a fresh catalog view; retained for the original discovery surface."""
+
+        return self.refresh()
+
+    def refresh(self) -> tuple[SkillPackage, ...]:
+        """Re-scan every authorized root through the same parser and trust rules."""
+
         candidates: dict[str, list[tuple[SkillPackage, str]]] = {}
         diagnostics: list[SkillDiagnostic] = []
         for physical_root, label, logical_root in self._roots:
@@ -227,18 +235,24 @@ class SkillLoadError(Exception):
 class SkillActivationCapability:
     """Return complete instructions for any uniformly discovered Skill."""
 
-    def __init__(self, packages: tuple[SkillPackage, ...]) -> None:
-        if not packages:
-            raise ValueError("Skill activation requires at least one valid package")
-        self._packages = {package.slug: package for package in packages}
-        enum: list[JsonValue] = list(self._packages)
+    def __init__(self, catalog: WorkspaceSkillCatalog) -> None:
+        self._catalog = catalog
         self._descriptor = CapabilityDescriptor(
             name="skill.activate",
-            description="Activate one discovered Skill and return its complete instructions.",
+            description=(
+                "Refresh the authorized catalog, activate one discovered Skill, and return its "
+                "complete instructions."
+            ),
             kind=CapabilityKind.SKILL,
             input_schema={
                 "type": "object",
-                "properties": {"name": {"type": "string", "enum": enum, "maxLength": 128}},
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 128,
+                    }
+                },
                 "required": ["name"],
                 "additionalProperties": False,
             },
@@ -251,15 +265,16 @@ class SkillActivationCapability:
     async def invoke(
         self, arguments: dict[str, JsonValue], context: InvocationContext
     ) -> CapabilityResult:
+        packages = self._current_packages()
         slug = arguments.get("name")
-        if not isinstance(slug, str) or slug not in self._packages:
+        if not isinstance(slug, str) or slug not in packages:
             raise capability_error(
                 ErrorCode.CAPABILITY_ARGUMENTS_INVALID,
                 "Skill identity is invalid",
                 reason="unknown_skill",
                 capability_name=self.descriptor.name,
             )
-        package = self._packages[slug]
+        package = packages[slug]
         observation = (
             f"Activated Skill: {package.slug}\n"
             f"Skill root: {package.skill_root}\n"
@@ -267,17 +282,44 @@ class SkillActivationCapability:
             "SKILL.md:\n"
             f"{package.instructions}"
         )
+        metadata: dict[str, SafeScalar] = {
+            "skill_slug": package.slug,
+            "skill_root": package.skill_root,
+            "content_hash": package.content_hash,
+        }
+        metadata.update(
+            {
+                "catalog_digest": self._catalog_digest(tuple(packages.values())),
+                "catalog_skill_count": len(packages),
+                "catalog_diagnostic_count": len(self._catalog.diagnostics),
+            }
+        )
         return CapabilityResult(
             status=CapabilityResultStatus.COMPLETED,
             observation=observation,
-            metadata=SafeMetadata(
-                {
-                    "skill_slug": package.slug,
-                    "skill_root": package.skill_root,
-                    "content_hash": package.content_hash,
-                }
-            ),
+            metadata=SafeMetadata(metadata),
         )
 
     async def cancel(self, context: InvocationContext) -> None:
         return None
+
+    def _current_packages(self) -> dict[str, SkillPackage]:
+        packages = self._catalog.refresh()
+        return {package.slug: package for package in packages}
+
+    def _catalog_digest(self, packages: tuple[SkillPackage, ...]) -> str:
+        encoded = json.dumps(
+            {
+                "skills": [
+                    {"slug": package.slug, "content_hash": package.content_hash}
+                    for package in sorted(packages, key=lambda item: item.slug)
+                ],
+                "diagnostics": [
+                    {"path": item.path, "reason": item.reason} for item in self._catalog.diagnostics
+                ],
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()

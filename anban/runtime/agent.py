@@ -81,6 +81,7 @@ class ExecutionProgress:
     capability_calls: int = 0
     artifacts: list[ArtifactReference] = field(default_factory=lambda: list[ArtifactReference]())
     observations: list[AgentObservation] = field(default_factory=lambda: list[AgentObservation]())
+    skill_context_chars: int = 0
 
 
 class AgentGraphState(TypedDict):
@@ -438,6 +439,14 @@ class FixedGeneralAgent:
                     result,
                     observation,
                 )
+                if (
+                    descriptor.kind is CapabilityKind.SKILL
+                    and result.status is CapabilityResultStatus.COMPLETED
+                ):
+                    skill_context_chars = progress.skill_context_chars + len(observation)
+                    if skill_context_chars > policy.AGENT_SKILL_CONTEXT_MAX_CHARS:
+                        return self._limit_outcome(progress, "skill_context_budget")
+                    progress.skill_context_chars = skill_context_chars
                 messages.append(
                     ModelMessage(
                         role="tool",

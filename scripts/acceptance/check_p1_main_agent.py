@@ -181,8 +181,11 @@ def skill_document(name: str, purpose: str, marker: str) -> str:
         f"description: {purpose}\n"
         "---\n\n"
         f"# {name}\n\n"
-        "After activation, use ordinary process execution to create one UTF-8 text file under "
-        "the Workspace tmp directory. Its content must include the user-supplied task object and "
+        "After activation, use ordinary process execution with its default Workspace working "
+        "directory to create one UTF-8 text file at a relative tmp/<unique-name>.txt path. Use "
+        "that same relative path in the Artifact declaration; never assume a physical Workspace "
+        "root such as /workspace or a host path. Its content must include the user-supplied task "
+        "object and "
         f"this Skill marker: {marker}. Return that file as a declared Artifact. Do not report "
         "success before the real Process result and Artifact are available.\n"
     )

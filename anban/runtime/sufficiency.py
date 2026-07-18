@@ -14,6 +14,7 @@ from anban.capability import (
     CapabilityInventoryPort,
     InventoryKind,
 )
+from anban.config import policy
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.metadata import SafeMetadata, validate_safe_text
 from anban.model import ModelMessage, ModelPort, ModelRequest
@@ -30,16 +31,30 @@ _WORD = re.compile(r"[a-z0-9@_.:/-]+", re.IGNORECASE)
 _SYSTEM_INSTRUCTIONS = (
     "Evaluate whether the current bounded inventory can satisfy the user goal. Select the "
     "lowest-complexity reliable path that is adequate for this task, using exactly one supplied "
-    "strategy and selection target pair. Ready means callable, not necessarily task-sufficient. "
+    "strategy and selection target pair as the initial execution entry. The selected entry does "
+    "not restrict later use of other supplied ready paths. When a goal requires multiple "
+    "independent ready Skills, select one ready Skill that can safely begin the sequence; do not "
+    "fail solely because this decision selects one target. Ready means callable, not necessarily "
+    "task-sufficient. "
     "Use direct_answer only when no external action or fresh external fact is needed. Select a "
     "ready process path when bounded terminal operations are sufficient, even if no matching Skill "
     "exists. Never acquire a Skill merely because one is absent. acquire_skill requires a general "
     "reason and, when a Process path is ready, existing_process_path_unreasonable must be true. "
+    "When the user explicitly authorizes discovering and installing a new target Skill, select "
+    "acquire_skill to record that governed acquisition decision; an existing acquisition-guide "
+    "Skill is an implementation path, not the new target Skill. Set "
+    "goal_requires_new_skill_acquisition true exactly for that explicit authorization and only "
+    "with acquire_skill; otherwise set it false. "
     "Select clarify only when missing user input can unlock a path, otherwise select fail when no "
     "safe path exists. Unavailable targets cannot be selected. Use an empty target for direct, "
     "acquire, clarify, and fail resolutions. Use an empty missing_condition for an existing path "
     "and a non-empty one for a resolution. Set every acquisition-reason boolean false unless the "
     "strategy is acquire_skill. Return only the closed JSON object."
+)
+_REPAIR_INSTRUCTIONS = (
+    "The previous sufficiency response violated the closed response contract. Reassess the same "
+    "bounded inventory and return exactly one JSON object matching every required field, enum, "
+    "length, and decision-shape condition. Do not invent or change an inventory candidate."
 )
 _DECISION_SCHEMA: dict[str, JsonValue] = {
     "type": "object",
@@ -55,6 +70,7 @@ _DECISION_SCHEMA: dict[str, JsonValue] = {
         "low_implementation_confidence": {"type": "boolean"},
         "repeated_reusable_need": {"type": "boolean"},
         "existing_process_path_unreasonable": {"type": "boolean"},
+        "goal_requires_new_skill_acquisition": {"type": "boolean"},
     },
     "required": [
         "strategy",
@@ -68,6 +84,7 @@ _DECISION_SCHEMA: dict[str, JsonValue] = {
         "low_implementation_confidence",
         "repeated_reusable_need",
         "existing_process_path_unreasonable",
+        "goal_requires_new_skill_acquisition",
     ],
     "additionalProperties": False,
 }
@@ -87,6 +104,7 @@ class _ModelSufficiencyDecision(BaseModel):
     low_implementation_confidence: bool
     repeated_reusable_need: bool
     existing_process_path_unreasonable: bool
+    goal_requires_new_skill_acquisition: bool
 
     @field_validator("rationale")
     @classmethod
@@ -132,6 +150,9 @@ class CapabilitySufficiencyEvaluator:
         self,
         request: str,
         model: ModelPort,
+        *,
+        repair_attempt: int = 0,
+        repair_limit: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
     ) -> CapabilitySufficiencyAssessment:
         items = self._bounded_items(self._inventory.snapshot().items, request)
         candidates = tuple(self._candidate(item) for item in items)
@@ -139,11 +160,18 @@ class CapabilitySufficiencyEvaluator:
             ModelRequest(
                 messages=(
                     ModelMessage(role="system", content=_SYSTEM_INSTRUCTIONS),
+                    *(
+                        ()
+                        if repair_attempt == 0
+                        else (ModelMessage(role="system", content=_REPAIR_INSTRUCTIONS),)
+                    ),
                     ModelMessage(role="user", content=request),
                     ModelMessage(role="system", content=self._inventory_context(items)),
                 ),
                 response_schema=_DECISION_SCHEMA,
-                max_output_tokens=2048,
+                max_output_tokens=4096,
+                repair_attempt=repair_attempt,
+                repair_limit=repair_limit,
             )
         )
         if turn.structured_output is None:
@@ -184,7 +212,10 @@ class CapabilitySufficiencyEvaluator:
                 raise self._invalid_decision("selection_unavailable")
 
         acquisition = decision.acquisition
-        if decision.strategy is ExecutionStrategy.ACQUIRE_SKILL:
+        acquisition_selected = decision.strategy is ExecutionStrategy.ACQUIRE_SKILL
+        if decision.goal_requires_new_skill_acquisition != acquisition_selected:
+            raise self._invalid_decision("skill_acquisition_intent_disagrees")
+        if acquisition_selected:
             process_ready = any(
                 candidate.strategy is ExecutionStrategy.USE_PROCESS and candidate.available
                 for candidate in candidates
@@ -324,6 +355,6 @@ class CapabilitySufficiencyEvaluator:
             ErrorInfo(
                 code=ErrorCode.MODEL_RESPONSE_INVALID,
                 message="Capability sufficiency decision is invalid",
-                details=SafeMetadata({"reason": reason}),
+                details=SafeMetadata({"reason": reason, "repairable": True}),
             )
         )

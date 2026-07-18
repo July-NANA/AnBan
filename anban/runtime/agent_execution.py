@@ -36,11 +36,18 @@ _CANCELLATION_TIMEOUT_SECONDS = 2.0
 @dataclass
 class ExecutionProgress:
     model_turns: int = 0
+    response_repairs: int = 0
     capability_calls: int = 0
     artifacts: list[ArtifactReference] = field(default_factory=lambda: list[ArtifactReference]())
     observations: list[AgentObservation] = field(default_factory=lambda: list[AgentObservation]())
     skill_context_chars: int = 0
     replans: int = 0
+
+    @property
+    def reasoning_turns(self) -> int:
+        """Count ordinary reasoning turns separately from bounded response repairs."""
+
+        return self.model_turns - self.response_repairs
 
 
 class AgentExecutionSupport:

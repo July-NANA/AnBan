@@ -17,6 +17,7 @@ from anban.capability import (
     UnifiedCapabilityInventory,
 )
 from anban.core import AnbanError, ErrorCode, ErrorInfo, new_execution_run_id, new_node_run_id
+from anban.core.metadata import SafeMetadata
 from anban.model import ModelMessage, ModelRequest, ModelTurn, ToolCall, ToolResult
 from anban.runtime import (
     AgentInput,
@@ -33,13 +34,16 @@ from tests.runtime.test_persistent_runtime import assessment_turn, completion_tu
 
 
 class ScriptedCompletionModel:
-    def __init__(self, turns: list[ModelTurn]) -> None:
+    def __init__(self, turns: list[ModelTurn | Exception]) -> None:
         self.turns = turns
         self.requests: list[ModelRequest] = []
 
     async def complete(self, request: ModelRequest) -> ModelTurn:
         self.requests.append(request)
-        return self.turns.pop(0)
+        turn = self.turns.pop(0)
+        if isinstance(turn, Exception):
+            raise turn
+        return turn
 
 
 class BoundedProcess:
@@ -175,6 +179,139 @@ async def test_premature_final_replans_to_exact_ready_path_and_completes(
     assert replans[0].remaining_attempts == 1
     assert model.requests[2].response_schema is not None
     assert model.requests[5].response_schema is not None
+
+
+async def test_completion_shape_failures_use_shared_bounded_repair_budget() -> None:
+    registry = CapabilityRegistry()
+    inventory = UnifiedCapabilityInventory(registry, model_available=True)
+    provider_invalid = AnbanError(
+        ErrorInfo(
+            code=ErrorCode.MODEL_RESPONSE_INVALID,
+            message="Model response shape is invalid",
+            details=SafeMetadata({"repairable": True}),
+        )
+    )
+    final_text = "The bounded response is supported by the supplied evidence."
+    unsafe_domain_decision = completion_turn(final_text=final_text).model_copy(
+        update={
+            "structured_output": {
+                **(completion_turn(final_text=final_text).structured_output or {}),
+                "rationale": "Authorization: Bearer unsafe-test-canary",
+            }
+        }
+    )
+    path_rationale_decision = completion_turn(final_text=final_text).model_copy(
+        update={
+            "structured_output": {
+                **(completion_turn(final_text=final_text).structured_output or {}),
+                "rationale": "Evidence was produced under /private/host/workspace/output.txt.",
+            }
+        }
+    )
+    model = ScriptedCompletionModel(
+        [
+            assessment_turn(ExecutionStrategy.DIRECT_ANSWER, target=""),
+            final_turn(final_text),
+            provider_invalid,
+            unsafe_domain_decision,
+            path_rationale_decision,
+        ]
+    )
+
+    outcome = await FixedGeneralAgent(
+        model,
+        registry,
+        sufficiency=CapabilitySufficiencyEvaluator(inventory),
+        completion=CompletionEvaluator(),
+        response_repair_retries=2,
+    ).execute(agent_input("Give one bounded evidence-based response."))
+
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert outcome.model_turn_count == 5
+    assert [request.repair_attempt for request in model.requests] == [0, 0, 0, 1, 2]
+    assert all(request.repair_limit == 2 for request in model.requests[2:])
+    assert all(
+        any(
+            message.content is not None
+            and "previous completion assessment" in message.content
+            and "absolute host paths" in message.content
+            for message in request.messages
+        )
+        for request in model.requests[3:]
+    )
+
+
+async def test_sufficiency_shape_failure_uses_shared_bounded_repair_budget() -> None:
+    registry = CapabilityRegistry()
+    inventory = UnifiedCapabilityInventory(registry, model_available=True)
+    provider_invalid = AnbanError(
+        ErrorInfo(
+            code=ErrorCode.MODEL_RESPONSE_INVALID,
+            message="Model response shape is invalid",
+            details=SafeMetadata({"repairable": True}),
+        )
+    )
+    final_text = "The finite response completed from the supplied information."
+    model = ScriptedCompletionModel(
+        [
+            provider_invalid,
+            assessment_turn(ExecutionStrategy.DIRECT_ANSWER, target=""),
+            final_turn(final_text),
+            completion_turn(final_text=final_text),
+        ]
+    )
+
+    outcome = await FixedGeneralAgent(
+        model,
+        registry,
+        sufficiency=CapabilitySufficiencyEvaluator(inventory),
+        completion=CompletionEvaluator(),
+        response_repair_retries=1,
+    ).execute(agent_input("Explain one finite bounded fact."))
+
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert outcome.model_turn_count == 4
+    assert [request.repair_attempt for request in model.requests] == [0, 1, 0, 0]
+    assert any(
+        message.content is not None and "previous sufficiency response" in message.content
+        for message in model.requests[1].messages
+    )
+
+
+async def test_unexecuted_initial_strategy_mismatch_is_repaired_to_selected_path() -> None:
+    selected_name = f"fixture.{uuid4().hex}"
+    other_name = f"fixture.{uuid4().hex}"
+    selected = BoundedProcess(selected_name)
+    other = BoundedProcess(other_name)
+    registry = CapabilityRegistry((selected, other))
+    inventory = UnifiedCapabilityInventory(registry, model_available=True)
+    final_text = "The selected bounded path completed with real evidence."
+    model = ScriptedCompletionModel(
+        [
+            assessment_turn(ExecutionStrategy.USE_PROCESS, target=selected_name),
+            process_turn(other_name, uuid4().hex),
+            process_turn(selected_name, uuid4().hex),
+            final_turn(final_text),
+            completion_turn(final_text=final_text),
+        ]
+    )
+
+    outcome = await FixedGeneralAgent(
+        model,
+        registry,
+        sufficiency=CapabilitySufficiencyEvaluator(inventory),
+        completion=CompletionEvaluator(),
+        response_repair_retries=1,
+    ).execute(agent_input("Run the selected bounded process path."))
+
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert selected.calls == 1
+    assert other.calls == 0
+    assert [request.repair_attempt for request in model.requests] == [0, 0, 1, 0, 0]
+    assert any(
+        message.content is not None and "authoritative initial path" in message.content
+        for message in model.requests[2].messages
+    )
 
 
 async def test_exhausted_alternative_fails_without_retrying_side_effect() -> None:
@@ -331,6 +468,12 @@ async def test_completion_transcript_bound_preserves_complete_tool_exchanges() -
     ]
     for index in range(20):
         call_id = f"call-{index}-{uuid4().hex}"
+        argument_value = "a" * 10_000 if index == 19 else str(index)
+        result_content = (
+            "start-marker" + ("b" * 60_000) + "end-marker"
+            if index == 19
+            else '{"status":"completed"}'
+        )
         messages.extend(
             (
                 ModelMessage(
@@ -339,7 +482,7 @@ async def test_completion_transcript_bound_preserves_complete_tool_exchanges() -
                         ToolCall(
                             id=call_id,
                             name=process_name,
-                            arguments={"value": str(index)},
+                            arguments={"value": argument_value},
                         ),
                     ),
                 ),
@@ -347,7 +490,7 @@ async def test_completion_transcript_bound_preserves_complete_tool_exchanges() -
                     role="tool",
                     tool_result=ToolResult(
                         tool_call_id=call_id,
-                        content='{"status":"completed"}',
+                        content=result_content,
                     ),
                 ),
                 ModelMessage(role="system", content="Continue bounded reasoning."),
@@ -369,13 +512,21 @@ async def test_completion_transcript_bound_preserves_complete_tool_exchanges() -
     assert result.completion.complete
     request = completion_model.requests[0]
     assert len(request.messages) <= 64
-    pending: set[str] = set()
-    for message in request.messages:
-        if message.role == "assistant" and message.tool_calls:
-            assert not pending
-            pending = {call.id for call in message.tool_calls}
-        elif message.role == "tool":
-            assert message.tool_result is not None
-            assert message.tool_result.tool_call_id in pending
-            pending.remove(message.tool_result.tool_call_id)
-    assert not pending
+    assert request.response_schema is not None
+    assert request.tools == ()
+    assert not any(message.tool_calls or message.role == "tool" for message in request.messages)
+    evidence_messages = tuple(
+        message
+        for message in request.messages
+        if message.content is not None and message.content.startswith("HISTORICAL_TOOL_EVIDENCE")
+    )
+    assert evidence_messages
+    assert all(message.role == "user" for message in evidence_messages)
+    last_evidence = evidence_messages[-1].content
+    assert last_evidence is not None
+    assert len(last_evidence) <= 32_768
+    assert process_name in last_evidence
+    assert "HISTORICAL_TOOL_EVIDENCE" in last_evidence
+    assert "bounded evidence omitted" in last_evidence
+    assert "start-marker" in last_evidence
+    assert "end-marker" in last_evidence

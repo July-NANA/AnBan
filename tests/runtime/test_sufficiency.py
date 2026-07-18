@@ -74,6 +74,7 @@ def decision(
         "low_implementation_confidence": False,
         "repeated_reusable_need": False,
         "existing_process_path_unreasonable": False,
+        "goal_requires_new_skill_acquisition": strategy is ExecutionStrategy.ACQUIRE_SKILL,
     }
     payload.update(updates)
     return payload
@@ -125,6 +126,7 @@ async def test_direct_answer_assesses_every_inventory_category(tmp_path: Path) -
     request = model.requests[0]
     assert request.response_schema is not None
     assert request.tools == ()
+    assert "multiple independent ready Skills" in (request.messages[0].content or "")
     inventory_context = request.messages[-1].content or ""
     for kind in InventoryKind:
         assert f'"kind":"{kind.value}"' in inventory_context

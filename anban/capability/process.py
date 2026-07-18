@@ -33,7 +33,14 @@ _ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SENSITIVE_NAME = re.compile(
     r"(?:authorization|credential|database_url|api[_-]?key|password|secret|token)", re.I
 )
-_MEDIA_TYPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$")
+_MEDIA_TYPE_TOKEN = r"[A-Za-z0-9!#$%&'*+.^_`|~-]+"
+_MEDIA_TYPE_PARAMETER_VALUE = rf'(?:{_MEDIA_TYPE_TOKEN}|"[\x20-\x21\x23-\x5B\x5D-\x7E]*")'
+_MEDIA_TYPE_PATTERN = (
+    rf"^{_MEDIA_TYPE_TOKEN}/{_MEDIA_TYPE_TOKEN}"
+    rf"(?:[ \t]*;[ \t]*{_MEDIA_TYPE_TOKEN}[ \t]*=[ \t]*"
+    rf"{_MEDIA_TYPE_PARAMETER_VALUE})*$"
+)
+_MEDIA_TYPE = re.compile(_MEDIA_TYPE_PATTERN)
 
 
 class ProcessCapability:

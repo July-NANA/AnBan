@@ -143,6 +143,7 @@ def assessment_turn(
             "low_implementation_confidence": False,
             "repeated_reusable_need": False,
             "existing_process_path_unreasonable": False,
+            "goal_requires_new_skill_acquisition": (strategy is ExecutionStrategy.ACQUIRE_SKILL),
         },
         finish_reason="stop",
     )

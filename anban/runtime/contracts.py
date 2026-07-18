@@ -253,13 +253,24 @@ class CompletionAssessment(RuntimeValue):
     @field_validator("rationale")
     @classmethod
     def validate_completion_rationale(cls, value: str) -> str:
-        return validate_safe_text(value, label="Completion rationale", max_length=2048)
+        return validate_safe_text(
+            value,
+            label="Completion rationale",
+            max_length=2048,
+            allow_absolute_paths=True,
+        )
 
     @field_validator("unmet_conditions")
     @classmethod
     def validate_unmet_conditions(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(
-            validate_safe_text(value, label="Unmet condition", max_length=512) for value in values
+            validate_safe_text(
+                value,
+                label="Unmet condition",
+                max_length=512,
+                allow_absolute_paths=True,
+            )
+            for value in values
         )
 
     @model_validator(mode="after")
@@ -297,7 +308,12 @@ class ReplanDecision(RuntimeValue):
     @field_validator("rationale")
     @classmethod
     def validate_replan_rationale(cls, value: str) -> str:
-        return validate_safe_text(value, label="Replan rationale", max_length=2048)
+        return validate_safe_text(
+            value,
+            label="Replan rationale",
+            max_length=2048,
+            allow_absolute_paths=True,
+        )
 
     @model_validator(mode="after")
     def validate_replan_shape(self) -> Self:

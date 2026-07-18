@@ -266,6 +266,7 @@ def memory_assessment() -> ModelTurn:
             "low_implementation_confidence": False,
             "repeated_reusable_need": False,
             "existing_process_path_unreasonable": False,
+            "goal_requires_new_skill_acquisition": False,
         },
         finish_reason="stop",
     )

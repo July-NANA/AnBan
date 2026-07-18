@@ -30,6 +30,12 @@ from anban.model import (
 )
 from anban.runtime.agent_decisions import assessment_guidance, matches_initial_decision
 from anban.runtime.agent_execution import AgentExecutionSupport, ExecutionProgress
+from anban.runtime.agent_prompts import (
+    GENERAL_SYSTEM_INSTRUCTIONS,
+    INITIAL_STRATEGY_REPAIR_INSTRUCTION,
+    RESPONSE_CONTRACT_REMINDER,
+    RESPONSE_REPAIR_INSTRUCTION,
+)
 from anban.runtime.completion import (
     CompletionEvaluation,
     CompletionEvaluator,
@@ -51,30 +57,6 @@ from anban.runtime.contracts import (
 from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
 
 GENERAL_AGENT_NODE = "general_agent"
-_SYSTEM_INSTRUCTIONS = (
-    "You are the fixed Anban v0.1 General Agent. Use only the listed Capabilities. "
-    "Choose appropriate Skills for the user's goal and follow activated SKILL.md instructions. "
-    "Use process.execute for command-line programs, scripts, file operations, network operations, "
-    "and package tools. Never invent a Capability or claim an operation ran when it did not. "
-    "Treat nonzero exits, timeouts, cancellation, and Artifact collection failures as failures. "
-    "Do not replay a completed side effect while repairing a model response. Use Tool Results as "
-    "observations, then return one concise final answer. When an action is required, use native "
-    "Tool Calls. Narrated actions are not evidence of execution. Assistant text accompanying "
-    "valid Tool Calls is non-authoritative and may be ignored. A final answer must not contain "
-    "Tool Calls. An activated Skill, stored context, successful intermediate, or narrated intent "
-    "is not by itself completion of the original goal."
-)
-_REPAIR_INSTRUCTION = (
-    "Your previous response violated the response contract. When an action is required, return "
-    "valid native Tool Calls with complete IDs, function names, and JSON object arguments. "
-    "Otherwise return one non-empty final assistant message. Narrated actions are not evidence of "
-    "execution, and text accompanying valid Tool Calls is non-authoritative."
-)
-_RESPONSE_CONTRACT_REMINDER = (
-    "Response contract reminder: use native Tool Calls for actions and one non-empty assistant "
-    "message for the final answer. Text accompanying valid Tool Calls is non-authoritative. Do not "
-    "replay any Capability call that already completed."
-)
 
 
 class AgentGraphState(TypedDict):
@@ -213,10 +195,41 @@ class FixedGeneralAgent(AgentExecutionSupport):
         initial_skill_targets: frozenset[str] = frozenset()
         if self._sufficiency is not None:
             initial_skill_targets = self._sufficiency.ready_skill_targets()
-            if progress.model_turns >= self._limits.max_model_turns:
-                return self._limit_outcome(progress, "model_turn_budget")
-            progress.model_turns += 1
-            assessment = await self._sufficiency.assess(agent_input.request, self._model)
+            repair_request = False
+            while True:
+                if progress.reasoning_turns >= self._limits.max_model_turns:
+                    return self._limit_outcome(progress, "model_turn_budget")
+                repair_attempt = progress.response_repairs if repair_request else 0
+                progress.model_turns += 1
+                try:
+                    assessment = await self._sufficiency.assess(
+                        agent_input.request,
+                        self._model,
+                        repair_attempt=repair_attempt,
+                        repair_limit=self._response_repair_retries,
+                    )
+                    break
+                except AnbanError as exc:
+                    if (
+                        exc.info.code is ErrorCode.MODEL_RESPONSE_INVALID
+                        and exc.info.details.root.get("repairable") is True
+                        and progress.response_repairs < self._response_repair_retries
+                        and now_utc() < deadline_at
+                    ):
+                        progress.response_repairs += 1
+                        repair_request = True
+                        continue
+                    return self._failure_outcome(exc.info, progress)
+                except Exception:
+                    return self._outcome(
+                        AgentOutcomeStatus.FAILED,
+                        progress,
+                        error=self._error(
+                            ErrorCode.MODEL_REQUEST_FAILED,
+                            "Capability sufficiency assessment failed",
+                            "sufficiency_exception",
+                        ),
+                    )
             if self._assessment_observer is not None:
                 await self._assessment_observer(assessment)
             if assessment.must_fail:
@@ -257,7 +270,7 @@ class FixedGeneralAgent(AgentExecutionSupport):
             for descriptor in descriptors
         )
         messages: list[ModelMessage] = [
-            ModelMessage(role="system", content=_SYSTEM_INSTRUCTIONS),
+            ModelMessage(role="system", content=GENERAL_SYSTEM_INSTRUCTIONS),
             *(() if guidance is None else (guidance,)),
             ModelMessage(role="user", content=agent_input.request),
         ]
@@ -266,12 +279,11 @@ class FixedGeneralAgent(AgentExecutionSupport):
         completed_rounds: set[str] = set()
         observed_signatures: set[str] = set()
         signature_observations: dict[str, AgentObservation] = {}
-        repair_attempts_used = 0
         request_is_repair = False
         pending_replan: ReplanDecision | None = None
 
-        while progress.model_turns < self._limits.max_model_turns:
-            request_repair_attempt = repair_attempts_used if request_is_repair else 0
+        while progress.reasoning_turns < self._limits.max_model_turns:
+            request_repair_attempt = progress.response_repairs if request_is_repair else 0
             progress.model_turns += 1
             try:
                 turn = await self._model.complete(
@@ -286,13 +298,14 @@ class FixedGeneralAgent(AgentExecutionSupport):
                 if (
                     exc.info.code is ErrorCode.MODEL_RESPONSE_INVALID
                     and exc.info.details.root.get("repairable") is True
-                    and repair_attempts_used < self._response_repair_retries
-                    and progress.model_turns < self._limits.max_model_turns
+                    and progress.response_repairs < self._response_repair_retries
                     and now_utc() < deadline_at
                 ):
-                    repair_attempts_used += 1
+                    progress.response_repairs += 1
                     request_is_repair = True
-                    messages.append(ModelMessage(role="system", content=_REPAIR_INSTRUCTION))
+                    messages.append(
+                        ModelMessage(role="system", content=RESPONSE_REPAIR_INSTRUCTION)
+                    )
                     continue
                 return self._failure_outcome(exc.info, progress)
             except Exception:
@@ -452,6 +465,16 @@ class FixedGeneralAgent(AgentExecutionSupport):
                 and progress.capability_calls == 0
                 and not matches_initial_decision(calls[0], assessment, self._capabilities.describe)
             ):
+                if (
+                    progress.response_repairs < self._response_repair_retries
+                    and now_utc() < deadline_at
+                ):
+                    progress.response_repairs += 1
+                    request_is_repair = True
+                    messages.append(
+                        ModelMessage(role="system", content=INITIAL_STRATEGY_REPAIR_INSTRUCTION)
+                    )
+                    continue
                 return self._outcome(
                     AgentOutcomeStatus.FAILED,
                     progress,
@@ -649,7 +672,7 @@ class FixedGeneralAgent(AgentExecutionSupport):
                     )
                 )
                 continue
-            messages.append(ModelMessage(role="system", content=_RESPONSE_CONTRACT_REMINDER))
+            messages.append(ModelMessage(role="system", content=RESPONSE_CONTRACT_REMINDER))
 
         return self._limit_outcome(progress, "model_turn_budget")
 
@@ -681,30 +704,44 @@ class FixedGeneralAgent(AgentExecutionSupport):
     ) -> CompletionEvaluation | AgentOutcome:
         if self._completion is None:
             return self._completion_failure(progress, "completion_evaluator_missing")
-        if progress.model_turns >= self._limits.max_model_turns:
-            return self._limit_outcome(progress, "model_turn_budget")
-        progress.model_turns += 1
-        try:
-            evaluated = await self._completion.assess(
-                transcript=tuple(messages),
-                assessment=assessment,
-                observations=tuple(progress.observations),
-                proposed_final=proposed_final,
-                remaining_replans=max(0, self._limits.max_replans - progress.replans),
-                model=self._model,
-            )
-        except AnbanError as exc:
-            return self._failure_outcome(exc.info, progress)
-        except Exception:
-            return self._outcome(
-                AgentOutcomeStatus.FAILED,
-                progress,
-                error=self._error(
-                    ErrorCode.MODEL_REQUEST_FAILED,
-                    "Completion assessment failed",
-                    "completion_exception",
-                ),
-            )
+        repair_request = False
+        while True:
+            if progress.reasoning_turns >= self._limits.max_model_turns:
+                return self._limit_outcome(progress, "model_turn_budget")
+            repair_attempt = progress.response_repairs if repair_request else 0
+            progress.model_turns += 1
+            try:
+                evaluated = await self._completion.assess(
+                    transcript=tuple(messages),
+                    assessment=assessment,
+                    observations=tuple(progress.observations),
+                    proposed_final=proposed_final,
+                    remaining_replans=max(0, self._limits.max_replans - progress.replans),
+                    model=self._model,
+                    repair_attempt=repair_attempt,
+                    repair_limit=self._response_repair_retries,
+                )
+                break
+            except AnbanError as exc:
+                if (
+                    exc.info.code is ErrorCode.MODEL_RESPONSE_INVALID
+                    and exc.info.details.root.get("repairable") is True
+                    and progress.response_repairs < self._response_repair_retries
+                ):
+                    progress.response_repairs += 1
+                    repair_request = True
+                    continue
+                return self._failure_outcome(exc.info, progress)
+            except Exception:
+                return self._outcome(
+                    AgentOutcomeStatus.FAILED,
+                    progress,
+                    error=self._error(
+                        ErrorCode.MODEL_REQUEST_FAILED,
+                        "Completion assessment failed",
+                        "completion_exception",
+                    ),
+                )
         if self._completion_observer is not None:
             await self._completion_observer(evaluated.completion)
         if evaluated.replan is not None and self._replan_observer is not None:

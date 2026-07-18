@@ -346,6 +346,53 @@ async def test_single_and_multiple_declared_artifacts_are_snapshotted(tmp_path: 
     ]
 
 
+async def test_declared_artifact_accepts_bounded_media_type_parameters(tmp_path: Path) -> None:
+    result = await registry(tmp_path).invoke(
+        "process.execute",
+        {
+            "command": "python",
+            "args": ["-c", "from pathlib import Path;Path('result.txt').write_text('ok')"],
+            "artifacts": [
+                {
+                    "path": "result.txt",
+                    "media_type": 'text/plain; charset="utf-8"; format=flowed',
+                }
+            ],
+        },
+        context(),
+    )
+
+    assert result.status is CapabilityResultStatus.COMPLETED
+    assert result.artifacts[0].media_type == 'text/plain; charset="utf-8"; format=flowed'
+
+
+@pytest.mark.parametrize(
+    "media_type",
+    (
+        "text/plain; charset",
+        "text/plain; charset=",
+        "text/plain\r\ncontent-type: application/json",
+        'text/plain; charset="unterminated',
+    ),
+)
+async def test_declared_artifact_rejects_malformed_media_type_parameters(
+    tmp_path: Path, media_type: str
+) -> None:
+    with pytest.raises(AnbanError) as failure:
+        await registry(tmp_path).invoke(
+            "process.execute",
+            {
+                "command": "python",
+                "args": ["-c", "from pathlib import Path;Path('result.txt').write_text('ok')"],
+                "artifacts": [{"path": "result.txt", "media_type": media_type}],
+            },
+            context(),
+        )
+
+    assert failure.value.info.code is ErrorCode.CAPABILITY_ARGUMENTS_INVALID
+    assert failure.value.info.details.root["reason"] == "artifact_invalid"
+
+
 async def test_missing_or_oversized_artifact_fails_without_partial_snapshot(
     tmp_path: Path,
 ) -> None:

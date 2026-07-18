@@ -437,16 +437,24 @@ def workspace_packages(root: Path) -> tuple[str, ...]:
 async def gate_bcd(root: Path) -> dict[str, object]:
     if workspace_packages(root):
         raise RuntimeGateError("Gate B Workspace was not initially empty")
+    task_marker = hashlib.sha256(os.urandom(16)).hexdigest()[:12]
     install = await submit(
-        "Use the available Skill for ClawHub to search public Skills without logging in. Compare "
-        "candidates from no more than three successful, semantically distinct search commands and "
-        "explain compatibility before selection. Then choose and "
-        "install one low-risk Skill that needs no credentials, Browser, MCP, database, or special "
-        "service and whose real behavior can be verified with ordinary process execution. The "
+        "The target workflow is a simple plain-text transformation Skill and is absent, so first "
+        "record the governed decision that one new Skill must be acquired; the available ClawHub "
+        "Skill is only the acquisition guide, not "
+        "the target workflow. Use that guide to run exactly one public search for an "
+        "uppercase-text Skill implemented by a bundled local Python or shell script, without "
+        "logging in. Compare "
+        "the candidates from that one result, then inspect the real SKILL.md for at most two of "
+        "them before selection; do not run another search. Reject any candidate whose instructions "
+        "call a network API, require credentials, install dependencies, or depend on a separate "
+        "service. Then choose and install one compatible low-risk Skill whose actual instructions "
+        "can be verified with one ordinary process execution. The "
         "request explicitly authorizes searching and installing exactly one suitable Skill. After "
         "the real install, discover and activate that exact new Skill in this same Run, follow its "
-        "actual instructions, and use ordinary process execution to complete one bounded, "
-        "verifiable task before summarizing the original request."
+        "actual instructions, and use ordinary process execution to transform the marker "
+        f"{task_marker} to uppercase and verify the result. After the first successful local "
+        "transformation, stop executing commands and summarize the original request immediately."
     )
     require_success(install, "Gate B")
     install_trace = await trace(install.run_id)
@@ -503,10 +511,13 @@ async def gate_bcd(root: Path) -> dict[str, object]:
     for index in range(3):
         if hashlib.sha256(skill_file.read_bytes()).hexdigest() != content_hash:
             raise RuntimeGateError("Gate C/D Skill content changed before execution")
+        execution_marker = hashlib.sha256(os.urandom(16)).hexdigest()[:12]
         result = await submit(
-            f"Use the discovered Skill {slug} for a fresh low-risk validation task number "
-            f"{index + 1}. Follow its actual instructions, use real process execution, and report "
-            "a verifiable result without inventing unavailable capabilities."
+            f"Use the discovered plain-text transformation Skill {slug} for fresh validation "
+            f"task {index + 1}: transform marker {execution_marker} to uppercase. Follow its "
+            "actual instructions, use real process execution, and report the verifiable result "
+            "without inventing unavailable capabilities. Stop after the first successful "
+            "transformation; do not add exploratory or redundant verification commands."
         )
         require_success(result, f"Gate C/D run {index + 1}")
         observation = await trace(result.run_id)

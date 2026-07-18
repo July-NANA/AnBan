@@ -143,6 +143,7 @@ def assessment_turn(
             "low_implementation_confidence": False,
             "repeated_reusable_need": False,
             "existing_process_path_unreasonable": False,
+            "goal_requires_new_skill_acquisition": (strategy is ExecutionStrategy.ACQUIRE_SKILL),
         },
         finish_reason="stop",
     )
@@ -676,6 +677,21 @@ async def test_original_and_three_repairs_fail_closed_after_four_requests() -> N
     assert outcome.error.code is ErrorCode.MODEL_RESPONSE_INVALID
     assert outcome.model_turn_count == 4
     assert [request.repair_attempt for request in model.requests] == [0, 1, 2, 3]
+
+
+async def test_repair_budget_does_not_consume_the_ordinary_reasoning_turn_budget() -> None:
+    model = ScriptedModel([invalid_response(), final_turn()])
+
+    outcome = await FixedGeneralAgent(
+        model,
+        CapabilityRegistry(),
+        limits=AgentLimits(max_model_turns=1),
+        response_repair_retries=1,
+    ).execute(agent_input())
+
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert outcome.model_turn_count == 2
+    assert [request.repair_attempt for request in model.requests] == [0, 1]
 
 
 async def test_nonrepairable_invalid_response_never_retries_or_invokes() -> None:

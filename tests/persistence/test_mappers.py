@@ -16,6 +16,7 @@ from anban.core import (
     ContextSummary,
     Event,
     ExecutionRun,
+    GraphRevision,
     NodeRun,
     SafeMetadata,
     Task,
@@ -38,6 +39,8 @@ from anban.persistence.mappers import (
     context_summary_record,
     event_domain,
     event_record,
+    graph_revision_domain,
+    graph_revision_record,
     invocation_domain,
     invocation_record,
     node_domain,
@@ -47,6 +50,7 @@ from anban.persistence.mappers import (
     task_domain,
     task_record,
 )
+from tests.core.test_graph import branch_graph
 
 
 def domain_records() -> tuple[
@@ -134,6 +138,23 @@ def test_context_records_round_trip_with_ordered_summary_coverage() -> None:
         context_summary_domain(context_summary_record(summary), summary.covered_entry_ids)
         == summary
     )
+
+
+def test_graph_revision_round_trips_with_validated_spec_and_hash() -> None:
+    first = GraphRevision.create(
+        task_id=new_task_id(),
+        reason="Initial graph persistence mapping.",
+        spec=branch_graph(),
+    )
+    second = GraphRevision.create(
+        task_id=first.task_id,
+        previous_revision_id=first.id,
+        reason="Append a changed graph without overwriting history.",
+        spec=branch_graph(),
+    )
+
+    assert graph_revision_domain(graph_revision_record(first)) == first
+    assert graph_revision_domain(graph_revision_record(second)) == second
 
 
 def test_unsafe_persisted_metadata_fails_closed() -> None:

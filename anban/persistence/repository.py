@@ -4,17 +4,20 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from anban.core.context import ContextEntry, ContextScope, ContextSummary
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
+from anban.core.graph import GraphRevision
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
     ContextEntryId,
     EventId,
     ExecutionRunId,
+    GraphRevisionId,
     NodeRunId,
     SessionId,
     TaskId,
@@ -49,6 +52,8 @@ from anban.persistence.mappers import (
     context_summary_record,
     event_domain,
     event_record,
+    graph_revision_domain,
+    graph_revision_record,
     invocation_domain,
     invocation_record,
     node_domain,
@@ -66,6 +71,7 @@ from anban.persistence.models import (
     ContextSummaryRecord,
     EventRecord,
     ExecutionRunRecord,
+    GraphRevisionRecord,
     NodeRunRecord,
     TaskRecord,
 )
@@ -86,6 +92,16 @@ def inconsistent_run() -> AnbanError:
         ErrorInfo(
             code=ErrorCode.PERSISTENCE_UNAVAILABLE,
             message="persisted Run relationships are incomplete",
+        )
+    )
+
+
+def graph_revision_conflict(reason: str) -> AnbanError:
+    return AnbanError(
+        ErrorInfo(
+            code=ErrorCode.PERSISTENCE_WRITE_FAILED,
+            message="Graph revision history rejected an append",
+            details=SafeMetadata({"reason": reason}),
         )
     )
 
@@ -134,11 +150,58 @@ class SQLAlchemyExecutionRepository:
             raise missing_record("execution_run", run.id)
         ensure_execution_run_transition(ExecutionRunStatus(record.status), run.status)
         record.status = run.status.value
+        record.graph_revision_id = run.graph_revision_id
         record.started_at = run.started_at
         record.finished_at = run.finished_at
         record.final_text = run.final_text
         record.error_code = None if run.error_code is None else run.error_code.value
         record.safe_metadata = dict(run.metadata.root)
+
+    async def add_graph_revision(self, revision: GraphRevision) -> None:
+        current = await self.get_current_graph_revision(revision.task_id, lock=True)
+        if revision.previous_revision_id is None:
+            if current is not None:
+                raise graph_revision_conflict("initial_revision_exists")
+        elif current is None or current.id != revision.previous_revision_id:
+            raise graph_revision_conflict("previous_revision_not_current")
+        self._session.add(graph_revision_record(revision))
+        await self._session.flush()
+
+    async def get_graph_revision(self, revision_id: GraphRevisionId) -> GraphRevision | None:
+        record = await self._session.get(GraphRevisionRecord, revision_id)
+        return None if record is None else graph_revision_domain(record)
+
+    async def list_graph_revisions(self, task_id: TaskId) -> tuple[GraphRevision, ...]:
+        records = await self._session.scalars(
+            select(GraphRevisionRecord)
+            .where(GraphRevisionRecord.task_id == task_id)
+            .order_by(GraphRevisionRecord.created_at, GraphRevisionRecord.id)
+        )
+        return tuple(graph_revision_domain(record) for record in records.all())
+
+    async def get_current_graph_revision(
+        self,
+        task_id: TaskId,
+        *,
+        lock: bool = False,
+    ) -> GraphRevision | None:
+        current = aliased(GraphRevisionRecord)
+        successor = aliased(GraphRevisionRecord)
+        statement = (
+            select(current)
+            .outerjoin(
+                successor,
+                and_(
+                    successor.task_id == current.task_id,
+                    successor.previous_revision_id == current.id,
+                ),
+            )
+            .where(current.task_id == task_id, successor.id.is_(None))
+        )
+        if lock:
+            statement = statement.with_for_update(of=current)
+        record = (await self._session.scalars(statement)).one_or_none()
+        return None if record is None else graph_revision_domain(record)
 
     async def add_node_run(self, node_run: NodeRun) -> None:
         self._session.add(node_record(node_run))
@@ -322,6 +385,13 @@ class SQLAlchemyExecutionRepository:
         task = await self.get_task(run.task_id)
         if task is None:
             raise inconsistent_run()
+        graph_revision = (
+            None
+            if run.graph_revision_id is None
+            else await self.get_graph_revision(run.graph_revision_id)
+        )
+        if run.graph_revision_id is not None and graph_revision is None:
+            raise inconsistent_run()
         node_records = await self._session.scalars(
             select(NodeRunRecord)
             .where(NodeRunRecord.run_id == run_id)
@@ -340,6 +410,7 @@ class SQLAlchemyExecutionRepository:
         return ExecutionRunAggregate(
             task=task,
             run=run,
+            graph_revision=graph_revision,
             nodes=tuple(node_domain(record) for record in node_records.all()),
             invocations=tuple(invocation_domain(record) for record in invocation_records.all()),
             artifacts=tuple(artifact_domain(record) for record in artifact_records.all()),

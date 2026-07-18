@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from enum import StrEnum
@@ -9,8 +10,9 @@ from typing import Literal, Self
 
 from pydantic import Field, JsonValue, field_validator, model_validator
 
-from anban.core.metadata import validate_safe_text
-from anban.core.models import DomainModel
+from anban.core.ids import GraphRevisionId, TaskId, new_graph_revision_id
+from anban.core.metadata import SafeMetadata, validate_safe_text
+from anban.core.models import DomainModel, UtcDateTime, now_utc
 
 _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
@@ -73,6 +75,12 @@ class TaskGraphValidationReason(StrEnum):
     UNREACHABLE_NODE = "unreachable_node"
     NO_TERMINAL_PATH = "no_terminal_path"
     BUDGET_EXCEEDED = "budget_exceeded"
+
+
+class GraphRevisionStatus(StrEnum):
+    """An immutable revision exists only after its complete spec validates."""
+
+    VALIDATED = "validated"
 
 
 class TaskGraphValueBinding(DomainModel):
@@ -514,3 +522,62 @@ class TaskGraphSpec(DomainModel):
 
 
 TaskGraphNode.model_rebuild()
+
+
+def task_graph_spec_hash(spec: TaskGraphSpec) -> str:
+    """Hash one canonical semantic serialization independent of field ordering."""
+
+    canonical = json.dumps(
+        spec.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+class GraphRevision(DomainModel):
+    """Append-only validated TaskGraphSpec content linked into one Task history."""
+
+    id: GraphRevisionId
+    task_id: TaskId
+    previous_revision_id: GraphRevisionId | None = None
+    reason: str = Field(min_length=1, max_length=2048)
+    spec: TaskGraphSpec
+    spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: GraphRevisionStatus = GraphRevisionStatus.VALIDATED
+    created_at: UtcDateTime = Field(default_factory=now_utc)
+    metadata: SafeMetadata = Field(default_factory=SafeMetadata)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        return validate_safe_text(value, label="Graph revision reason", max_length=2048)
+
+    @model_validator(mode="after")
+    def validate_revision(self) -> Self:
+        if self.previous_revision_id == self.id:
+            raise ValueError("Graph revision cannot reference itself")
+        if self.spec_hash != task_graph_spec_hash(self.spec):
+            raise ValueError("Graph revision hash does not match its TaskGraphSpec")
+        return self
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        task_id: TaskId,
+        reason: str,
+        spec: TaskGraphSpec,
+        previous_revision_id: GraphRevisionId | None = None,
+        metadata: SafeMetadata | None = None,
+    ) -> GraphRevision:
+        return cls(
+            id=new_graph_revision_id(),
+            task_id=task_id,
+            previous_revision_id=previous_revision_id,
+            reason=reason,
+            spec=spec,
+            spec_hash=task_graph_spec_hash(spec),
+            metadata=metadata or SafeMetadata(),
+        )

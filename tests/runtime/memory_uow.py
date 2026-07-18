@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Self
 
 from anban.core.context import ContextEntry, ContextScope, ContextSummary
+from anban.core.graph import GraphRevision
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
@@ -14,6 +15,7 @@ from anban.core.ids import (
     ContextSummaryId,
     EventId,
     ExecutionRunId,
+    GraphRevisionId,
     NodeRunId,
     SessionId,
     TaskId,
@@ -27,6 +29,9 @@ class MemoryStore:
     tasks: dict[TaskId, Task] = field(default_factory=lambda: dict[TaskId, Task]())
     runs: dict[ExecutionRunId, ExecutionRun] = field(
         default_factory=lambda: dict[ExecutionRunId, ExecutionRun]()
+    )
+    graph_revisions: dict[GraphRevisionId, GraphRevision] = field(
+        default_factory=lambda: dict[GraphRevisionId, GraphRevision]()
     )
     nodes: dict[NodeRunId, NodeRun] = field(default_factory=lambda: dict[NodeRunId, NodeRun]())
     invocations: dict[CapabilityInvocationId, CapabilityInvocation] = field(
@@ -47,6 +52,7 @@ class MemoryStore:
         return MemoryStore(
             tasks=dict(self.tasks),
             runs=dict(self.runs),
+            graph_revisions=dict(self.graph_revisions),
             nodes=dict(self.nodes),
             invocations=dict(self.invocations),
             artifacts=dict(self.artifacts),
@@ -81,6 +87,43 @@ class MemoryRepository:
 
     async def update_run(self, run: ExecutionRun) -> None:
         self.store.runs[run.id] = run
+
+    async def add_graph_revision(self, revision: GraphRevision) -> None:
+        if revision.id in self.store.graph_revisions:
+            raise RuntimeError("test-only duplicate Graph revision")
+        current = await self.get_current_graph_revision(revision.task_id)
+        if (current is None) != (revision.previous_revision_id is None):
+            raise RuntimeError("test-only invalid Graph revision predecessor")
+        if current is not None and revision.previous_revision_id != current.id:
+            raise RuntimeError("test-only stale Graph revision predecessor")
+        self.store.graph_revisions[revision.id] = revision
+
+    async def get_graph_revision(self, revision_id: GraphRevisionId) -> GraphRevision | None:
+        return self.store.graph_revisions.get(revision_id)
+
+    async def list_graph_revisions(self, task_id: TaskId) -> tuple[GraphRevision, ...]:
+        return tuple(
+            sorted(
+                (
+                    revision
+                    for revision in self.store.graph_revisions.values()
+                    if revision.task_id == task_id
+                ),
+                key=lambda revision: (revision.created_at, revision.id),
+            )
+        )
+
+    async def get_current_graph_revision(self, task_id: TaskId) -> GraphRevision | None:
+        revisions = await self.list_graph_revisions(task_id)
+        predecessors = {
+            revision.previous_revision_id
+            for revision in revisions
+            if revision.previous_revision_id is not None
+        }
+        current = tuple(revision for revision in revisions if revision.id not in predecessors)
+        if len(current) > 1:
+            raise RuntimeError("test-only branched Graph revision history")
+        return None if not current else current[0]
 
     async def add_node_run(self, node_run: NodeRun) -> None:
         self.store.nodes[node_run.id] = node_run
@@ -158,6 +201,11 @@ class MemoryRepository:
         return ExecutionRunAggregate(
             task=task,
             run=run,
+            graph_revision=(
+                None
+                if run.graph_revision_id is None
+                else self.store.graph_revisions[run.graph_revision_id]
+            ),
             nodes=tuple(node for node in self.store.nodes.values() if node.run_id == run_id),
             invocations=tuple(
                 invocation

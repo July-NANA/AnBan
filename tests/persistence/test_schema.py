@@ -13,6 +13,7 @@ from anban.persistence.models import Base
 EXPECTED_TABLES = {
     "tasks",
     "execution_runs",
+    "graph_revisions",
     "node_runs",
     "capability_invocations",
     "artifacts",
@@ -52,13 +53,38 @@ def test_event_order_and_run_detail_indexes_exist() -> None:
         )
 
 
+def test_graph_revisions_are_task_scoped_append_only_records() -> None:
+    revisions = Base.metadata.tables["graph_revisions"]
+    assert {
+        "id",
+        "task_id",
+        "previous_revision_id",
+        "reason",
+        "spec",
+        "spec_hash",
+        "status",
+        "created_at",
+        "metadata",
+    } == set(revisions.c.keys())
+    assert sum(index.unique for index in revisions.indexes) == 2
+    run_foreign_keys = tuple(
+        item
+        for item in Base.metadata.tables["execution_runs"].constraints
+        if isinstance(item, ForeignKeyConstraint)
+    )
+    assert any(
+        tuple(column.name for column in item.columns) == ("graph_revision_id", "task_id")
+        for item in run_foreign_keys
+    )
+
+
 def test_alembic_has_one_reversible_head_revision() -> None:
     repository = Path(__file__).resolve().parents[2]
     configuration = Config(repository / "alembic.ini")
     scripts = ScriptDirectory.from_config(configuration)
     head = scripts.get_current_head()
-    assert head == "0004_context_memory"
+    assert head == "0005_graph_revisions"
     revision = scripts.get_revision(head)
     assert revision is not None
-    assert revision.down_revision == "0003_capability_error"
+    assert revision.down_revision == "0004_context_memory"
     assert callable(revision.module.downgrade)

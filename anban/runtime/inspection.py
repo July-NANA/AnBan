@@ -16,12 +16,14 @@ from anban.core.context import (
     ContextSummary,
 )
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
+from anban.core.graph import GraphRevision, GraphRevisionStatus, TaskGraphSpec
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
     ContextEntryId,
     ContextSummaryId,
     ExecutionRunId,
+    GraphRevisionId,
     NodeRunId,
     SessionId,
     TaskId,
@@ -57,6 +59,7 @@ class RunSummary(RuntimeValue):
     id: ExecutionRunId
     task_id: TaskId
     status: ExecutionRunStatus
+    graph_revision_id: GraphRevisionId | None = None
     created_at: UtcDateTime
     started_at: UtcDateTime | None = None
     finished_at: UtcDateTime | None = None
@@ -102,9 +105,21 @@ class ArtifactDetail(RuntimeValue):
     created_at: UtcDateTime
 
 
+class GraphRevisionDetail(RuntimeValue):
+    id: GraphRevisionId
+    task_id: TaskId
+    previous_revision_id: GraphRevisionId | None = None
+    reason: str
+    spec: TaskGraphSpec
+    spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: GraphRevisionStatus
+    created_at: UtcDateTime
+
+
 class RunDetail(RuntimeValue):
     task: TaskDetail
     run: RunSummary
+    graph_revision: GraphRevisionDetail | None = None
     nodes: tuple[NodeDetail, ...] = Field(max_length=MAX_NODES)
     invocations: tuple[InvocationDetail, ...] = Field(max_length=MAX_INVOCATIONS)
     artifacts: tuple[ArtifactDetail, ...] = Field(max_length=MAX_ARTIFACTS)
@@ -178,6 +193,11 @@ class ExecutionQueryService:
                 error_code=aggregate.task.error_code,
             ),
             run=run_summary(aggregate.run),
+            graph_revision=(
+                None
+                if aggregate.graph_revision is None
+                else graph_revision_detail(aggregate.graph_revision)
+            ),
             nodes=tuple(node_detail(node) for node in aggregate.nodes),
             invocations=tuple(
                 invocation_detail(invocation) for invocation in aggregate.invocations
@@ -280,10 +300,24 @@ def run_summary(run: ExecutionRun) -> RunSummary:
         id=run.id,
         task_id=run.task_id,
         status=run.status,
+        graph_revision_id=run.graph_revision_id,
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
         error_code=run.error_code,
+    )
+
+
+def graph_revision_detail(revision: GraphRevision) -> GraphRevisionDetail:
+    return GraphRevisionDetail(
+        id=revision.id,
+        task_id=revision.task_id,
+        previous_revision_id=revision.previous_revision_id,
+        reason=revision.reason,
+        spec=revision.spec,
+        spec_hash=revision.spec_hash,
+        status=revision.status,
+        created_at=revision.created_at,
     )
 
 

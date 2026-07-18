@@ -31,6 +31,7 @@ from anban.core.context import (
     ContextSourceKind,
 )
 from anban.core.errors import ErrorCode
+from anban.core.graph import GraphRevisionStatus
 from anban.core.models import CapabilityInvocationStatus, TaskStatus
 
 NAMING_CONVENTION = {
@@ -54,6 +55,7 @@ CONTEXT_KINDS = sql_enum_values(ContextEntryKind)
 CONTEXT_SOURCES = sql_enum_values(ContextSourceKind)
 CONTEXT_SENSITIVITIES = sql_enum_values(ContextSensitivity)
 CONTEXT_STATES = sql_enum_values(ContextConflictState)
+GRAPH_REVISION_STATUSES = sql_enum_values(GraphRevisionStatus)
 
 
 class Base(DeclarativeBase):
@@ -84,6 +86,50 @@ class TaskRecord(SafeMetadataMixin, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class GraphRevisionRecord(SafeMetadataMixin, Base):
+    __tablename__ = "graph_revisions"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({GRAPH_REVISION_STATUSES})", name="status_allowed"),
+        CheckConstraint("char_length(reason) BETWEEN 1 AND 2048", name="reason_bounded"),
+        CheckConstraint("spec_hash ~ '^[0-9a-f]{64}$'", name="spec_hash_format"),
+        CheckConstraint("jsonb_typeof(spec) = 'object'", name="spec_object"),
+        CheckConstraint("id <> previous_revision_id", name="no_self_reference"),
+        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="metadata_object"),
+        ForeignKeyConstraint(
+            ["previous_revision_id", "task_id"],
+            ["graph_revisions.id", "graph_revisions.task_id"],
+            ondelete="RESTRICT",
+            name="fk_graph_revisions_previous_task",
+        ),
+        UniqueConstraint("id", "task_id", name="uq_graph_revisions_id_task_id"),
+        Index("ix_graph_revisions_task_id_created_at", "task_id", "created_at"),
+        Index(
+            "uq_graph_revisions_initial_task",
+            "task_id",
+            unique=True,
+            postgresql_where=text("previous_revision_id IS NULL"),
+        ),
+        Index(
+            "uq_graph_revisions_successor",
+            "task_id",
+            "previous_revision_id",
+            unique=True,
+            postgresql_where=text("previous_revision_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    previous_revision_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    spec: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    spec_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExecutionRunRecord(SafeMetadataMixin, Base):
     __tablename__ = "execution_runs"
     __table_args__ = (
@@ -92,6 +138,12 @@ class ExecutionRunRecord(SafeMetadataMixin, Base):
             f"error_code IS NULL OR error_code IN ({ERROR_CODES})", name="error_code_allowed"
         ),
         CheckConstraint("jsonb_typeof(metadata) = 'object'", name="metadata_object"),
+        ForeignKeyConstraint(
+            ["graph_revision_id", "task_id"],
+            ["graph_revisions.id", "graph_revisions.task_id"],
+            ondelete="RESTRICT",
+            name="fk_execution_runs_graph_revision_task",
+        ),
         Index("ix_execution_runs_task_id", "task_id"),
         Index("ix_execution_runs_created_at", "created_at"),
     )

@@ -10,6 +10,8 @@ import pytest
 from pydantic import JsonValue, ValidationError
 
 from anban.core import (
+    GraphRevision,
+    GraphRevisionStatus,
     TaskGraphBudget,
     TaskGraphCondition,
     TaskGraphConditionOperator,
@@ -21,6 +23,9 @@ from anban.core import (
     TaskGraphValidationReason,
     TaskGraphValueBinding,
     TaskGraphValueSource,
+    new_graph_revision_id,
+    new_task_id,
+    task_graph_spec_hash,
 )
 
 
@@ -397,4 +402,50 @@ def test_condition_operator_shapes_are_closed() -> None:
             input_name="count",
             operator=TaskGraphConditionOperator.GREATER_THAN,
             compare_value="ten",
+        )
+
+
+def test_graph_revision_creation_hashes_one_immutable_validated_spec() -> None:
+    graph = parallel_subgraph_graph()
+    revision = GraphRevision.create(
+        task_id=new_task_id(),
+        reason="Initial validated graph plan.",
+        spec=graph,
+    )
+
+    restored = GraphRevision.model_validate_json(revision.model_dump_json())
+
+    assert restored == revision
+    assert revision.status is GraphRevisionStatus.VALIDATED
+    assert revision.spec_hash == task_graph_spec_hash(graph)
+    with pytest.raises(ValidationError, match="frozen"):
+        revision.reason = "Mutated history"  # type: ignore[misc]
+
+
+def test_graph_revision_hash_and_predecessor_fail_closed() -> None:
+    graph = branch_graph()
+    revision_id = new_graph_revision_id()
+    values: dict[str, object] = {
+        "id": revision_id,
+        "task_id": new_task_id(),
+        "previous_revision_id": revision_id,
+        "reason": "Invalid self reference.",
+        "spec": graph,
+        "spec_hash": task_graph_spec_hash(graph),
+    }
+
+    with pytest.raises(ValidationError, match="cannot reference itself"):
+        GraphRevision.model_validate(values)
+    values["previous_revision_id"] = None
+    values["spec_hash"] = "0" * 64
+    with pytest.raises(ValidationError, match="hash does not match"):
+        GraphRevision.model_validate(values)
+
+
+def test_graph_revision_reason_rejects_sensitive_or_physical_facts() -> None:
+    with pytest.raises(ValidationError, match="forbidden_sensitive_form"):
+        GraphRevision.create(
+            task_id=new_task_id(),
+            reason="Authorization: Bearer revision-canary",
+            spec=loop_graph(),
         )

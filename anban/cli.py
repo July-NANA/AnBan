@@ -323,6 +323,11 @@ def emit_run_detail(detail: RunDetail, *, json_output: bool) -> None:
     print(f"Task: {detail.task.id} [{detail.task.status.value}]")
     print(f"Status: {detail.run.status.value}")
     print(f"Created: {detail.run.created_at.isoformat()}")
+    if detail.graph_revision is not None:
+        print(
+            f"Graph revision: {detail.graph_revision.id} "
+            f"[{detail.graph_revision.status.value}] {detail.graph_revision.spec_hash}"
+        )
     if detail.final_text is not None:
         print(f"Final: {detail.final_text}")
     print("Nodes:")

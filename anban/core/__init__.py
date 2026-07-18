@@ -21,6 +21,8 @@ from anban.core.errors import (
     InvalidTransitionError,
 )
 from anban.core.graph import (
+    GraphRevision,
+    GraphRevisionStatus,
     TaskGraphBudget,
     TaskGraphCondition,
     TaskGraphConditionOperator,
@@ -32,6 +34,7 @@ from anban.core.graph import (
     TaskGraphValidationReason,
     TaskGraphValueBinding,
     TaskGraphValueSource,
+    task_graph_spec_hash,
 )
 from anban.core.ids import (
     ArtifactId,
@@ -117,6 +120,8 @@ __all__ = [
     "ExecutionRepository",
     "ExecutionRunAggregate",
     "GraphRevisionId",
+    "GraphRevision",
+    "GraphRevisionStatus",
     "InvalidTransitionError",
     "NodeRun",
     "NodeRunId",
@@ -158,4 +163,5 @@ __all__ = [
     "new_session_id",
     "new_task_id",
     "now_utc",
+    "task_graph_spec_hash",
 ]

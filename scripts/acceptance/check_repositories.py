@@ -7,7 +7,8 @@ import sys
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.exc import SQLAlchemyError
 
 from anban.config import load_configuration
 from anban.core import (
@@ -26,10 +27,17 @@ from anban.core import (
     Event,
     ExecutionRun,
     ExecutionRunStatus,
+    GraphRevision,
     NodeRun,
     NodeRunStatus,
     SafeMetadata,
     Task,
+    TaskGraphEdge,
+    TaskGraphNode,
+    TaskGraphNodeKind,
+    TaskGraphSpec,
+    TaskGraphValueBinding,
+    TaskGraphValueSource,
     TaskStatus,
     ensure_capability_invocation_transition,
     ensure_execution_run_transition,
@@ -46,7 +54,12 @@ from anban.core import (
     new_task_id,
 )
 from anban.persistence import SQLAlchemyUnitOfWorkFactory, create_database_engine
-from anban.persistence.models import ContextEntryRecord, ContextSummaryRecord, TaskRecord
+from anban.persistence.models import (
+    ContextEntryRecord,
+    ContextSummaryRecord,
+    GraphRevisionRecord,
+    TaskRecord,
+)
 
 
 class RepositoryAcceptanceError(RuntimeError):
@@ -55,6 +68,7 @@ class RepositoryAcceptanceError(RuntimeError):
 
 def records() -> tuple[
     Task,
+    tuple[GraphRevision, GraphRevision],
     ExecutionRun,
     NodeRun,
     CapabilityInvocation,
@@ -66,7 +80,22 @@ def records() -> tuple[
         request="repository integration acceptance",
         metadata=SafeMetadata({"source": "acceptance"}),
     )
-    run = ExecutionRun(id=new_execution_run_id(), task_id=task.id)
+    first_revision = GraphRevision.create(
+        task_id=task.id,
+        reason="Initial repository graph revision.",
+        spec=graph_spec("first_result"),
+    )
+    second_revision = GraphRevision.create(
+        task_id=task.id,
+        previous_revision_id=first_revision.id,
+        reason="Append changed graph content without overwriting the first revision.",
+        spec=graph_spec("second_result"),
+    )
+    run = ExecutionRun(
+        id=new_execution_run_id(),
+        task_id=task.id,
+        graph_revision_id=second_revision.id,
+    )
     node = NodeRun(id=new_node_run_id(), run_id=run.id, node_name="general_agent")
     invocation = CapabilityInvocation(
         id=new_capability_invocation_id(),
@@ -120,6 +149,7 @@ def records() -> tuple[
     )
     return (
         task,
+        (first_revision, second_revision),
         run,
         node,
         invocation,
@@ -128,10 +158,32 @@ def records() -> tuple[
     )
 
 
+def graph_spec(output_key: str) -> TaskGraphSpec:
+    node = TaskGraphNode(
+        id="persist_graph",
+        kind=TaskGraphNodeKind.ACTION,
+        objective=f"Produce the bounded {output_key} value.",
+        outputs=(output_key,),
+    )
+    return TaskGraphSpec(
+        nodes=(node,),
+        edges=tuple[TaskGraphEdge](),
+        entry_node=node.id,
+        terminal_nodes=(node.id,),
+        outputs={
+            output_key: TaskGraphValueBinding(
+                source=TaskGraphValueSource.NODE_OUTPUT,
+                node_id=node.id,
+                key=output_key,
+            )
+        },
+    )
+
+
 async def accept_repositories() -> None:
     engine = create_database_engine(load_configuration().database.require("test"))
     factory = SQLAlchemyUnitOfWorkFactory(engine)
-    task, run, node, invocation, artifacts, events = records()
+    task, graph_revisions, run, node, invocation, artifacts, events = records()
     session_id = new_session_id()
     task_entry = ContextEntry(
         id=new_context_entry_id(),
@@ -177,6 +229,8 @@ async def accept_repositories() -> None:
 
         async with factory() as unit:
             await unit.executions.add_task(task)
+            for revision in graph_revisions:
+                await unit.executions.add_graph_revision(revision)
             await unit.executions.add_run(run)
             await unit.executions.add_node_run(node)
             await unit.executions.add_invocation(invocation)
@@ -197,6 +251,8 @@ async def accept_repositories() -> None:
                 raise RepositoryAcceptanceError("Run aggregate was not reconstructed")
             if aggregate.task != task or aggregate.run != run:
                 raise RepositoryAcceptanceError("Task or Run reconstruction mismatch")
+            if aggregate.graph_revision != graph_revisions[-1]:
+                raise RepositoryAcceptanceError("Run Graph revision reconstruction mismatch")
             if aggregate.nodes != (node,) or aggregate.invocations != (invocation,):
                 raise RepositoryAcceptanceError("Node or Invocation reconstruction mismatch")
             if aggregate.artifacts != artifacts or aggregate.events != events:
@@ -215,6 +271,47 @@ async def accept_repositories() -> None:
                 summary,
             ):
                 raise RepositoryAcceptanceError("Context summary reconstruction mismatch")
+            if await unit.executions.list_graph_revisions(task.id) != graph_revisions:
+                raise RepositoryAcceptanceError("Graph revision history reconstruction mismatch")
+            if await unit.executions.get_current_graph_revision(task.id) != graph_revisions[-1]:
+                raise RepositoryAcceptanceError("Current Graph revision mismatch")
+            if (
+                await unit.executions.get_graph_revision(graph_revisions[0].id)
+                != graph_revisions[0]
+            ):
+                raise RepositoryAcceptanceError("Graph revision identity query mismatch")
+
+        stale_revision = GraphRevision.create(
+            task_id=task.id,
+            previous_revision_id=graph_revisions[0].id,
+            reason="This stale branch must be rejected.",
+            spec=graph_spec("stale_result"),
+        )
+        try:
+            async with factory() as unit:
+                await unit.executions.add_graph_revision(stale_revision)
+                await unit.commit()
+        except AnbanError as exc:
+            if exc.info.code is not ErrorCode.PERSISTENCE_WRITE_FAILED:
+                raise RepositoryAcceptanceError("Graph append error code mismatch") from exc
+        else:
+            raise RepositoryAcceptanceError("stale Graph revision unexpectedly committed")
+
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(
+                    update(GraphRevisionRecord)
+                    .where(GraphRevisionRecord.id == graph_revisions[0].id)
+                    .values(reason="Attempted in-place mutation")
+                )
+        except SQLAlchemyError:
+            pass
+        else:
+            raise RepositoryAcceptanceError("Graph revision UPDATE bypassed immutability")
+
+        async with factory() as unit:
+            if await unit.executions.list_graph_revisions(task.id) != graph_revisions:
+                raise RepositoryAcceptanceError("Graph revision history changed after rejection")
 
         ensure_task_transition(task.status, TaskStatus.RUNNING)
         ensure_execution_run_transition(run.status, ExecutionRunStatus.RUNNING)
@@ -336,7 +433,7 @@ def main() -> int:
         return 1
     print(
         "repository acceptance: PASS - create, read, locked update, aggregate, order, "
-        "Task/Session Context restart, summary coverage, rollback"
+        "Task/Session Context restart, immutable Graph revisions, summary coverage, rollback"
     )
     return 0
 

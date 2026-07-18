@@ -17,8 +17,10 @@ Core owns identities, lifecycles, Artifact/Event facts, `ExecutionRepository`, `
 nodes; typed edges; explicit dependencies and value bindings; entry/terminal declarations; and
 graph-wide budgets. Validation proves that every node is reachable and can reach a terminal, that
 only explicit loop-back edges form cycles, and that bindings reference declared graph inputs or
-dependency outputs. This contract adds no builder, execution path, or persistence fact. Model
-remains an independent Port.
+dependency outputs. PostgreSQL stores each validated spec as an immutable `GraphRevision` with a
+canonical hash and same-Task predecessor. New structural content appends a revision; no Repository
+update exists and the database rejects direct row updates. The current revision is derived from the
+chain tail. This adds no graph builder or execution path. Model remains an independent Port.
 Capability owns the Registry and its three Handlers. Runtime owns the fixed Agent loop,
 Tool-call correctness, structured completion evaluation, bounded alternative-path selection,
 repair without side-effect replay, persistence coordination, and Trace projection. Persistence

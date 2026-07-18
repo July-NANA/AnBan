@@ -35,8 +35,9 @@ replan decision. Proposed final text, successful Skill activation, stored Memory
 Capability output are not terminal facts. The next alternative must match one exact ready
 strategy/target, while identical completed or uncertain calls remain replay-protected. Waiting,
 resume, and checkpoints are not v0.1 behavior.
-Runtime does not yet generate or execute `TaskGraphSpec`; immutable `GraphRevision` persistence and
-the one generic LangGraph builder remain the next authorized deliveries.
+Runtime does not yet generate or execute `TaskGraphSpec`; the one generic LangGraph builder remains
+the next authorized delivery. Immutable `GraphRevision` persistence is available through the
+existing Unit of Work boundary.
 
 ## Model
 
@@ -65,6 +66,12 @@ Owns repositories and storage adapters for business state, Artifact metadata, an
 Event stream. PostgreSQL is the business database; Audit and Trace are Event projections rather
 than duplicate stores. Context entries, summaries, and summary-to-entry coverage are durable
 PostgreSQL facts. Raw facts survive bounded compression and restart; no vector database is used.
+Validated Task graph content is stored in an append-only `GraphRevision` chain keyed to one Task.
+Each row carries the canonical spec hash, reason, predecessor, validation status, and safe metadata;
+composite foreign keys keep Runs and predecessors on the same Task. Repository methods expose no
+update, partial unique indexes prevent a second initial or sibling successor, and a database
+trigger rejects direct UPDATE statements. The chain tail is the current revision without mutating
+older rows.
 Checkpoints are not implemented in v0.1.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.

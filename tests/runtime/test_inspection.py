@@ -8,8 +8,10 @@ import pytest
 
 from anban.capability import CapabilityRegistry
 from anban.core.errors import AnbanError, ErrorCode
+from anban.core.graph import GraphRevision
 from anban.core.ids import ExecutionRunId
 from anban.runtime import ExecutionQueryService, PersistentRuntime
+from tests.core.test_graph import branch_graph
 from tests.runtime.test_persistent_runtime import (
     MemoryUnitOfWorkFactory,
     TransactionCheckingModel,
@@ -47,6 +49,30 @@ async def test_list_show_trace_and_artifacts_rebuild_from_persistence() -> None:
     assert artifacts == ()
     serialized = detail.model_dump_json()
     assert "Task request must not appear" not in serialized
+
+
+async def test_run_show_rebuilds_its_immutable_graph_revision() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    run_id = await create_run(factory, "Graph-backed final.")
+    async with factory() as unit:
+        run = await unit.executions.get_run(run_id)
+        assert run is not None
+        revision = GraphRevision.create(
+            task_id=run.task_id,
+            reason="Attach one validated graph for inspection.",
+            spec=branch_graph(),
+        )
+        await unit.executions.add_graph_revision(revision)
+        await unit.executions.update_run(run.model_copy(update={"graph_revision_id": revision.id}))
+        await unit.commit()
+
+    detail = await ExecutionQueryService(factory).show(run_id)
+
+    assert detail.run.graph_revision_id == revision.id
+    assert detail.graph_revision is not None
+    assert detail.graph_revision.id == revision.id
+    assert detail.graph_revision.spec == revision.spec
+    assert detail.graph_revision.spec_hash == revision.spec_hash
 
 
 @pytest.mark.parametrize("limit", [0, 101])

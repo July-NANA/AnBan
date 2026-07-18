@@ -7,12 +7,14 @@ from types import TracebackType
 from typing import Protocol, Self
 
 from anban.core.context import ContextEntry, ContextScope, ContextSummary
+from anban.core.graph import GraphRevision
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
     ContextEntryId,
     EventId,
     ExecutionRunId,
+    GraphRevisionId,
     NodeRunId,
     SessionId,
     TaskId,
@@ -33,6 +35,7 @@ class ExecutionRunAggregate:
 
     task: Task
     run: ExecutionRun
+    graph_revision: GraphRevision | None
     nodes: tuple[NodeRun, ...]
     invocations: tuple[CapabilityInvocation, ...]
     artifacts: tuple[Artifact, ...]
@@ -53,6 +56,14 @@ class ExecutionRepository(Protocol):
     async def get_run(self, run_id: ExecutionRunId) -> ExecutionRun | None: ...
 
     async def update_run(self, run: ExecutionRun) -> None: ...
+
+    async def add_graph_revision(self, revision: GraphRevision) -> None: ...
+
+    async def get_graph_revision(self, revision_id: GraphRevisionId) -> GraphRevision | None: ...
+
+    async def list_graph_revisions(self, task_id: TaskId) -> tuple[GraphRevision, ...]: ...
+
+    async def get_current_graph_revision(self, task_id: TaskId) -> GraphRevision | None: ...
 
     async def add_node_run(self, node_run: NodeRun) -> None: ...
 

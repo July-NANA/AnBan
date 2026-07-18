@@ -13,6 +13,7 @@ from anban.core.context import (
     ContextSummary,
 )
 from anban.core.errors import ErrorCode
+from anban.core.graph import GraphRevision, GraphRevisionStatus, TaskGraphSpec
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
@@ -46,9 +47,42 @@ from anban.persistence.models import (
     ContextSummaryRecord,
     EventRecord,
     ExecutionRunRecord,
+    GraphRevisionRecord,
     NodeRunRecord,
     TaskRecord,
 )
+
+
+def graph_revision_record(revision: GraphRevision) -> GraphRevisionRecord:
+    return GraphRevisionRecord(
+        id=revision.id,
+        task_id=revision.task_id,
+        previous_revision_id=revision.previous_revision_id,
+        reason=revision.reason,
+        spec=revision.spec.model_dump(mode="json"),
+        spec_hash=revision.spec_hash,
+        status=revision.status.value,
+        created_at=revision.created_at,
+        safe_metadata=dict(revision.metadata.root),
+    )
+
+
+def graph_revision_domain(record: GraphRevisionRecord) -> GraphRevision:
+    return GraphRevision(
+        id=GraphRevisionId(record.id),
+        task_id=TaskId(record.task_id),
+        previous_revision_id=(
+            None
+            if record.previous_revision_id is None
+            else GraphRevisionId(record.previous_revision_id)
+        ),
+        reason=record.reason,
+        spec=TaskGraphSpec.model_validate(record.spec),
+        spec_hash=record.spec_hash,
+        status=GraphRevisionStatus(record.status),
+        created_at=record.created_at,
+        metadata=metadata(record.safe_metadata),
+    )
 
 
 def context_entry_record(entry: ContextEntry) -> ContextEntryRecord:

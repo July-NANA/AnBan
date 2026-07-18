@@ -2,7 +2,17 @@
 
 ## Interaction
 
-Owns transport-facing input, output, feedback, and bidirectional event adaptation. It does not own domain lifecycle or execution scheduling.
+Owns transport-facing input, output, feedback, and bidirectional event adaptation. The v0.5
+`InteractionEnvelope` is the single normalized vocabulary for user messages, supplemental input,
+asynchronous Capability/MCP/sub-agent results, Webhooks, and schedule occurrences. Its explicit
+route is either new Task or requested eligible-Run resumption. Resume and deduplication use
+separate bounded external `CorrelationKey` values; neither is a Task, Run, Session, Invocation, or
+other system identity. External normalization assigns the Interaction identity, receipt time, and
+trusted Adapter source and rejects attempts to supply system-owned fields. Audit projection hashes
+correlation values. Interaction does not yet own durable lookup, inbox, deduplication, expiry
+records, background delivery, Trigger behavior, domain lifecycle, or execution scheduling.
+The existing CLI service therefore rejects every non-CLI kind and every resume/deduplication key
+instead of silently treating unsupported input as new work.
 
 ## Core
 
@@ -58,7 +68,7 @@ Dependencies point toward Ports and stable Core vocabulary. Adapters depend on e
 Adapters, Handler/Tool names, persistence backends, interaction adapters, or top-level product
 packages require explicit architecture authorization; an ADR alone does not grant it.
 
-For v0.1, Interaction calls the Runtime application entry. Runtime depends on Core contracts,
+For the existing CLI execution path, Interaction calls the Runtime application entry. Runtime depends on Core contracts,
 ModelPort, CapabilityPort, and Core persistence Protocols. Persistence, provider, Workspace, and
 CLI adapters point inward toward those contracts; no reverse dependency or integration-specific
 Core path is allowed.

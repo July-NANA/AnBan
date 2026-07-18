@@ -12,6 +12,13 @@ it may accept the final, select one exact ready alternative, request clarificati
 explicitly. Replanning is bounded independently from model turns, Capability calls, total time,
 and identical-call replay prevention.
 
+The v0.5 Interaction contract normalizes user messages, supplemental input, asynchronous
+Capability/MCP/sub-agent results, Webhook events, and schedule occurrences through one strict
+`InteractionEnvelope`. It distinguishes new work from a request to resume an eligible Run using
+bounded external correlation—not caller-supplied Task or Run IDs—and keeps deduplication identity
+separate. System-owned envelope fields cannot be supplied by external payloads; correlation values
+are hashed before Audit/Trace projection. Durable routing and delivery remain later v0.5 work.
+
 ```text
 User task -> FixedGeneralAgent -> skill.activate -> process.execute
                               -> memory.context

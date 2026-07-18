@@ -16,7 +16,20 @@ Core owns identities, lifecycles, Artifact/Event facts, `ExecutionRepository`, `
 Capability owns the Registry and its three Handlers. Runtime owns the fixed Agent loop,
 Tool-call correctness, structured completion evaluation, bounded alternative-path selection,
 repair without side-effect replay, persistence coordination, and Trace projection. Persistence
-implements the one PostgreSQL backend; Interaction supplies the CLI loop.
+implements the one PostgreSQL backend; Interaction supplies the CLI loop and the transport-neutral
+v0.5 input/correlation vocabulary.
+
+Every future input is normalized into one strict `InteractionEnvelope`. The envelope uses a closed
+semantic input kind and explicitly requests either a new Task or resumption of an eligible Run.
+The request never carries a system Task/Run/Session/Invocation identity: it uses bounded external
+resume correlation instead, with an independent deduplication correlation when needed. System
+code assigns the Interaction ID, receipt time, and trusted Adapter source. Malformed, expired,
+conflicting, unknown, and ineligible correlation is fail-closed vocabulary; this contract delivery
+does not implement lookup or claim that a Run is eligible. Audit/Trace metadata receives only
+correlation namespace and SHA-256 fingerprint, never the external correlation value.
+The existing CLI service accepts only its original uncorrelated CLI user-message path; it rejects
+all other envelope kinds, sources, resume requests, and deduplication keys until the durable
+Gateway owns those semantics.
 
 Every Skill follows `SKILL.md -> uniform parser -> SkillPackage -> skill.activate ->
 process.execute`. No production code selects behavior by source, installer, registry, publisher,

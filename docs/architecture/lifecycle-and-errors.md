@@ -70,3 +70,10 @@ separate finite budget and selects an exact ready strategy/target; production re
 next path. Failed, completed, and uncertain calls remain in the observed-signature set, so
 completion assessment cannot replay an identical side effect. Invalid assessment output, exhausted
 budget, missing clarification, and absence of a safe alternative remain explicit terminal errors.
+
+The v0.5 Interaction contract treats correlation as external evidence, never as authority over a
+system identity. Malformed and already-expired keys fail envelope validation; one value cannot be
+both the resume and deduplication key. A later durable resolver must reject `unknown`, `expired`,
+`conflicting`, and `ineligible` resume requests explicitly rather than silently creating new work
+or selecting a Run. This delivery defines that closed failure vocabulary but does not perform
+lookup, expiry persistence, or Run lifecycle transitions.

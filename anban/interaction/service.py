@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from anban.core.ids import ExecutionRunId, SessionId, TaskId
-from anban.core.metadata import SafeMetadata
-from anban.interaction.contracts import InteractionEnvelope
+from anban.core.metadata import SafeMetadata, SafeScalar
+from anban.interaction.contracts import (
+    InteractionEnvelope,
+    InteractionInputKind,
+    InteractionRoute,
+)
 from anban.runtime import (
     ArtifactDetail,
     ContextDetail,
@@ -19,12 +23,41 @@ from anban.runtime import (
 
 
 def interaction_metadata(envelope: InteractionEnvelope) -> SafeMetadata:
-    return SafeMetadata(
-        {
-            "interaction_id": str(envelope.id),
-            "source": envelope.source,
-        }
-    )
+    values: dict[str, SafeScalar] = {
+        "interaction_id": str(envelope.id),
+        "source": envelope.source,
+        "input_kind": envelope.input_kind.value,
+        "interaction_route": envelope.correlation.route.value,
+    }
+    resume = envelope.correlation.resume_key
+    if resume is not None:
+        values.update(
+            {
+                "resume_namespace": resume.namespace,
+                "resume_correlation_hash": resume.fingerprint,
+            }
+        )
+    deduplication = envelope.correlation.deduplication_key
+    if deduplication is not None:
+        values.update(
+            {
+                "deduplication_namespace": deduplication.namespace,
+                "deduplication_correlation_hash": deduplication.fingerprint,
+            }
+        )
+    return SafeMetadata(values)
+
+
+def require_existing_cli_path(envelope: InteractionEnvelope) -> None:
+    """Fail closed until durable v0.5 routing and deduplication are implemented."""
+
+    if (
+        envelope.source != "cli"
+        or envelope.input_kind is not InteractionInputKind.USER_MESSAGE
+        or envelope.correlation.route is not InteractionRoute.NEW_TASK
+        or envelope.correlation.keys
+    ):
+        raise RuntimeError("v0.5 Interaction routing is not configured")
 
 
 class InteractionChatSession:
@@ -46,6 +79,7 @@ class InteractionChatSession:
         return self._session.remaining_seconds
 
     async def submit(self, envelope: InteractionEnvelope) -> ExecutionResult:
+        require_existing_cli_path(envelope)
         return await self._session.submit(
             envelope.content,
             metadata=interaction_metadata(envelope),
@@ -73,6 +107,7 @@ class InteractionService:
         self._queries = queries
 
     async def submit(self, envelope: InteractionEnvelope) -> ExecutionResult:
+        require_existing_cli_path(envelope)
         return await self._runtime_service().execute(
             envelope.content,
             metadata=interaction_metadata(envelope),

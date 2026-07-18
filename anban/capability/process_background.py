@@ -142,8 +142,14 @@ class DurableProcessSupervisor:
         state = self._read_started(directory)
         if state is None:
             raise self._failure("recovery_state_missing")
-        if not self._result_path(directory).is_file() and not self._worker_alive(state.worker_pid):
-            raise self._failure("worker_exited_without_result")
+        result_ready = self._result_path(directory).is_file()
+        if not result_ready and not self._worker_alive(state.worker_pid):
+            # The worker may atomically publish its result and exit between the
+            # first filesystem observation and the liveness check. Re-observe
+            # the authoritative result after the worker is known to be gone.
+            result_ready = self._result_path(directory).is_file()
+            if not result_ready:
+                raise self._failure("worker_exited_without_result")
         key = str(context.invocation_id)
         sequence = self._progress_sequences.get(key, 0) + 1
         self._progress_sequences[key] = sequence
@@ -151,7 +157,7 @@ class DurableProcessSupervisor:
             sequence=sequence,
             status=(
                 CapabilityProgressStatus.RESULT_READY
-                if self._result_path(directory).is_file()
+                if result_ready
                 else CapabilityProgressStatus.RUNNING
             ),
             metadata=SafeMetadata(
@@ -186,7 +192,12 @@ class DurableProcessSupervisor:
             if state is None:
                 raise self._failure("recovery_state_missing")
             if not self._worker_alive(state.worker_pid):
-                raise self._failure("worker_exited_without_result")
+                # Close the same publish-versus-exit observation race as
+                # progress(): process termination orders all worker writes,
+                # so this second read is definitive and remains fail-closed.
+                if self._read_result(directory) is None:
+                    raise self._failure("worker_exited_without_result")
+                continue
             if datetime.now(UTC) >= result_deadline:
                 await self.cancel(context)
                 raise self._failure("worker_result_timeout")

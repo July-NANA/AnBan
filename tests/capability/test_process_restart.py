@@ -93,3 +93,46 @@ async def test_worker_exit_without_result_fails_without_unbounded_wait(tmp_path:
         await asyncio.wait_for(gateway.wait(invocation), timeout=1)
 
     assert captured.value.info.details.root["reason"] == "worker_exited_without_result"
+
+
+async def test_wait_rechecks_result_after_observing_worker_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    invocation = context(seconds=5)
+    gateway = registry(tmp_path)
+    accepted = await gateway.invoke(
+        "process.execute",
+        {
+            "command": sys.executable,
+            "args": ["-c", "print('published before exit')"],
+            "background": True,
+        },
+        invocation,
+    )
+    assert accepted.status is CapabilityResultStatus.ACCEPTED
+
+    result_path = tmp_path / ".anban" / "process" / str(invocation.invocation_id) / "result.json"
+    while not result_path.is_file():
+        await asyncio.sleep(0.01)
+    original_is_file = Path.is_file
+    result_checks = 0
+
+    def hide_first_result(path: Path) -> bool:
+        nonlocal result_checks
+        if path == result_path:
+            result_checks += 1
+        if path == result_path and result_checks == 1:
+            return False
+        return original_is_file(path)
+
+    def worker_has_exited(_pid: int, _signal: int) -> None:
+        raise ProcessLookupError
+
+    monkeypatch.setattr(Path, "is_file", hide_first_result)
+    monkeypatch.setattr(os, "kill", worker_has_exited)
+
+    result = await gateway.wait(invocation)
+
+    assert result.status is CapabilityResultStatus.COMPLETED
+    assert observation(result)["stdout"] == "published before exit\n"
+    assert result_checks >= 2

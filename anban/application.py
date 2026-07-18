@@ -26,6 +26,7 @@ from anban.runtime import (
     DynamicTaskGraphBuilder,
     ExecutionQueryService,
     PersistentRuntime,
+    TaskGraphExecutor,
 )
 
 
@@ -37,6 +38,7 @@ class Application:
     inventory: CapabilityInventoryPort
     sufficiency: CapabilitySufficiencyEvaluator
     graph_builder: DynamicTaskGraphBuilder
+    graph_executor: TaskGraphExecutor
     _model: OpenAICompatibleAdapter
     _engine: AsyncEngine
 
@@ -133,11 +135,13 @@ async def build_application() -> Application:
             artifact_cleanup=workspace_boundary.delete_artifact,
         )
         queries = ExecutionQueryService(unit_of_work)
+        graph_builder = DynamicTaskGraphBuilder()
         return Application(
             InteractionService(runtime, queries),
             inventory,
             sufficiency,
-            DynamicTaskGraphBuilder(),
+            graph_builder,
+            TaskGraphExecutor(graph_builder),
             model,
             engine,
         )

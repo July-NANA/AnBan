@@ -30,6 +30,13 @@ from anban.runtime.graph_builder import (
     TaskGraphRuntimeState,
     TaskGraphStateUpdate,
 )
+from anban.runtime.graph_execution import (
+    TaskGraphActionExecutor,
+    TaskGraphExecutionError,
+    TaskGraphExecutionFailureReason,
+    TaskGraphExecutionResult,
+    TaskGraphExecutor,
+)
 from anban.runtime.inspection import (
     ArtifactDetail,
     ContextDetail,
@@ -94,5 +101,10 @@ __all__ = [
     "TaskGraphRouteActionFactory",
     "TaskGraphRuntimeState",
     "TaskGraphStateUpdate",
+    "TaskGraphActionExecutor",
+    "TaskGraphExecutionError",
+    "TaskGraphExecutionFailureReason",
+    "TaskGraphExecutionResult",
+    "TaskGraphExecutor",
     "TraceEntry",
 ]

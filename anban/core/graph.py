@@ -318,7 +318,7 @@ class TaskGraphSpec(DomainModel):
                 and node.timeout_seconds > self.budget.timeout_seconds
             ):
                 self._invalid(TaskGraphValidationReason.BUDGET_EXCEEDED)
-            self._validate_control_shape(node, outgoing, self.edges)
+            self._validate_control_shape(node, nodes, outgoing, self.edges)
 
         if len(self.nodes) > self.budget.max_node_executions:
             self._invalid(TaskGraphValidationReason.BUDGET_EXCEEDED)
@@ -349,6 +349,7 @@ class TaskGraphSpec(DomainModel):
     def _validate_control_shape(
         self,
         node: TaskGraphNode,
+        nodes: dict[str, TaskGraphNode],
         outgoing: dict[str, list[TaskGraphEdge]],
         edges: tuple[TaskGraphEdge, ...],
     ) -> None:
@@ -379,12 +380,15 @@ class TaskGraphSpec(DomainModel):
             if (
                 len(bodies) != 1
                 or len(exits) != 1
-                or not backs
+                or len(backs) != 1
                 or len(node_edges) != 2
                 or node.max_iterations is None
                 or node.max_iterations > self.budget.max_loop_iterations
             ):
                 self._invalid(TaskGraphValidationReason.CONTROL_SHAPE_INVALID)
+            feedback_node = nodes[backs[0].source]
+            if not set(node.outputs).issubset(feedback_node.outputs):
+                self._invalid(TaskGraphValidationReason.BINDING_INVALID)
         elif node.kind is TaskGraphNodeKind.PARALLEL:
             branches = [edge for edge in node_edges if edge.kind is TaskGraphEdgeKind.PARALLEL]
             if (
@@ -401,6 +405,12 @@ class TaskGraphSpec(DomainModel):
             ]
             if len(joins) < 2 or len(joins) != len(node.dependencies):
                 self._invalid(TaskGraphValidationReason.CONTROL_SHAPE_INVALID)
+        if node.kind in {
+            TaskGraphNodeKind.BRANCH,
+            TaskGraphNodeKind.PARALLEL,
+            TaskGraphNodeKind.JOIN,
+        } and not set(node.outputs).issubset(node.inputs):
+            self._invalid(TaskGraphValidationReason.BINDING_INVALID)
 
     def _validate_acyclic_without_loop_back(self, nodes: dict[str, TaskGraphNode]) -> None:
         adjacency = {node_id: list[str]() for node_id in nodes}

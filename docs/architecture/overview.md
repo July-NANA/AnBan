@@ -20,12 +20,13 @@ only explicit loop-back edges form cycles, and that bindings reference declared 
 dependency outputs. PostgreSQL stores each validated spec as an immutable `GraphRevision` with a
 canonical hash and same-Task predecessor. New structural content appends a revision; no Repository
 update exists and the database rejects direct row updates. The current revision is derived from the
-chain tail. This adds no graph builder or execution path. Model remains an independent Port.
-Capability owns the Registry and its three Handlers. Runtime owns the fixed Agent loop,
-Tool-call correctness, structured completion evaluation, bounded alternative-path selection,
-repair without side-effect replay, persistence coordination, and Trace projection. Persistence
-implements the one PostgreSQL backend; Interaction supplies the CLI loop and the transport-neutral
-v0.5 input/correlation vocabulary.
+chain tail. Runtime compiles the validated data through one dynamic LangGraph builder and provides
+generic bounded branch, loop, parallel, join, and nested-subgraph execution over an explicitly
+supplied real action executor. Model remains an independent Port. Capability owns the Registry and
+its three Handlers. Runtime also owns the fixed Agent loop, Tool-call correctness, structured
+completion evaluation, bounded alternative-path selection, repair without side-effect replay,
+persistence coordination, and Trace projection. Persistence implements the one PostgreSQL backend;
+Interaction supplies the CLI loop and the transport-neutral v0.5 input/correlation vocabulary.
 
 Every future input is normalized into one strict `InteractionEnvelope`. The envelope uses a closed
 semantic input kind and explicitly requests either a new Task or resumption of an eligible Run.

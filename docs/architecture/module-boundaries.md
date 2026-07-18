@@ -38,7 +38,11 @@ resume, and checkpoints are not v0.1 behavior.
 Runtime now owns one generic dynamic LangGraph builder. It compiles any validated `TaskGraphSpec`
 through a single topology-independent registration path and requires callers to inject real node
 actions and control routing; compilation never substitutes no-op or mock-success execution.
-Branch/loop evaluation, nested execution, graph selection, and durable graph scheduling remain
+The generic Task graph executor resolves declared bindings, evaluates every closed condition
+operator, bounds loops and total node executions, limits real action parallelism, waits for joins,
+and recursively runs nested subgraphs. It calls one explicitly supplied asynchronous action
+executor and validates every returned output shape; it performs no automatic retry or fallback.
+Graph selection, durable Node/Invocation scheduling, checkpoints, and restart recovery remain
 later deliveries. Immutable `GraphRevision` persistence is available through the existing Unit of
 Work boundary.
 

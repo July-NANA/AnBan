@@ -141,7 +141,7 @@ def loop_graph() -> TaskGraphSpec:
             kind=TaskGraphNodeKind.LOOP,
             dependencies=("seed",),
             inputs={"continue": node_output("iterate", "continue", fallback_value=True)},
-            outputs=("latest_result",),
+            outputs=("result",),
             condition_input="continue",
             max_iterations=5,
         ),
@@ -155,7 +155,7 @@ def loop_graph() -> TaskGraphSpec:
         action(
             "finish",
             dependencies=("bounded_loop",),
-            inputs={"result": node_output("bounded_loop", "latest_result")},
+            inputs={"result": node_output("bounded_loop", "result")},
             outputs=("result",),
             marker=marker,
         ),
@@ -369,6 +369,35 @@ def test_loop_budget_must_fit_inside_graph_budget() -> None:
     with pytest.raises(
         ValidationError, match=TaskGraphValidationReason.CONTROL_SHAPE_INVALID.value
     ):
+        TaskGraphSpec.model_validate(payload)
+
+
+def test_loop_requires_one_feedback_edge_and_same_named_outputs() -> None:
+    multiple_feedback = loop_graph().model_dump(mode="json")
+    multiple_feedback["edges"].append(
+        TaskGraphEdge(
+            source="finish",
+            target="bounded_loop",
+            kind=TaskGraphEdgeKind.LOOP_BACK,
+        ).model_dump(mode="json")
+    )
+    with pytest.raises(
+        ValidationError, match=TaskGraphValidationReason.CONTROL_SHAPE_INVALID.value
+    ):
+        TaskGraphSpec.model_validate(multiple_feedback)
+
+    renamed_output = loop_graph().model_dump(mode="json")
+    renamed_output["nodes"][1]["outputs"] = ["renamed_result"]
+    renamed_output["nodes"][3]["inputs"]["result"]["key"] = "renamed_result"
+    with pytest.raises(ValidationError, match=TaskGraphValidationReason.BINDING_INVALID.value):
+        TaskGraphSpec.model_validate(renamed_output)
+
+
+def test_forwarding_control_outputs_require_same_named_inputs() -> None:
+    payload = parallel_subgraph_graph().model_dump(mode="json")
+    payload["nodes"][1]["outputs"] = ["undeclared_value"]
+
+    with pytest.raises(ValidationError, match=TaskGraphValidationReason.BINDING_INVALID.value):
         TaskGraphSpec.model_validate(payload)
 
 

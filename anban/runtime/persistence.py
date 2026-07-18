@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
 from anban.capability import (
+    CapabilityKind,
     CapabilityResult,
     CapabilityResultStatus,
     InvocationContext,
@@ -33,8 +35,13 @@ from anban.core.models import (
     now_utc,
 )
 from anban.core.persistence import ExecutionRepository, ExecutionRunAggregate, UnitOfWorkFactory
-from anban.model import ModelPort, ModelRequest, ModelTurn
-from anban.runtime.contracts import AgentOutcome, AgentOutcomeStatus
+from anban.model import ModelRequest, ModelTurn
+from anban.runtime.contracts import (
+    AgentObservation,
+    AgentOutcome,
+    AgentOutcomeStatus,
+    CapabilitySufficiencyAssessment,
+)
 
 _MODEL_EVENT_METADATA = frozenset(
     {
@@ -281,6 +288,40 @@ class RunPersistence:
                 facts.append(EventFact("model.repair_failed", metadata, node_run_id=self.node.id))
         await self._events_only("model_failed", tuple(facts))
 
+    async def agent_sufficiency_assessed(self, assessment: CapabilitySufficiencyAssessment) -> None:
+        metadata = SafeMetadata(
+            {
+                "strategy": assessment.selected.strategy.value,
+                "target": assessment.selected.target,
+                "sufficient": assessment.sufficient,
+                "candidate_count": len(assessment.candidates),
+                "confidence": assessment.confidence,
+                "should_acquire_skill": assessment.should_acquire_skill,
+                "requires_clarification": assessment.requires_clarification,
+                "must_fail": assessment.must_fail,
+            }
+        )
+        await self._events_only(
+            "agent_sufficiency_assessed",
+            (EventFact("agent.sufficiency_assessed", metadata, node_run_id=self.node.id),),
+        )
+
+    async def agent_observed(self, observation: AgentObservation) -> None:
+        metadata = SafeMetadata(
+            {
+                "observation_sequence": observation.sequence,
+                "strategy": observation.strategy.value,
+                "observation_status": observation.status.value,
+                "retry_safe": observation.retry_safe,
+                "side_effect_completed": observation.side_effect_completed,
+                "summary_hash": hashlib.sha256(observation.summary.encode()).hexdigest(),
+            }
+        )
+        await self._events_only(
+            "agent_observed",
+            (EventFact("agent.observed", metadata, node_run_id=self.node.id),),
+        )
+
     async def begin_invocation(self, name: str, context: InvocationContext) -> None:
         requested = CapabilityInvocation(
             id=context.invocation_id,
@@ -319,6 +360,7 @@ class RunPersistence:
     async def finish_invocation(
         self,
         name: str,
+        kind: CapabilityKind | None,
         context: InvocationContext,
         result: CapabilityResult,
     ) -> None:
@@ -379,7 +421,12 @@ class RunPersistence:
                 invocation_id=context.invocation_id,
             )
         ]
-        if name == "skill.activate" and result.status is CapabilityResultStatus.COMPLETED:
+        if (
+            result.status is CapabilityResultStatus.COMPLETED
+            and kind is CapabilityKind.SKILL
+            and isinstance(projected.root.get("skill_slug"), str)
+            and isinstance(projected.root.get("content_hash"), str)
+        ):
             facts.append(
                 EventFact(
                     "skill.activated",
@@ -686,34 +733,6 @@ class RunPersistence:
         except Exception:
             return
         self._sequence = 0 if not events else events[-1].sequence
-
-
-class PersistedModelPort:
-    """Record safe model facts without retaining requests or provider responses."""
-
-    def __init__(self, inner: ModelPort, persistence: RunPersistence) -> None:
-        self._inner = inner
-        self._persistence = persistence
-        self._turn_number = 0
-
-    async def complete(self, request: ModelRequest) -> ModelTurn:
-        self._turn_number += 1
-        turn_number = self._turn_number
-        await self._persistence.model_requested(turn_number, request)
-        try:
-            turn = await self._inner.complete(request)
-        except AnbanError as exc:
-            await self._persistence.model_failed(turn_number, request, exc.info)
-            raise
-        except Exception:
-            error = ErrorInfo(
-                code=ErrorCode.MODEL_REQUEST_FAILED,
-                message="Model request failed",
-            )
-            await self._persistence.model_failed(turn_number, request, error)
-            raise AnbanError(error) from None
-        await self._persistence.model_completed(turn_number, request, turn)
-        return turn
 
 
 def error_metadata(

@@ -6,12 +6,14 @@ import asyncio
 import json
 import re
 from collections.abc import Callable
+from contextlib import suppress
 
 from pydantic import JsonValue
 
 from anban.capability import (
     ArtifactReference,
     CapabilityDescriptor,
+    CapabilityKind,
     CapabilityPort,
     CapabilityResult,
     CapabilityResultStatus,
@@ -92,8 +94,11 @@ class PersistedCapabilityPort:
         context: InvocationContext,
         result: CapabilityResult,
     ) -> None:
+        capability_kind: CapabilityKind | None = None
+        with suppress(AnbanError):
+            capability_kind = self._inner.describe(name).kind
         try:
-            await self._persistence.finish_invocation(name, context, result)
+            await self._persistence.finish_invocation(name, capability_kind, context, result)
             return
         except AnbanError as exc:
             persistence_error = exc.info

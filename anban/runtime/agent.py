@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TypedDict
@@ -13,9 +14,12 @@ from langgraph.graph import END, START, StateGraph
 
 from anban.capability import (
     ArtifactReference,
+    CapabilityDescriptor,
+    CapabilityKind,
     CapabilityPort,
     CapabilityResult,
     CapabilityResultStatus,
+    InventoryKind,
     InvocationContext,
 )
 from anban.config import policy
@@ -32,7 +36,17 @@ from anban.model import (
     ToolDefinition,
     ToolResult,
 )
-from anban.runtime.contracts import AgentInput, AgentLimits, AgentOutcome, AgentOutcomeStatus
+from anban.runtime.contracts import (
+    AgentInput,
+    AgentLimits,
+    AgentObservation,
+    AgentOutcome,
+    AgentOutcomeStatus,
+    CapabilitySufficiencyAssessment,
+    ExecutionStrategy,
+    ObservationStatus,
+)
+from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
 
 GENERAL_AGENT_NODE = "general_agent"
 _CANCELLATION_TIMEOUT_SECONDS = 2.0
@@ -66,6 +80,7 @@ class ExecutionProgress:
     model_turns: int = 0
     capability_calls: int = 0
     artifacts: list[ArtifactReference] = field(default_factory=lambda: list[ArtifactReference]())
+    observations: list[AgentObservation] = field(default_factory=lambda: list[AgentObservation]())
 
 
 class AgentGraphState(TypedDict):
@@ -87,11 +102,18 @@ class FixedGeneralAgent:
         model: ModelPort,
         capabilities: CapabilityPort,
         *,
+        sufficiency: CapabilitySufficiencyEvaluator | None = None,
+        assessment_observer: Callable[[CapabilitySufficiencyAssessment], Awaitable[None]]
+        | None = None,
+        observation_observer: Callable[[AgentObservation], Awaitable[None]] | None = None,
         limits: AgentLimits | None = None,
         response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
     ) -> None:
         self._model = model
         self._capabilities = capabilities
+        self._sufficiency = sufficiency
+        self._assessment_observer = assessment_observer
+        self._observation_observer = observation_observer
         self._limits = limits or AgentLimits()
         if not (
             policy.MODEL_RESPONSE_REPAIR_RETRIES_MIN
@@ -186,6 +208,38 @@ class FixedGeneralAgent:
         deadline_at: datetime,
         progress: ExecutionProgress,
     ) -> AgentOutcome:
+        guidance: ModelMessage | None = None
+        if self._sufficiency is not None:
+            if progress.model_turns >= self._limits.max_model_turns:
+                return self._limit_outcome(progress, "model_turn_budget")
+            progress.model_turns += 1
+            assessment = await self._sufficiency.assess(agent_input.request, self._model)
+            if self._assessment_observer is not None:
+                await self._assessment_observer(assessment)
+            if assessment.must_fail:
+                return self._outcome(
+                    AgentOutcomeStatus.FAILED,
+                    progress,
+                    error=self._error(
+                        ErrorCode.CAPABILITY_UNAVAILABLE,
+                        "No sufficient execution strategy is available",
+                        "sufficiency_failed",
+                    ),
+                )
+            if assessment.requires_clarification:
+                return self._outcome(
+                    AgentOutcomeStatus.FAILED,
+                    progress,
+                    error=self._error(
+                        ErrorCode.VALIDATION_FAILED,
+                        "Task requires clarification before execution",
+                        "clarification_required",
+                    ),
+                )
+            guidance = ModelMessage(
+                role="system",
+                content=self._assessment_guidance(assessment),
+            )
         descriptors = tuple(item for item in self._capabilities.search() if item.available)
         tools = tuple(
             ToolDefinition(
@@ -197,12 +251,14 @@ class FixedGeneralAgent:
         )
         messages: list[ModelMessage] = [
             ModelMessage(role="system", content=_SYSTEM_INSTRUCTIONS),
+            *(() if guidance is None else (guidance,)),
             ModelMessage(role="user", content=agent_input.request),
         ]
         last_signature: str | None = None
         repeated_calls = 0
         completed_rounds: set[str] = set()
-        completed_signatures: set[str] = set()
+        observed_signatures: set[str] = set()
+        signature_observations: dict[str, AgentObservation] = {}
         repair_attempts_used = 0
         request_is_repair = False
 
@@ -290,8 +346,6 @@ class FixedGeneralAgent:
                 )
 
             calls = turn.tool_calls
-            if progress.capability_calls + len(calls) > self._limits.max_capability_calls:
-                return self._limit_outcome(progress, "capability_call_budget")
             call_ids = {call.id for call in calls}
             if len(call_ids) != len(calls):
                 return self._outcome(
@@ -304,16 +358,21 @@ class FixedGeneralAgent:
                     ),
                 )
             signatures = tuple(self._call_signature(call) for call in calls)
+            new_signatures = {
+                signature for signature in signatures if signature not in observed_signatures
+            }
+            if progress.capability_calls + len(new_signatures) > self._limits.max_capability_calls:
+                return self._limit_outcome(progress, "capability_call_budget")
             if repaired_response and any(
-                signature in completed_signatures for signature in signatures
+                signature in observed_signatures for signature in signatures
             ):
                 return self._outcome(
                     AgentOutcomeStatus.FAILED,
                     progress,
                     error=self._error(
                         ErrorCode.MODEL_RESPONSE_INVALID,
-                        "Model repair replayed a completed Capability call",
-                        "repair_replayed_completed_call",
+                        "Model repair replayed a previously observed Capability call",
+                        "repair_replayed_observed_call",
                     ),
                 )
             messages.append(ModelMessage(role="assistant", tool_calls=calls))
@@ -329,6 +388,27 @@ class FixedGeneralAgent:
                     and repeated_calls >= self._limits.repeated_call_limit
                 ):
                     return self._limit_outcome(progress, "repeated_call")
+                if signature in observed_signatures:
+                    observation = self._replay_prevented_observation()
+                    previous = signature_observations[signature]
+                    await self._record_observation(
+                        progress,
+                        previous.strategy,
+                        ObservationStatus.FAILED,
+                        observation,
+                        retry_safe=False,
+                        side_effect_completed=previous.side_effect_completed,
+                    )
+                    messages.append(
+                        ModelMessage(
+                            role="tool",
+                            tool_result=ToolResult(tool_call_id=call.id, content=observation),
+                        )
+                    )
+                    round_facts.append(
+                        f"{signature}:{hashlib.sha256(observation.encode()).hexdigest()}"
+                    )
+                    continue
                 context = InvocationContext(
                     run_id=agent_input.run_id,
                     node_run_id=agent_input.node_run_id,
@@ -349,13 +429,23 @@ class FixedGeneralAgent:
                             "missing_observation",
                         ),
                     )
+                descriptor = self._capabilities.describe(call.name)
+                strategy = self._strategy(descriptor)
+                recorded = await self._record_result_observation(
+                    progress,
+                    strategy,
+                    descriptor,
+                    result,
+                    observation,
+                )
                 messages.append(
                     ModelMessage(
                         role="tool",
                         tool_result=ToolResult(tool_call_id=call.id, content=observation),
                     )
                 )
-                completed_signatures.add(signature)
+                observed_signatures.add(signature)
+                signature_observations[signature] = recorded
                 round_facts.append(
                     f"{signature}:{hashlib.sha256(observation.encode()).hexdigest()}"
                 )
@@ -366,6 +456,98 @@ class FixedGeneralAgent:
             messages.append(ModelMessage(role="system", content=_RESPONSE_CONTRACT_REMINDER))
 
         return self._limit_outcome(progress, "model_turn_budget")
+
+    async def _record_result_observation(
+        self,
+        progress: ExecutionProgress,
+        strategy: ExecutionStrategy,
+        descriptor: CapabilityDescriptor,
+        result: CapabilityResult,
+        observation: str,
+    ) -> AgentObservation:
+        error_code = None if result.error is None else result.error.code
+        retry_safe = error_code in {
+            ErrorCode.CAPABILITY_ARGUMENTS_INVALID,
+            ErrorCode.CAPABILITY_UNAVAILABLE,
+        }
+        status = (
+            ObservationStatus.COMPLETED
+            if result.status is CapabilityResultStatus.COMPLETED
+            else ObservationStatus.UNAVAILABLE
+            if error_code is ErrorCode.CAPABILITY_UNAVAILABLE
+            else ObservationStatus.FAILED
+        )
+        side_effect_completed = (
+            result.status is CapabilityResultStatus.COMPLETED
+            and descriptor.kind is not CapabilityKind.SKILL
+        )
+        return await self._record_observation(
+            progress,
+            strategy,
+            status,
+            observation,
+            retry_safe=retry_safe,
+            side_effect_completed=side_effect_completed,
+        )
+
+    async def _record_observation(
+        self,
+        progress: ExecutionProgress,
+        strategy: ExecutionStrategy,
+        status: ObservationStatus,
+        raw_observation: str,
+        *,
+        retry_safe: bool,
+        side_effect_completed: bool,
+    ) -> AgentObservation:
+        digest = hashlib.sha256(raw_observation.encode()).hexdigest()
+        observation = AgentObservation(
+            sequence=len(progress.observations) + 1,
+            strategy=strategy,
+            status=status,
+            summary=f"Capability observation SHA-256 {digest} has status {status.value}.",
+            retry_safe=retry_safe,
+            side_effect_completed=side_effect_completed,
+        )
+        progress.observations.append(observation)
+        if self._observation_observer is not None:
+            await self._observation_observer(observation)
+        return observation
+
+    @staticmethod
+    def _strategy(descriptor: CapabilityDescriptor) -> ExecutionStrategy:
+        if descriptor.kind is CapabilityKind.SKILL:
+            return ExecutionStrategy.ACTIVATE_SKILL
+        return {
+            InventoryKind.PROCESS: ExecutionStrategy.USE_PROCESS,
+            InventoryKind.SUB_AGENT: ExecutionStrategy.DELEGATE,
+            InventoryKind.CAPABILITY: ExecutionStrategy.USE_CAPABILITY,
+            InventoryKind.MCP: ExecutionStrategy.USE_CAPABILITY,
+            InventoryKind.MEMORY: ExecutionStrategy.USE_CAPABILITY,
+        }.get(descriptor.inventory_kind, ExecutionStrategy.USE_CAPABILITY)
+
+    @staticmethod
+    def _assessment_guidance(assessment: CapabilitySufficiencyAssessment) -> str:
+        target = assessment.selected.target or "none"
+        return (
+            "Initial bounded sufficiency assessment selected "
+            f"strategy={assessment.selected.strategy.value} target={target}. "
+            "Use this as the starting path. Return every real Tool Result to reasoning, choose a "
+            "distinct available alternative when an observation disproves the path, and never "
+            "repeat an identical completed or uncertain Capability call."
+        )
+
+    @staticmethod
+    def _replay_prevented_observation() -> str:
+        return json.dumps(
+            {
+                "status": "failed",
+                "error_code": ErrorCode.CAPABILITY_EXECUTION_FAILED.value,
+                "reason": "completed_call_replay_prevented",
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
 
     async def _invoke_capability(
         self,

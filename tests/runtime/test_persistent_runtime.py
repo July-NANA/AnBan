@@ -15,6 +15,7 @@ from anban.capability import (
     CapabilityResult,
     CapabilityResultStatus,
     InvocationContext,
+    UnifiedCapabilityInventory,
 )
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import (
@@ -30,7 +31,13 @@ from anban.core.metadata import SafeMetadata
 from anban.core.models import Artifact, CapabilityInvocation, Event, ExecutionRun, NodeRun, Task
 from anban.core.persistence import ExecutionRunAggregate
 from anban.model import ModelRequest, ModelTurn, ToolCall
-from anban.runtime import AgentOutcomeStatus, ExecutionQueryService, PersistentRuntime
+from anban.runtime import (
+    AgentOutcomeStatus,
+    CapabilitySufficiencyEvaluator,
+    ExecutionQueryService,
+    ExecutionStrategy,
+    PersistentRuntime,
+)
 
 
 @dataclass
@@ -287,6 +294,28 @@ def final_turn(content: str = "Persistent final result.") -> ModelTurn:
     return ModelTurn(content=content, finish_reason="stop")
 
 
+def assessment_turn(
+    strategy: ExecutionStrategy = ExecutionStrategy.USE_CAPABILITY,
+    target: str = "test.action",
+) -> ModelTurn:
+    return ModelTurn(
+        structured_output={
+            "strategy": strategy.value,
+            "target": target,
+            "rationale": "The current bounded inventory supports this path.",
+            "confidence": 0.86,
+            "missing_condition": "",
+            "substantial_temporary_code": False,
+            "complex_domain_workflow": False,
+            "high_improvisation_risk": False,
+            "low_implementation_confidence": False,
+            "repeated_reusable_need": False,
+            "existing_process_path_unreasonable": False,
+        },
+        finish_reason="stop",
+    )
+
+
 def completed_capability(*, artifact_count: int = 0) -> CapabilityResult:
     artifacts: tuple[ArtifactReference, ...] = ()
     if artifact_count:
@@ -355,6 +384,42 @@ async def test_success_is_durable_and_external_calls_have_no_open_transaction() 
         "capability.completed",
         "artifact.created",
         "run.final",
+    }
+
+
+async def test_sufficiency_and_observations_are_durable_in_the_same_run() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    capability = TransactionCheckingCapability(factory, completed_capability())
+    registry = CapabilityRegistry((capability,))
+    inventory = UnifiedCapabilityInventory(registry, model_available=True)
+    result = await PersistentRuntime(
+        TransactionCheckingModel(factory, [assessment_turn(), tool_turn(), final_turn()]),
+        registry,
+        factory,
+        inventory=inventory,
+        sufficiency=CapabilitySufficiencyEvaluator(inventory),
+    ).execute("Assess, execute, observe, and complete one dynamic task.")
+
+    assert result.persisted
+    assert result.outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert result.outcome.model_turn_count == 3
+    aggregate = await load_run(factory, result.run_id)
+    event_types = [event.event_type for event in aggregate.events]
+    assert event_types.count("agent.sufficiency_assessed") == 1
+    assert event_types.count("agent.observed") == 1
+    assessment = next(
+        event for event in aggregate.events if event.event_type == "agent.sufficiency_assessed"
+    )
+    assert assessment.metadata.root["strategy"] == "use_capability"
+    assert assessment.metadata.root["target"] == "test.action"
+    observed = next(event for event in aggregate.events if event.event_type == "agent.observed")
+    assert observed.metadata.root["observation_sequence"] == 1
+    assert observed.metadata.root["summary_hash"]
+    trace = await ExecutionQueryService(factory).trace(result.run_id)
+    assert trace.complete
+    assert {entry.event_type for entry in trace.audit} >= {
+        "agent.sufficiency_assessed",
+        "agent.observed",
     }
 
 

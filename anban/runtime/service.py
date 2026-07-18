@@ -27,7 +27,8 @@ from anban.runtime.contracts import (
     AgentOutcomeStatus,
     ExecutionResult,
 )
-from anban.runtime.persistence import PersistedModelPort, RunPersistence
+from anban.runtime.model_persistence import PersistedModelPort
+from anban.runtime.persistence import RunPersistence
 from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
 
 _STORAGE_FAILURE_DETAILS = frozenset(
@@ -112,6 +113,9 @@ class PersistentRuntime:
                 persistence,
                 artifact_cleanup=self._artifact_cleanup,
             ),
+            sufficiency=self._sufficiency,
+            assessment_observer=persistence.agent_sufficiency_assessed,
+            observation_observer=persistence.agent_observed,
             limits=self._limits,
             response_repair_retries=self._response_repair_retries,
         )
@@ -147,6 +151,7 @@ class PersistentRuntime:
             self._model,
             self._capabilities,
             self._unit_of_work,
+            sufficiency=self._sufficiency,
             limits=self._limits,
             response_repair_retries=self._response_repair_retries,
             artifact_cleanup=self._artifact_cleanup,
@@ -190,6 +195,7 @@ class PersistentChatSession:
         capabilities: CapabilityPort,
         unit_of_work: UnitOfWorkFactory,
         *,
+        sufficiency: CapabilitySufficiencyEvaluator | None = None,
         limits: AgentLimits | None = None,
         response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
         artifact_cleanup: Callable[[InvocationContext, ArtifactReference], None] | None = None,
@@ -197,6 +203,7 @@ class PersistentChatSession:
         self._model = model
         self._capabilities = capabilities
         self._unit_of_work = unit_of_work
+        self._sufficiency = sufficiency
         self._limits = limits
         self._response_repair_retries = response_repair_retries
         self._artifact_cleanup = artifact_cleanup
@@ -288,6 +295,9 @@ class PersistentChatSession:
                 persistence,
                 artifact_cleanup=self._artifact_cleanup,
             ),
+            sufficiency=self._sufficiency,
+            assessment_observer=persistence.agent_sufficiency_assessed,
+            observation_observer=persistence.agent_observed,
             limits=self._limits,
             response_repair_retries=self._response_repair_retries,
         )

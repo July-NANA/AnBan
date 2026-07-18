@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 from anban.capability import (
@@ -203,8 +205,9 @@ async def test_skill_activation_is_distinct_and_uses_logical_reference() -> None
             ),
         ),
     )
+    capability_name = f"fixture.{uuid4().hex}"
     capability.descriptor = CapabilityDescriptor(
-        name="skill.activate",
+        name=capability_name,
         description="Activate the approved Workspace Skill.",
         kind=CapabilityKind.SKILL,
         input_schema={
@@ -222,7 +225,7 @@ async def test_skill_activation_is_distinct_and_uses_logical_reference() -> None
                     tool_calls=(
                         ToolCall(
                             id="skill-call",
-                            name="skill.activate",
+                            name=capability_name,
                             arguments={"name": "@owner/example"},
                         ),
                     ),
@@ -242,6 +245,52 @@ async def test_skill_activation_is_distinct_and_uses_logical_reference() -> None
     assert skill_event.metadata.root["skill_root"] == "skills/@owner/example"
     assert "skill_version" not in skill_event.metadata.root
     assert "capability.completed" in {entry.event_type for entry in observation.audit}
+
+
+async def test_tool_metadata_cannot_spoof_a_skill_activation_event() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    capability = TransactionCheckingCapability(
+        factory,
+        CapabilityResult(
+            status=CapabilityResultStatus.COMPLETED,
+            observation="Completed an ordinary Tool operation.",
+            metadata=SafeMetadata(
+                {
+                    "skill_slug": "@fixture/not-a-skill",
+                    "skill_root": "skills/@fixture/not-a-skill",
+                    "content_hash": "b" * 64,
+                }
+            ),
+        ),
+    )
+    capability_name = f"fixture.{uuid4().hex}"
+    capability.descriptor = capability.descriptor.model_copy(
+        update={"name": capability_name, "kind": CapabilityKind.TOOL}
+    )
+    result = await PersistentRuntime(
+        TransactionCheckingModel(
+            factory,
+            [
+                ModelTurn(
+                    tool_calls=(
+                        ToolCall(
+                            id="ordinary-call",
+                            name=capability_name,
+                            arguments={"path": "bounded.txt", "content": "bounded"},
+                        ),
+                    ),
+                    finish_reason="tool_calls",
+                ),
+                final_turn(),
+            ],
+        ),
+        CapabilityRegistry((capability,)),
+        factory,
+    ).execute("Use one ordinary Tool.")
+
+    observation = await ExecutionQueryService(factory).trace(result.run_id)
+    assert "capability.completed" in {entry.event_type for entry in observation.audit}
+    assert "skill.activated" not in {entry.event_type for entry in observation.audit}
 
 
 async def test_observability_read_failure_never_returns_partial_success() -> None:

@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Callable
+from uuid import uuid4
 
 import pytest
 from pydantic import JsonValue
 
 from anban.capability import (
     CapabilityDescriptor,
+    CapabilityKind,
     CapabilityRegistry,
     CapabilityResult,
     CapabilityResultStatus,
     InvocationContext,
+    SkillPackage,
+    UnifiedCapabilityInventory,
 )
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import new_execution_run_id, new_node_run_id
@@ -23,6 +28,8 @@ from anban.runtime import (
     AgentInput,
     AgentLimits,
     AgentOutcomeStatus,
+    CapabilitySufficiencyEvaluator,
+    ExecutionStrategy,
     FixedGeneralAgent,
 )
 
@@ -55,10 +62,12 @@ class RecordingHandler:
         blocking: bool = False,
         capability_name: str = "test.action",
         argument_name: str = "path",
+        capability_kind: CapabilityKind = CapabilityKind.TOOL,
     ) -> None:
         self.descriptor = CapabilityDescriptor(
             name=capability_name,
             description="Read one bounded file.",
+            kind=capability_kind,
             input_schema={
                 "type": "object",
                 "properties": {argument_name: {"type": "string", "minLength": 1, "maxLength": 512}},
@@ -114,6 +123,43 @@ def final_turn(content: str = "Final bounded answer.", *, finish_reason: str = "
     return ModelTurn(content=content, finish_reason=finish_reason)
 
 
+def assessment_turn(
+    strategy: ExecutionStrategy,
+    *,
+    target: str = "",
+    missing_condition: str = "",
+) -> ModelTurn:
+    return ModelTurn(
+        structured_output={
+            "strategy": strategy.value,
+            "target": target,
+            "rationale": "The bounded inventory supports this initial strategy.",
+            "confidence": 0.84,
+            "missing_condition": missing_condition,
+            "substantial_temporary_code": False,
+            "complex_domain_workflow": False,
+            "high_improvisation_risk": False,
+            "low_implementation_confidence": False,
+            "repeated_reusable_need": False,
+            "existing_process_path_unreasonable": False,
+        },
+        finish_reason="stop",
+    )
+
+
+def skill_package() -> SkillPackage:
+    name = f"skill-{uuid4().hex[:12]}"
+    instructions = f"---\nname: {name}\ndescription: Use dynamic instructions.\n---\n"
+    return SkillPackage(
+        slug=f"@fixture/{name}",
+        name=name,
+        description="Use dynamic instructions for one bounded operation.",
+        skill_root=f"skills/@fixture/{name}",
+        content_hash=hashlib.sha256(instructions.encode()).hexdigest(),
+        instructions=instructions,
+    )
+
+
 def invalid_response(*, repairable: bool = True) -> AnbanError:
     return AnbanError(
         ErrorInfo(
@@ -150,6 +196,157 @@ async def test_valid_model_final_is_the_only_success_path() -> None:
     assert "final answer must not contain Tool Calls" in system_contract
     assert "Use process.execute" in system_contract
     assert "file operations, network operations" in system_contract
+
+
+async def test_sufficiency_assessment_guides_the_same_fixed_loop() -> None:
+    handler = RecordingHandler()
+    registry = CapabilityRegistry((handler,))
+    model = ScriptedModel(
+        [
+            assessment_turn(ExecutionStrategy.USE_CAPABILITY, target="test.action"),
+            tool_turn(call()),
+            final_turn(),
+        ]
+    )
+    agent = FixedGeneralAgent(
+        model,
+        registry,
+        sufficiency=CapabilitySufficiencyEvaluator(
+            UnifiedCapabilityInventory(registry, model_available=True)
+        ),
+    )
+
+    outcome = await agent.execute(agent_input())
+
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert outcome.model_turn_count == 3
+    assert outcome.capability_call_count == 1
+    guidance = model.requests[1].messages[1].content or ""
+    assert "strategy=use_capability" in guidance
+    assert "target=test.action" in guidance
+    assert agent.graph_edges() == (
+        ("__start__", "general_agent"),
+        ("general_agent", "__end__"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("strategy", "code"),
+    [
+        (ExecutionStrategy.CLARIFY, ErrorCode.VALIDATION_FAILED),
+        (ExecutionStrategy.FAIL, ErrorCode.CAPABILITY_UNAVAILABLE),
+    ],
+)
+async def test_terminal_sufficiency_resolution_never_executes(
+    strategy: ExecutionStrategy,
+    code: ErrorCode,
+) -> None:
+    handler = RecordingHandler()
+    registry = CapabilityRegistry((handler,))
+    model = ScriptedModel(
+        [
+            assessment_turn(
+                strategy,
+                missing_condition="A required execution condition is unavailable.",
+            )
+        ]
+    )
+    outcome = await FixedGeneralAgent(
+        model,
+        registry,
+        sufficiency=CapabilitySufficiencyEvaluator(
+            UnifiedCapabilityInventory(registry, model_available=True)
+        ),
+    ).execute(agent_input())
+
+    assert outcome.status is AgentOutcomeStatus.FAILED
+    assert outcome.error is not None
+    assert outcome.error.code is code
+    assert handler.calls == []
+    assert outcome.model_turn_count == 1
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        ErrorCode.CAPABILITY_EXECUTION_FAILED,
+        ErrorCode.CAPABILITY_UNAVAILABLE,
+    ],
+)
+async def test_nonterminal_observation_can_select_a_distinct_capability_path(
+    code: ErrorCode,
+) -> None:
+    first_name, second_name = (f"fixture.{uuid4().hex}" for _ in range(2))
+    failure = CapabilityResult(
+        status=CapabilityResultStatus.FAILED,
+        observation='{"status":"failed","reason":"bounded_failure"}',
+        error=ErrorInfo(
+            code=code,
+            message="Capability path did not complete",
+        ),
+    )
+    first = RecordingHandler(result=failure, capability_name=first_name)
+    second = RecordingHandler(capability_name=second_name)
+    registry = CapabilityRegistry((first, second))
+    model = ScriptedModel(
+        [
+            assessment_turn(ExecutionStrategy.USE_CAPABILITY, target=first_name),
+            tool_turn(ToolCall(id="first", name=first_name, arguments={"path": "one"})),
+            tool_turn(ToolCall(id="second", name=second_name, arguments={"path": "two"})),
+            final_turn("Alternative path completed."),
+        ]
+    )
+
+    outcome = await FixedGeneralAgent(
+        model,
+        registry,
+        sufficiency=CapabilitySufficiencyEvaluator(
+            UnifiedCapabilityInventory(registry, model_available=True)
+        ),
+    ).execute(agent_input())
+
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert outcome.capability_call_count == 2
+    assert len(first.calls) == len(second.calls) == 1
+    assert any(
+        message.tool_result is not None and "bounded_failure" in message.tool_result.content
+        for message in model.requests[2].messages
+    )
+
+
+async def test_one_run_can_activate_multiple_dynamic_skills() -> None:
+    first, second = skill_package(), skill_package()
+    handler = RecordingHandler(
+        capability_name="skill.activate",
+        argument_name="name",
+        capability_kind=CapabilityKind.SKILL,
+        observation=lambda count: f"activated-{count}",
+    )
+    registry = CapabilityRegistry((handler,))
+    model = ScriptedModel(
+        [
+            assessment_turn(ExecutionStrategy.ACTIVATE_SKILL, target=first.slug),
+            tool_turn(
+                ToolCall(id="first-skill", name="skill.activate", arguments={"name": first.slug})
+            ),
+            tool_turn(
+                ToolCall(id="second-skill", name="skill.activate", arguments={"name": second.slug})
+            ),
+            final_turn("Both dynamic Skill instructions were applied."),
+        ]
+    )
+
+    outcome = await FixedGeneralAgent(
+        model,
+        registry,
+        sufficiency=CapabilitySufficiencyEvaluator(
+            UnifiedCapabilityInventory(registry, (first, second), model_available=True)
+        ),
+    ).execute(agent_input())
+
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert outcome.capability_call_count == 2
+    assert [call[0]["name"] for call in handler.calls] == [first.slug, second.slug]
 
 
 async def test_user_visible_final_may_report_an_absolute_result_path() -> None:
@@ -326,7 +523,7 @@ async def test_capability_budget_is_checked_before_a_tool_batch() -> None:
     assert handler.calls == []
 
 
-async def test_repeated_call_is_stopped_before_third_side_effect() -> None:
+async def test_repeated_call_is_stopped_without_replaying_the_side_effect() -> None:
     model = ScriptedModel(
         [tool_turn(call("one")), tool_turn(call("two")), tool_turn(call("three"))]
     )
@@ -335,17 +532,31 @@ async def test_repeated_call_is_stopped_before_third_side_effect() -> None:
     assert outcome.status is AgentOutcomeStatus.FAILED
     assert outcome.error is not None
     assert outcome.error.details.root["reason"] == "repeated_call"
-    assert len(handler.calls) == 2
+    assert len(handler.calls) == 1
 
 
-async def test_repeated_call_and_observation_detects_no_progress() -> None:
-    model = ScriptedModel([tool_turn(call("one")), tool_turn(call("two"))])
+async def test_prevented_replay_is_observed_and_allows_a_distinct_next_step() -> None:
+    model = ScriptedModel(
+        [tool_turn(call("one")), tool_turn(call("two")), final_turn("Recovered without replay.")]
+    )
     handler = RecordingHandler()
-    outcome = await FixedGeneralAgent(model, CapabilityRegistry((handler,))).execute(agent_input())
-    assert outcome.status is AgentOutcomeStatus.FAILED
-    assert outcome.error is not None
-    assert outcome.error.details.root["reason"] == "no_progress"
-    assert len(handler.calls) == 2
+    outcome = await FixedGeneralAgent(
+        model,
+        CapabilityRegistry((handler,)),
+        limits=AgentLimits(max_capability_calls=1),
+    ).execute(agent_input())
+    assert outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert outcome.final_text == "Recovered without replay."
+    assert len(handler.calls) == 1
+    prevented = next(
+        message.tool_result
+        for message in model.requests[2].messages
+        if message.role == "tool"
+        and message.tool_result is not None
+        and message.tool_result.tool_call_id == "two"
+    )
+    assert prevented is not None
+    assert "completed_call_replay_prevented" in prevented.content
 
 
 async def test_model_turn_budget_is_terminal() -> None:
@@ -461,7 +672,7 @@ async def test_repair_budget_is_node_shared_across_separate_invalid_responses() 
     assert len(handler.calls) == 1
 
 
-async def test_repair_cannot_replay_completed_skill_activation() -> None:
+async def test_repair_cannot_replay_observed_skill_activation() -> None:
     activation_call = ToolCall(
         id="activate-1",
         name="skill.activate",
@@ -478,7 +689,7 @@ async def test_repair_cannot_replay_completed_skill_activation() -> None:
     assert outcome.status is AgentOutcomeStatus.FAILED
     assert outcome.error is not None
     assert outcome.error.code is ErrorCode.MODEL_RESPONSE_INVALID
-    assert outcome.error.details.root["reason"] == "repair_replayed_completed_call"
+    assert outcome.error.details.root["reason"] == "repair_replayed_observed_call"
     assert len(handler.calls) == 1
 
 

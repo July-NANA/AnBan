@@ -23,6 +23,7 @@ from anban.persistence import SQLAlchemyUnitOfWorkFactory, create_database_engin
 from anban.runtime import (
     AgentLimits,
     CapabilitySufficiencyEvaluator,
+    DynamicTaskGraphBuilder,
     ExecutionQueryService,
     PersistentRuntime,
 )
@@ -35,6 +36,7 @@ class Application:
     interactions: InteractionService
     inventory: CapabilityInventoryPort
     sufficiency: CapabilitySufficiencyEvaluator
+    graph_builder: DynamicTaskGraphBuilder
     _model: OpenAICompatibleAdapter
     _engine: AsyncEngine
 
@@ -132,7 +134,12 @@ async def build_application() -> Application:
         )
         queries = ExecutionQueryService(unit_of_work)
         return Application(
-            InteractionService(runtime, queries), inventory, sufficiency, model, engine
+            InteractionService(runtime, queries),
+            inventory,
+            sufficiency,
+            DynamicTaskGraphBuilder(),
+            model,
+            engine,
         )
     except BaseException:
         await model.aclose()

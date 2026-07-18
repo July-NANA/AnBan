@@ -35,9 +35,12 @@ replan decision. Proposed final text, successful Skill activation, stored Memory
 Capability output are not terminal facts. The next alternative must match one exact ready
 strategy/target, while identical completed or uncertain calls remain replay-protected. Waiting,
 resume, and checkpoints are not v0.1 behavior.
-Runtime does not yet generate or execute `TaskGraphSpec`; the one generic LangGraph builder remains
-the next authorized delivery. Immutable `GraphRevision` persistence is available through the
-existing Unit of Work boundary.
+Runtime now owns one generic dynamic LangGraph builder. It compiles any validated `TaskGraphSpec`
+through a single topology-independent registration path and requires callers to inject real node
+actions and control routing; compilation never substitutes no-op or mock-success execution.
+Branch/loop evaluation, nested execution, graph selection, and durable graph scheduling remain
+later deliveries. Immutable `GraphRevision` persistence is available through the existing Unit of
+Work boundary.
 
 ## Model
 

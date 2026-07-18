@@ -20,6 +20,16 @@ from anban.runtime.contracts import (
     SkillAcquisitionJustification,
     SufficiencyCandidate,
 )
+from anban.runtime.graph_builder import (
+    CompiledTaskGraph,
+    DynamicTaskGraphBuilder,
+    TaskGraphNodeAction,
+    TaskGraphNodeActionFactory,
+    TaskGraphRouteAction,
+    TaskGraphRouteActionFactory,
+    TaskGraphRuntimeState,
+    TaskGraphStateUpdate,
+)
 from anban.runtime.inspection import (
     ArtifactDetail,
     ContextDetail,
@@ -54,12 +64,14 @@ __all__ = [
     "CapabilitySufficiencyEvaluator",
     "CompletionAssessment",
     "CompletionEvaluator",
+    "CompiledTaskGraph",
     "ContextDetail",
     "ContextEntryDetail",
     "ContextSummaryDetail",
     "ExecutionQueryService",
     "ExecutionResult",
     "ExecutionStrategy",
+    "DynamicTaskGraphBuilder",
     "FixedGeneralAgent",
     "GraphRevisionDetail",
     "InvocationDetail",
@@ -76,5 +88,11 @@ __all__ = [
     "SkillAcquisitionJustification",
     "SufficiencyCandidate",
     "TaskDetail",
+    "TaskGraphNodeAction",
+    "TaskGraphNodeActionFactory",
+    "TaskGraphRouteAction",
+    "TaskGraphRouteActionFactory",
+    "TaskGraphRuntimeState",
+    "TaskGraphStateUpdate",
     "TraceEntry",
 ]

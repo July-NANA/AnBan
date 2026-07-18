@@ -13,7 +13,10 @@ must not absorb provider clients, SQLAlchemy models, transport details, or sched
 ## Runtime
 
 Owns v0.1 execution order, state transitions, the fixed LangGraph, bounded Tool Calling, durable
-coordination, and query projections. Waiting, resume, and checkpoints are not v0.1 behavior.
+coordination, and query projections. The v0.5 sufficiency evaluator uses a closed structured Model
+decision to select only real, ready inventory targets; Runtime constructs and validates the
+authoritative assessment, including general Skill-acquisition justification and explicit
+clarification/failure. Waiting, resume, and checkpoints are not v0.1 behavior.
 
 ## Model
 

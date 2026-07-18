@@ -164,17 +164,44 @@ def test_incomplete_completion_and_bounded_replan_are_explicit() -> None:
     replan = ReplanDecision(
         should_replan=True,
         rationale="One distinct safe path remains.",
-        next_strategy=ExecutionStrategy.CLARIFY,
+        next_strategy=ExecutionStrategy.USE_PROCESS,
         remaining_attempts=1,
     )
     assert incomplete.complete is False
-    assert replan.next_strategy is ExecutionStrategy.CLARIFY
+    assert replan.next_strategy is ExecutionStrategy.USE_PROCESS
+    clarification = ReplanDecision(
+        should_replan=False,
+        rationale="A required user input is missing.",
+        remaining_attempts=0,
+        requires_clarification=True,
+    )
+    failure = ReplanDecision(
+        should_replan=False,
+        rationale="Every safe path is exhausted.",
+        remaining_attempts=0,
+        must_fail=True,
+    )
+    assert clarification.requires_clarification
+    assert failure.must_fail
     with pytest.raises(ValidationError):
         ReplanDecision(
             should_replan=True,
             rationale="No budget remains.",
             next_strategy=ExecutionStrategy.FAIL,
             remaining_attempts=0,
+        )
+
+
+@pytest.mark.parametrize("terminal", [ExecutionStrategy.CLARIFY, ExecutionStrategy.FAIL])
+def test_clarify_and_fail_cannot_masquerade_as_replan_strategies(
+    terminal: ExecutionStrategy,
+) -> None:
+    with pytest.raises(ValidationError):
+        ReplanDecision(
+            should_replan=True,
+            rationale="Terminal resolution must use its explicit flag.",
+            next_strategy=terminal,
+            remaining_attempts=1,
         )
 
 

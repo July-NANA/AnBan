@@ -157,7 +157,7 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
     @staticmethod
     def _skill_item(skill: SkillPackage) -> CapabilityInventoryItem:
         return CapabilityInventoryItem(
-            key=f"skill:{skill.slug}",
+            key=skill.slug,
             kind=InventoryKind.SKILL,
             name=skill.name,
             description=skill.description,

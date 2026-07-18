@@ -83,7 +83,7 @@ def test_snapshot_uses_registry_skill_and_model_facts_without_execution() -> Non
 
     assert by_key["model:default"].availability is AvailabilityStatus.READY
     assert by_key[capability_name].kind is InventoryKind.CAPABILITY
-    assert by_key[f"skill:{skill.slug}"].version_digest == skill.content_hash
+    assert by_key[skill.slug].version_digest == skill.content_hash
     for key in ("mcp:runtime", "memory:context", "sub_agent:runtime"):
         assert by_key[key].availability is AvailabilityStatus.UNAVAILABLE
     assert not handler.invoked

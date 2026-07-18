@@ -28,6 +28,7 @@ from anban.runtime.contracts import (
     ExecutionResult,
 )
 from anban.runtime.persistence import PersistedModelPort, RunPersistence
+from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
 
 _STORAGE_FAILURE_DETAILS = frozenset(
     {
@@ -51,6 +52,7 @@ class PersistentRuntime:
         unit_of_work: UnitOfWorkFactory,
         *,
         inventory: CapabilityInventoryPort | None = None,
+        sufficiency: CapabilitySufficiencyEvaluator | None = None,
         limits: AgentLimits | None = None,
         response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
         artifact_cleanup: Callable[[InvocationContext, ArtifactReference], None] | None = None,
@@ -59,6 +61,7 @@ class PersistentRuntime:
         self._capabilities = capabilities
         self._unit_of_work = unit_of_work
         self._inventory = inventory
+        self._sufficiency = sufficiency
         self._limits = limits
         self._response_repair_retries = response_repair_retries
         self._artifact_cleanup = artifact_cleanup
@@ -68,6 +71,12 @@ class PersistentRuntime:
         if self._inventory is None:
             raise RuntimeError("Capability inventory is not configured")
         return self._inventory
+
+    @property
+    def sufficiency(self) -> CapabilitySufficiencyEvaluator:
+        if self._sufficiency is None:
+            raise RuntimeError("Capability sufficiency evaluator is not configured")
+        return self._sufficiency
 
     async def execute(
         self, request: str, *, metadata: SafeMetadata | None = None

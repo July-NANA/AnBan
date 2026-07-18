@@ -55,7 +55,7 @@ class AgentDecision(RuntimeValue):
         default=None,
         min_length=1,
         max_length=128,
-        pattern=r"^[a-z@][a-z0-9_.@/-]*$",
+        pattern=r"^[a-z@][a-z0-9_.@:/-]*$",
     )
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
     confidence: float | None = Field(default=None, ge=0, le=1)
@@ -293,7 +293,12 @@ class ReplanDecision(RuntimeValue):
         if terminal_choices > 1:
             raise ValueError("replan decision cannot clarify and fail simultaneously")
         if self.should_replan:
-            if self.next_strategy is None or terminal_choices or self.remaining_attempts == 0:
+            if (
+                self.next_strategy is None
+                or self.next_strategy in {ExecutionStrategy.CLARIFY, ExecutionStrategy.FAIL}
+                or terminal_choices
+                or self.remaining_attempts == 0
+            ):
                 raise ValueError("bounded replan requires a next strategy and remaining budget")
         elif self.next_strategy is not None:
             raise ValueError("non-replan decision cannot select a next strategy")

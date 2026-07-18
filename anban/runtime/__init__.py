@@ -34,6 +34,7 @@ from anban.runtime.observability import (
     TraceEntry,
 )
 from anban.runtime.service import PersistentChatSession, PersistentRuntime
+from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
 
 __all__ = [
     "AgentDecision",
@@ -45,6 +46,7 @@ __all__ = [
     "AuditEntry",
     "ArtifactDetail",
     "CapabilitySufficiencyAssessment",
+    "CapabilitySufficiencyEvaluator",
     "CompletionAssessment",
     "ExecutionQueryService",
     "ExecutionResult",

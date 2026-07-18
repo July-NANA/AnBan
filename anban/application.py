@@ -19,7 +19,12 @@ from anban.config import load_configuration
 from anban.interaction import InteractionService
 from anban.model import OpenAICompatibleAdapter
 from anban.persistence import SQLAlchemyUnitOfWorkFactory, create_database_engine
-from anban.runtime import AgentLimits, ExecutionQueryService, PersistentRuntime
+from anban.runtime import (
+    AgentLimits,
+    CapabilitySufficiencyEvaluator,
+    ExecutionQueryService,
+    PersistentRuntime,
+)
 
 
 @dataclass
@@ -28,6 +33,7 @@ class Application:
 
     interactions: InteractionService
     inventory: CapabilityInventoryPort
+    sufficiency: CapabilitySufficiencyEvaluator
     _model: OpenAICompatibleAdapter
     _engine: AsyncEngine
 
@@ -101,17 +107,21 @@ async def build_application() -> Application:
             model_available=True,
         )
         workspace_boundary = WorkspaceBoundary(configuration.workspace)
+        sufficiency = CapabilitySufficiencyEvaluator(inventory)
         runtime = PersistentRuntime(
             model,
             capabilities,
             SQLAlchemyUnitOfWorkFactory(engine),
             inventory=inventory,
+            sufficiency=sufficiency,
             limits=AgentLimits(**configuration.agent.model_dump()),
             response_repair_retries=model_configuration.response_repair_retries,
             artifact_cleanup=workspace_boundary.delete_artifact,
         )
         queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
-        return Application(InteractionService(runtime, queries), inventory, model, engine)
+        return Application(
+            InteractionService(runtime, queries), inventory, sufficiency, model, engine
+        )
     except BaseException:
         await model.aclose()
         await engine.dispose()

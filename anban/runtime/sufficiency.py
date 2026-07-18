@@ -119,6 +119,15 @@ class CapabilitySufficiencyEvaluator:
     def __init__(self, inventory: CapabilityInventoryPort) -> None:
         self._inventory = inventory
 
+    def ready_skill_targets(self) -> frozenset[str]:
+        """Snapshot every ready Skill identity before any acquisition side effect."""
+
+        return frozenset(
+            item.key
+            for item in self._inventory.snapshot().items
+            if item.kind is InventoryKind.SKILL and item.availability is AvailabilityStatus.READY
+        )
+
     async def assess(
         self,
         request: str,

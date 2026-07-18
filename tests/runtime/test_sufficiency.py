@@ -208,6 +208,35 @@ async def test_general_insufficiency_can_authorize_skill_acquisition() -> None:
     assert result.acquisition.complex_domain_workflow
 
 
+async def test_ready_skill_snapshot_is_not_limited_to_model_candidates(tmp_path: Path) -> None:
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    workspace = tmp_path / "workspace"
+    slugs: set[str] = set()
+    for index in range(40):
+        name = f"workflow-{index:02d}-{uuid4().hex[:6]}"
+        root = workspace / "skills" / "@fixture" / name
+        root.mkdir(parents=True)
+        root.joinpath("SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: Execute bounded workflow {index}.\n---\n",
+            encoding="utf-8",
+        )
+        slugs.add(f"@fixture/{name}")
+    actual = evaluator(skills=WorkspaceSkillCatalog(workspace, package_skills_root=package_root))
+    result = await actual.assess(
+        "Explain the available workflow inventory.",
+        DecisionModel(decision(ExecutionStrategy.DIRECT_ANSWER)),
+    )
+
+    assert actual.ready_skill_targets() == slugs
+    bounded_skill_targets = {
+        candidate.target
+        for candidate in result.candidates
+        if candidate.strategy is ExecutionStrategy.ACTIVATE_SKILL
+    }
+    assert bounded_skill_targets < slugs
+
+
 @pytest.mark.parametrize(
     ("strategy", "flag"),
     [

@@ -21,6 +21,7 @@ Searching is not installing. Install only when the user explicitly asks to insta
 search and install. Do not log in, publish, invent credentials, or retry without a finite bound.
 An installation succeeds only when the real command succeeds and the installed Skill files exist.
 
-After installation, tell the user that a new Anban Application or session must be started before
-the new Skill can be discovered and used. Never claim that a newly installed Skill was loaded or
-used in the same Agent loop.
+After a successful install, activate the exact newly discovered Skill through `skill.activate` in
+the same Agent loop. Continue the original user Task with its real instructions; do not replace the
+Task with installation. Never claim that the Skill was loaded or used before its real activation
+Tool Result is observed.

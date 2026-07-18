@@ -25,8 +25,9 @@ Real model, Skill, Capability, and end-to-end checks run only when required by t
 development task. They are explicit parts of a Phase Gate or Version Gate, not a permanent
 per-push readiness workflow. The fail-closed helpers under `scripts/acceptance/` cover real model
 native Tool Calling, real Process/file/HTTP/Artifact work, source-independent Skill discovery,
-ClawHub search/install as an external CLI operation, new-Application Skill execution, PostgreSQL
-restart Trace, and security failure paths. Use the commands in the acceptance README.
+ClawHub search/install as an external CLI operation, same-Run catalog refresh, activation, and
+original-task continuation, fresh-Application Skill execution, PostgreSQL restart Trace, and
+security failure paths. Use the commands in the acceptance README.
 
 Fake Models, Fake Capabilities, Mock Providers, Placeholder Executors, JSON-simulated Tool Calls,
 mock success, and silent fallback are prohibited. Checks emit allowlisted summaries only;

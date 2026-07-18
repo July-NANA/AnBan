@@ -40,8 +40,8 @@ not documentation or fixtures. Apply migrations with `alembic upgrade head`; sel
 database with `ANBAN_DATABASE_PROFILE=test`.
 
 The packaged `@anban/clawhub` Skill is always available. Any valid Workspace `SKILL.md` is loaded
-through the same parser without consulting installer metadata. Use a new Application after adding
-or installing a Skill.
+through the same parser without consulting installer metadata. The current Application refreshes
+the catalog on inventory observation and activation; a restart is not required after installation.
 
 ## Checks and responsibility
 

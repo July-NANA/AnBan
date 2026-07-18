@@ -36,6 +36,7 @@ from anban.model import (
     ToolDefinition,
     ToolResult,
 )
+from anban.runtime.agent_decisions import assessment_guidance, matches_initial_decision
 from anban.runtime.contracts import (
     AgentInput,
     AgentLimits,
@@ -210,7 +211,10 @@ class FixedGeneralAgent:
         progress: ExecutionProgress,
     ) -> AgentOutcome:
         guidance: ModelMessage | None = None
+        assessment: CapabilitySufficiencyAssessment | None = None
+        initial_skill_targets: frozenset[str] = frozenset()
         if self._sufficiency is not None:
+            initial_skill_targets = self._sufficiency.ready_skill_targets()
             if progress.model_turns >= self._limits.max_model_turns:
                 return self._limit_outcome(progress, "model_turn_budget")
             progress.model_turns += 1
@@ -239,8 +243,10 @@ class FixedGeneralAgent:
                 )
             guidance = ModelMessage(
                 role="system",
-                content=self._assessment_guidance(assessment),
+                content=assessment_guidance(assessment),
             )
+        acquired_skill_activated = False
+        selected_path_disproved = False
         descriptors = tuple(item for item in self._capabilities.search() if item.available)
         tools = tuple(
             ToolDefinition(
@@ -304,6 +310,35 @@ class FixedGeneralAgent:
             if invalid is not None:
                 return self._outcome(AgentOutcomeStatus.FAILED, progress, error=invalid)
             if turn.content is not None:
+                if (
+                    assessment is not None
+                    and assessment.sufficient
+                    and assessment.selected.strategy is not ExecutionStrategy.DIRECT_ANSWER
+                    and progress.capability_calls == 0
+                ):
+                    return self._outcome(
+                        AgentOutcomeStatus.FAILED,
+                        progress,
+                        error=self._error(
+                            ErrorCode.MODEL_RESPONSE_INVALID,
+                            "Model did not attempt the selected execution path",
+                            "selected_path_not_attempted",
+                        ),
+                    )
+                if (
+                    assessment is not None
+                    and assessment.should_acquire_skill
+                    and not acquired_skill_activated
+                ):
+                    return self._outcome(
+                        AgentOutcomeStatus.FAILED,
+                        progress,
+                        error=self._error(
+                            ErrorCode.VALIDATION_FAILED,
+                            "Skill acquisition did not produce an activated new Skill",
+                            "skill_acquisition_incomplete",
+                        ),
+                    )
                 stripped_content = turn.content.strip()
                 try:
                     final_text = validate_safe_text(
@@ -347,6 +382,41 @@ class FixedGeneralAgent:
                 )
 
             calls = turn.tool_calls
+            if (
+                assessment is not None
+                and assessment.sufficient
+                and progress.capability_calls == 0
+                and not matches_initial_decision(calls[0], assessment, self._capabilities.describe)
+            ):
+                return self._outcome(
+                    AgentOutcomeStatus.FAILED,
+                    progress,
+                    error=self._error(
+                        ErrorCode.MODEL_RESPONSE_INVALID,
+                        "Model did not follow the selected initial execution path",
+                        "initial_strategy_mismatch",
+                    ),
+                )
+            if (
+                assessment is not None
+                and assessment.sufficient
+                and not selected_path_disproved
+                and assessment.selected.strategy is not ExecutionStrategy.ACTIVATE_SKILL
+                and any(
+                    self._capabilities.describe(call.name).kind is CapabilityKind.SKILL
+                    for call in calls
+                )
+            ):
+                return self._outcome(
+                    AgentOutcomeStatus.FAILED,
+                    progress,
+                    error=self._error(
+                        ErrorCode.MODEL_RESPONSE_INVALID,
+                        "Model attempted unnecessary Skill search after selecting a "
+                        "sufficient path",
+                        "unnecessary_skill_search",
+                    ),
+                )
             call_ids = {call.id for call in calls}
             if len(call_ids) != len(calls):
                 return self._outcome(
@@ -439,6 +509,23 @@ class FixedGeneralAgent:
                     result,
                     observation,
                 )
+                if (
+                    assessment is not None
+                    and assessment.sufficient
+                    and matches_initial_decision(call, assessment, self._capabilities.describe)
+                    and result.status is not CapabilityResultStatus.COMPLETED
+                ):
+                    selected_path_disproved = True
+                activated_slug = result.metadata.root.get("skill_slug")
+                if (
+                    assessment is not None
+                    and assessment.should_acquire_skill
+                    and descriptor.kind is CapabilityKind.SKILL
+                    and result.status is CapabilityResultStatus.COMPLETED
+                    and isinstance(activated_slug, str)
+                    and activated_slug not in initial_skill_targets
+                ):
+                    acquired_skill_activated = True
                 if (
                     descriptor.kind is CapabilityKind.SKILL
                     and result.status is CapabilityResultStatus.COMPLETED
@@ -534,17 +621,6 @@ class FixedGeneralAgent:
             InventoryKind.MCP: ExecutionStrategy.USE_CAPABILITY,
             InventoryKind.MEMORY: ExecutionStrategy.USE_CAPABILITY,
         }.get(descriptor.inventory_kind, ExecutionStrategy.USE_CAPABILITY)
-
-    @staticmethod
-    def _assessment_guidance(assessment: CapabilitySufficiencyAssessment) -> str:
-        target = assessment.selected.target or "none"
-        return (
-            "Initial bounded sufficiency assessment selected "
-            f"strategy={assessment.selected.strategy.value} target={target}. "
-            "Use this as the starting path. Return every real Tool Result to reasoning, choose a "
-            "distinct available alternative when an observation disproves the path, and never "
-            "repeat an identical completed or uncertain Capability call."
-        )
 
     @staticmethod
     def _replay_prevented_observation() -> str:

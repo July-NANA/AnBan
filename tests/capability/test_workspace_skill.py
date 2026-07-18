@@ -366,7 +366,8 @@ async def test_packaged_clawhub_instructions_are_an_ordinary_discovered_skill(
     assert result.status is CapabilityResultStatus.COMPLETED
     assert result.metadata.root["skill_root"] == "package/skills/@anban/clawhub"
     assert "npx --yes clawhub@latest --workdir . --no-input search" in (result.observation or "")
-    assert "new Anban Application or session" in (result.observation or "")
+    assert "same Agent loop" in (result.observation or "")
+    assert "Continue the original user Task" in (result.observation or "")
 
 
 async def test_existing_registry_and_inventory_refresh_a_newly_installed_skill(

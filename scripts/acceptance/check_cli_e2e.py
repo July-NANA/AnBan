@@ -412,19 +412,17 @@ async def gate_bcd(root: Path) -> dict[str, object]:
     install = await submit(
         "Use the available Skill for ClawHub to search public Skills without logging in. Compare "
         "candidates from no more than three successful, semantically distinct search commands and "
-        "explain compatibility "
-        "before selection. Then choose and "
+        "explain compatibility before selection. Then choose and "
         "install one low-risk Skill that needs no credentials, Browser, MCP, database, or special "
         "service and whose real behavior can be verified with ordinary process execution. The "
-        "request explicitly authorizes searching and installing exactly one suitable Skill."
+        "request explicitly authorizes searching and installing exactly one suitable Skill. After "
+        "the real install, discover and activate that exact new Skill in this same Run, follow its "
+        "actual instructions, and use ordinary process execution to complete one bounded, "
+        "verifiable task before summarizing the original request."
     )
     require_success(install, "Gate B")
     install_trace = await trace(install.run_id)
-    names = [
-        entry.metadata.root.get("capability_name")
-        for entry in install_trace.trace
-        if entry.event_type in {"capability.completed", "skill.activated"}
-    ]
+    activations = [entry for entry in install_trace.trace if entry.event_type == "skill.activated"]
     npx_calls = [
         entry
         for entry in install_trace.trace
@@ -436,14 +434,37 @@ async def gate_bcd(root: Path) -> dict[str, object]:
     if (
         not install_trace.complete
         or install_trace.inconsistencies
-        or "skill.activate" not in names
+        or not any(
+            entry.event_type == "agent.skill_acquisition_requested" for entry in install_trace.trace
+        )
         or len(npx_calls) < 2
     ):
-        raise RuntimeGateError("Gate B did not trace Skill activation, search, and install")
+        raise RuntimeGateError("Gate B did not trace acquisition, search, and install")
     packages = workspace_packages(root)
     if len(packages) != 1:
         raise RuntimeGateError("Gate B did not install exactly one valid SKILL.md")
     slug = packages[0]
+    activation_slugs = {
+        entry.metadata.root.get("skill_slug")
+        for entry in activations
+        if isinstance(entry.metadata.root.get("skill_slug"), str)
+    }
+    installed_activation = next(
+        (entry for entry in activations if entry.metadata.root.get("skill_slug") == slug),
+        None,
+    )
+    if installed_activation is None or len(activation_slugs) < 2:
+        raise RuntimeGateError("Gate B did not activate the acquisition guide and installed Skill")
+    if not any(
+        entry.sequence > installed_activation.sequence
+        and entry.event_type == "capability.completed"
+        and entry.metadata.root.get("capability_name") == "process.execute"
+        and entry.metadata.root.get("exit_code") == 0
+        for entry in install_trace.trace
+    ):
+        raise RuntimeGateError(
+            "Gate B did not use the installed Skill to continue the original Run"
+        )
     skill_files = tuple(sorted((root / "skills").rglob("SKILL.md")))
     if len(skill_files) != 1:
         raise RuntimeGateError("Gate B installed Skill files are ambiguous")
@@ -481,6 +502,7 @@ async def gate_bcd(root: Path) -> dict[str, object]:
         "slug": slug,
         "skill_path": skill_path,
         "content_hash": content_hash,
+        "same_run_activation_count": len(activation_slugs),
         "execution_run_ids": run_ids,
     }
 

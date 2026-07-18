@@ -19,8 +19,8 @@ resource references remain intact. Activation returns slug, content SHA-256, com
 on disk until a Skill uses them through `process.execute`.
 
 `.clawhub/lock.json`, Origin files, `_meta.json`, registry, publisher, versions, and fingerprints are
-not production or acceptance identity inputs. A newly installed `SKILL.md` is discovered only by a
-newly built Application.
+not production or acceptance identity inputs. A newly installed `SKILL.md` is discovered by the
+shared live catalog in the current Application and by every newly built Application.
 
 Relative Process cwd values resolve from the Workspace root; absolute cwd is allowed. Declared
 Artifact paths resolve from the effective cwd. Multiple declared files are validated before any

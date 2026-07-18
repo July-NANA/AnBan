@@ -13,8 +13,9 @@ These commands fail closed and emit only bounded evidence:
 - `pnpm run acceptance:runtime`: Gate A in an isolated Workspace, then Gate B-D in a fresh isolated
   Workspace. It uses the normal production Application and natural-language prompts, performs real
   Process/file/HTTP/Artifact work, invokes the ordinary packaged ClawHub Skill, installs exactly one
-  compatible public Skill, starts new Applications, and requires three complete Skill/Process
-  Traces. Skill identity evidence is limited to slug, relative `SKILL.md` path, and content hash;
+  compatible public Skill, activates and uses it to finish the original installation Run, then
+  starts three fresh Applications and requires complete Skill/Process Traces. Skill identity
+  evidence is limited to slug, relative `SKILL.md` path, and content hash;
   production and acceptance do not derive identity from installation records. Gate A also runs two
   differently worded multi-Artifact tasks without prescribing cwd, filenames, Tool Schema, command,
   or Tool order. Gate A strictly proves that one Process Invocation can collect two Artifacts; the

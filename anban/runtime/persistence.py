@@ -306,10 +306,30 @@ class RunPersistence:
                 "must_fail": assessment.must_fail,
             }
         )
-        await self._events_only(
-            "agent_sufficiency_assessed",
-            (EventFact("agent.sufficiency_assessed", metadata, node_run_id=self.node.id),),
-        )
+        facts = [EventFact("agent.sufficiency_assessed", metadata, node_run_id=self.node.id)]
+        if assessment.should_acquire_skill:
+            acquisition = assessment.acquisition
+            facts.append(
+                EventFact(
+                    "agent.skill_acquisition_requested",
+                    SafeMetadata(
+                        {
+                            "substantial_temporary_code": acquisition.substantial_temporary_code,
+                            "complex_domain_workflow": acquisition.complex_domain_workflow,
+                            "high_improvisation_risk": acquisition.high_improvisation_risk,
+                            "low_implementation_confidence": (
+                                acquisition.low_implementation_confidence
+                            ),
+                            "repeated_reusable_need": acquisition.repeated_reusable_need,
+                            "existing_process_path_unreasonable": (
+                                acquisition.existing_process_path_unreasonable
+                            ),
+                        }
+                    ),
+                    node_run_id=self.node.id,
+                )
+            )
+        await self._events_only("agent_sufficiency_assessed", tuple(facts))
 
     async def agent_observed(self, observation: AgentObservation) -> None:
         metadata = SafeMetadata(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -84,14 +85,16 @@ class DurableProcessSupervisor:
             protected_values=self._protected_values,
             settings=self._settings,
         )
-        worker = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "anban.capability.process_worker",
-            str(directory),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+        worker = subprocess.Popen(
+            (
+                sys.executable,
+                "-m",
+                "anban.capability.process_worker",
+                str(directory),
+            ),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
         if worker.stdin is None:
@@ -99,13 +102,10 @@ class DurableProcessSupervisor:
             raise self._failure("worker_stdin_unavailable")
         encoded = request.model_dump_json().encode()
         try:
-            worker.stdin.write(encoded)
-            await worker.stdin.drain()
-        except (BrokenPipeError, ConnectionResetError):
+            await asyncio.to_thread(self._send_request, worker, encoded)
+        except (BrokenPipeError, ConnectionResetError, OSError):
             await self._stop_worker(worker)
             raise self._failure("worker_request_failed") from None
-        finally:
-            worker.stdin.close()
 
         deadline = asyncio.get_running_loop().time() + _START_SECONDS
         while asyncio.get_running_loop().time() < deadline:
@@ -125,7 +125,7 @@ class DurableProcessSupervisor:
                         }
                     ),
                 )
-            if worker.returncode is not None:
+            if worker.poll() is not None:
                 raise self._failure("worker_exited_before_start")
             await asyncio.sleep(_POLL_SECONDS)
         await self.cancel(context)
@@ -265,6 +265,15 @@ class DurableProcessSupervisor:
     def _worker_alive(pid: int) -> bool:
         if pid <= 0:
             return False
+        if hasattr(os, "waitpid"):
+            try:
+                reaped_pid, _ = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                # A fresh service process does not own the recovered worker.
+                pass
+            else:
+                if reaped_pid == pid:
+                    return False
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
@@ -274,19 +283,29 @@ class DurableProcessSupervisor:
         return True
 
     @staticmethod
-    async def _stop_worker(worker: asyncio.subprocess.Process) -> None:
-        if worker.returncode is not None:
+    def _send_request(worker: subprocess.Popen[bytes], encoded: bytes) -> None:
+        if worker.stdin is None:
+            raise BrokenPipeError
+        try:
+            worker.stdin.write(encoded)
+            worker.stdin.flush()
+        finally:
+            worker.stdin.close()
+
+    @staticmethod
+    async def _stop_worker(worker: subprocess.Popen[bytes]) -> None:
+        if worker.poll() is not None:
             return
         try:
             if os.name == "nt":
                 worker.terminate()
             else:
                 os.killpg(worker.pid, 15)
-            await asyncio.wait_for(worker.wait(), timeout=1)
-        except (ProcessLookupError, TimeoutError):
-            if worker.returncode is None:
+            await asyncio.to_thread(worker.wait, 1)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            if worker.poll() is None:
                 worker.kill()
-                await worker.wait()
+                await asyncio.to_thread(worker.wait)
 
     @staticmethod
     def _failure(reason: str) -> AnbanError:

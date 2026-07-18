@@ -58,6 +58,7 @@ class AgentExecutionSupport:
     _capabilities: CapabilityPort
     _limits: AgentLimits
     _observation_observer: Callable[[AgentObservation], Awaitable[None]] | None
+    _continuation_waiter: Callable[[InvocationContext, CapabilityResult], Awaitable[None]] | None
 
     @staticmethod
     def _observation_target(call: ToolCall, descriptor: CapabilityDescriptor) -> str:
@@ -233,6 +234,8 @@ class AgentExecutionSupport:
 
         waiter: asyncio.Task[CapabilityResult] | None = None
         try:
+            if self._continuation_waiter is not None:
+                await self._continuation_waiter(context, result)
             await self._capabilities.progress(context)
             waiter = asyncio.create_task(self._capabilities.wait(context))
             while True:

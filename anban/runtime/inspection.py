@@ -20,6 +20,7 @@ from anban.core.graph import GraphRevision, GraphRevisionStatus, TaskGraphSpec
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    CheckpointId,
     ContextEntryId,
     ContextSummaryId,
     ExecutionRunId,
@@ -33,6 +34,8 @@ from anban.core.models import (
     Artifact,
     CapabilityInvocation,
     CapabilityInvocationStatus,
+    Checkpoint,
+    CheckpointStatus,
     ExecutionRun,
     ExecutionRunStatus,
     NodeRun,
@@ -49,6 +52,7 @@ DEFAULT_RUN_LIMIT = 20
 MAX_RUN_LIMIT = 100
 MAX_NODES = 8
 MAX_INVOCATIONS = 64
+MAX_CHECKPOINTS = 64
 MAX_ARTIFACTS = 256
 MAX_EVENTS = 512
 MAX_CONTEXT_ENTRIES = 512
@@ -105,6 +109,18 @@ class ArtifactDetail(RuntimeValue):
     created_at: UtcDateTime
 
 
+class CheckpointDetail(RuntimeValue):
+    id: CheckpointId
+    node_run_id: NodeRunId
+    invocation_id: CapabilityInvocationId
+    status: CheckpointStatus
+    state_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: UtcDateTime
+    resumed_at: UtcDateTime | None = None
+    finished_at: UtcDateTime | None = None
+    error_code: ErrorCode | None = None
+
+
 class GraphRevisionDetail(RuntimeValue):
     id: GraphRevisionId
     task_id: TaskId
@@ -122,6 +138,7 @@ class RunDetail(RuntimeValue):
     graph_revision: GraphRevisionDetail | None = None
     nodes: tuple[NodeDetail, ...] = Field(max_length=MAX_NODES)
     invocations: tuple[InvocationDetail, ...] = Field(max_length=MAX_INVOCATIONS)
+    checkpoints: tuple[CheckpointDetail, ...] = Field(max_length=MAX_CHECKPOINTS)
     artifacts: tuple[ArtifactDetail, ...] = Field(max_length=MAX_ARTIFACTS)
     final_text: str | None = None
     observability: RunObservability
@@ -201,6 +218,9 @@ class ExecutionQueryService:
             nodes=tuple(node_detail(node) for node in aggregate.nodes),
             invocations=tuple(
                 invocation_detail(invocation) for invocation in aggregate.invocations
+            ),
+            checkpoints=tuple(
+                checkpoint_detail(checkpoint) for checkpoint in aggregate.checkpoints
             ),
             artifacts=tuple(artifact_detail(artifact) for artifact in aggregate.artifacts),
             final_text=aggregate.run.final_text,
@@ -284,6 +304,7 @@ def enforce_aggregate_bounds(aggregate: ExecutionRunAggregate) -> None:
     if (
         len(aggregate.nodes) > MAX_NODES
         or len(aggregate.invocations) > MAX_INVOCATIONS
+        or len(aggregate.checkpoints) > MAX_CHECKPOINTS
         or len(aggregate.artifacts) > MAX_ARTIFACTS
         or len(aggregate.events) > MAX_EVENTS
     ):
@@ -343,6 +364,20 @@ def invocation_detail(invocation: CapabilityInvocation) -> InvocationDetail:
         started_at=invocation.started_at,
         finished_at=invocation.finished_at,
         error_code=invocation.error_code,
+    )
+
+
+def checkpoint_detail(checkpoint: Checkpoint) -> CheckpointDetail:
+    return CheckpointDetail(
+        id=checkpoint.id,
+        node_run_id=checkpoint.node_run_id,
+        invocation_id=checkpoint.invocation_id,
+        status=checkpoint.status,
+        state_hash=checkpoint.state_hash,
+        created_at=checkpoint.created_at,
+        resumed_at=checkpoint.resumed_at,
+        finished_at=checkpoint.finished_at,
+        error_code=checkpoint.error_code,
     )
 
 

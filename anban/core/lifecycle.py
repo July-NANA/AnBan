@@ -8,6 +8,7 @@ from enum import StrEnum
 from anban.core.errors import InvalidTransitionError
 from anban.core.models import (
     CapabilityInvocationStatus,
+    CheckpointStatus,
     ExecutionRunStatus,
     NodeRunStatus,
     TaskStatus,
@@ -66,6 +67,37 @@ CAPABILITY_INVOCATION_TRANSITIONS = _active_lifecycle(
     CapabilityInvocationStatus.CANCELLED,
     CapabilityInvocationStatus.TIMED_OUT,
 )
+CHECKPOINT_TRANSITIONS: Mapping[CheckpointStatus, frozenset[CheckpointStatus]] = {
+    CheckpointStatus.WAITING: frozenset(
+        {
+            CheckpointStatus.RESUMED,
+            CheckpointStatus.CANCEL_REQUESTED,
+            CheckpointStatus.FAILED,
+            CheckpointStatus.CANCELLED,
+            CheckpointStatus.TIMED_OUT,
+        }
+    ),
+    CheckpointStatus.RESUMED: frozenset(
+        {
+            CheckpointStatus.COMPLETED,
+            CheckpointStatus.FAILED,
+            CheckpointStatus.CANCEL_REQUESTED,
+            CheckpointStatus.CANCELLED,
+            CheckpointStatus.TIMED_OUT,
+        }
+    ),
+    CheckpointStatus.CANCEL_REQUESTED: frozenset(
+        {
+            CheckpointStatus.FAILED,
+            CheckpointStatus.CANCELLED,
+            CheckpointStatus.TIMED_OUT,
+        }
+    ),
+    CheckpointStatus.COMPLETED: frozenset(),
+    CheckpointStatus.FAILED: frozenset(),
+    CheckpointStatus.CANCELLED: frozenset(),
+    CheckpointStatus.TIMED_OUT: frozenset(),
+}
 
 
 def _ensure_transition[StatusT: StrEnum](
@@ -96,3 +128,7 @@ def ensure_capability_invocation_transition(
     current: CapabilityInvocationStatus, target: CapabilityInvocationStatus
 ) -> None:
     _ensure_transition("capability_invocation", CAPABILITY_INVOCATION_TRANSITIONS, current, target)
+
+
+def ensure_checkpoint_transition(current: CheckpointStatus, target: CheckpointStatus) -> None:
+    _ensure_transition("checkpoint", CHECKPOINT_TRANSITIONS, current, target)

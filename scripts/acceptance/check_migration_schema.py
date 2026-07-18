@@ -17,6 +17,7 @@ from sqlalchemy.sql.base import Executable
 from anban.config import load_configuration
 from anban.persistence.models import (
     CapabilityInvocationRecord,
+    CheckpointRecord,
     ContextEntryRecord,
     EventRecord,
     ExecutionRunRecord,
@@ -27,8 +28,10 @@ from anban.persistence.models import (
 EXPECTED_TABLES = {
     "tasks",
     "execution_runs",
+    "graph_revisions",
     "node_runs",
     "capability_invocations",
+    "checkpoints",
     "artifacts",
     "events",
     "context_entries",
@@ -80,6 +83,8 @@ async def accept_schema() -> None:
                 task_one, task_two = uuid4(), uuid4()
                 run_one, run_two = uuid4(), uuid4()
                 node_one = uuid4()
+                invocation_one = uuid4()
+                checkpoint_one = uuid4()
                 await connection.execute(
                     insert(TaskRecord),
                     [
@@ -129,11 +134,45 @@ async def accept_schema() -> None:
                     )
                 )
                 await connection.execute(
+                    insert(CapabilityInvocationRecord).values(
+                        id=invocation_one,
+                        run_id=run_one,
+                        node_run_id=node_one,
+                        capability_name="process.execute",
+                        status="requested",
+                        requested_at=now,
+                        safe_metadata={},
+                    )
+                )
+                await connection.execute(
+                    insert(CheckpointRecord).values(
+                        id=checkpoint_one,
+                        run_id=run_one,
+                        node_run_id=node_one,
+                        invocation_id=invocation_one,
+                        status="waiting",
+                        state_hash="a" * 64,
+                        created_at=now,
+                        safe_metadata={},
+                    )
+                )
+                await connection.execute(
                     insert(EventRecord).values(
                         id=uuid4(),
                         run_id=run_one,
                         sequence=1,
                         event_type="run.created",
+                        occurred_at=now,
+                        safe_metadata={},
+                    )
+                )
+                await connection.execute(
+                    insert(EventRecord).values(
+                        id=uuid4(),
+                        run_id=run_one,
+                        checkpoint_id=checkpoint_one,
+                        sequence=2,
+                        event_type="checkpoint.waiting",
                         occurred_at=now,
                         safe_metadata={},
                     )
@@ -214,6 +253,19 @@ async def accept_schema() -> None:
                 )
                 await expect_integrity_failure(
                     connection,
+                    insert(CheckpointRecord).values(
+                        id=uuid4(),
+                        run_id=run_two,
+                        node_run_id=node_one,
+                        invocation_id=invocation_one,
+                        status="waiting",
+                        state_hash="b" * 64,
+                        created_at=now,
+                        safe_metadata={},
+                    ),
+                )
+                await expect_integrity_failure(
+                    connection,
                     insert(EventRecord).values(
                         id=uuid4(),
                         run_id=run_one,
@@ -240,7 +292,7 @@ def main() -> int:
         return 1
     print(
         "migration schema acceptance: PASS - head, tables, statuses, relationships, event order, "
-        "Context scope and Secret constraints"
+        "Checkpoint correlation, Context scope and Secret constraints"
     )
     return 0
 

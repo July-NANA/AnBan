@@ -16,7 +16,7 @@ instead of silently treating unsupported input as new work.
 
 ## Core
 
-Owns authoritative Task, ExecutionRun, NodeRun, CapabilityInvocation, Artifact, Event, bounded
+Owns authoritative Task, ExecutionRun, NodeRun, CapabilityInvocation, Checkpoint, Artifact, Event, bounded
 Task/Session Context, and `TaskGraphSpec` identity-free structured graph vocabulary. A graph spec
 contains only closed node/edge kinds, explicit dependencies, input/output bindings, entry and
 terminal identities, nested subgraphs, and hard budgets. Its validator rejects hidden cycles,
@@ -33,8 +33,7 @@ authoritative assessment, including general Skill-acquisition justification and 
 clarification/failure. Runtime also owns structured completion assessment and a separately bounded
 replan decision. Proposed final text, successful Skill activation, stored Memory, and intermediate
 Capability output are not terminal facts. The next alternative must match one exact ready
-strategy/target, while identical completed or uncertain calls remain replay-protected. Waiting,
-resume, and checkpoints are not v0.1 behavior.
+strategy/target, while identical completed or uncertain calls remain replay-protected.
 Runtime now owns one generic dynamic LangGraph builder. It compiles any validated `TaskGraphSpec`
 through a single topology-independent registration path and requires callers to inject real node
 actions and control routing; compilation never substitutes no-op or mock-success execution.
@@ -50,7 +49,11 @@ Model, Capability, Invocation, Artifact, and Event path. Invalid planning or nod
 Run rather than falling back to the fixed Agent. Runtime now also recognizes the existing
 Capability lifecycle's non-terminal `accepted` result, records bounded monotonic progress, and
 waits for the real terminal result before exposing a Tool Result. It does not replay a background
-side effect. Checkpoints, detached continuation, and restart recovery remain later deliveries.
+side effect. For asynchronous execution, Runtime creates a durable Checkpoint after real background
+acceptance, returns a bounded waiting projection, and resumes or cancels only after the requested
+Checkpoint transition commits. The fixed Agent and every Task Graph action use the same path.
+Live continuation handles remain in the current service process; reconstructing and continuing an
+in-flight operation after a full service-process exit belongs to the restart coordinator delivery.
 
 ## Model
 
@@ -89,10 +92,13 @@ composite foreign keys keep Runs and predecessors on the same Task. Repository m
 update, partial unique indexes prevent a second initial or sibling successor, and a database
 trigger rejects direct UPDATE statements. The chain tail is the current revision without mutating
 older rows.
-Checkpoints are not implemented in v0.1. Background Process acceptance, progress, and terminal
-Events are durable against fresh queries; the Invocation remains `running` until the actual result
-transaction. Recovering an in-flight OS process after service-process exit requires the later
-Checkpoint/restart delivery.
+Checkpoint rows durably correlate one Run, Node, and Invocation, retain only a hash of the bounded
+continuation state, and transition through waiting, resumed or cancel-requested, then one terminal
+state. Their ordered Events share the Run sequence and system-owned Checkpoint identity. Background
+Process acceptance, progress, Checkpoint, and terminal Events are reconstructable by a fresh query
+Application; the Invocation remains `running` until the actual result transaction. Recovering an
+in-flight OS process and live continuation after service-process exit requires the later restart
+coordinator delivery.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
 

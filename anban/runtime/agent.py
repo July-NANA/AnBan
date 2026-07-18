@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from anban.capability import (
     CapabilityKind,
     CapabilityPort,
+    CapabilityResult,
     CapabilityResultStatus,
     InvocationContext,
 )
@@ -85,6 +86,9 @@ class FixedGeneralAgent(AgentExecutionSupport):
         observation_observer: Callable[[AgentObservation], Awaitable[None]] | None = None,
         completion_observer: Callable[[CompletionAssessment], Awaitable[None]] | None = None,
         replan_observer: Callable[[ReplanDecision], Awaitable[None]] | None = None,
+        continuation_waiter: (
+            Callable[[InvocationContext, CapabilityResult], Awaitable[None]] | None
+        ) = None,
         limits: AgentLimits | None = None,
         response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
     ) -> None:
@@ -96,6 +100,7 @@ class FixedGeneralAgent(AgentExecutionSupport):
         self._observation_observer = observation_observer
         self._completion_observer = completion_observer
         self._replan_observer = replan_observer
+        self._continuation_waiter = continuation_waiter
         self._limits = limits or AgentLimits()
         if not (
             policy.MODEL_RESPONSE_REPAIR_RETRIES_MIN

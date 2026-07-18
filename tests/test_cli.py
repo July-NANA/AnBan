@@ -56,6 +56,20 @@ def test_run_command_dispatch_and_global_json_option(
     assert received == [("bounded task", True)]
 
 
+def test_async_run_command_dispatches_continuation_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: list[tuple[str, bool]] = []
+
+    async def execute(task: str, *, json_output: bool) -> int:
+        received.append((task, json_output))
+        return cli.EXIT_SUCCESS
+
+    monkeypatch.setattr(cli, "execute_run_async", execute)
+    assert cli.main(["run", "durable continuation", "--async", "--json"]) == cli.EXIT_SUCCESS
+    assert received == [("durable continuation", True)]
+
+
 def test_run_show_and_query_commands_dispatch_stable_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

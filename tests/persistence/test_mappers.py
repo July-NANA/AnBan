@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from anban.core import (
     Artifact,
     CapabilityInvocation,
+    Checkpoint,
     ContextEntry,
     ContextEntryKind,
     ContextScope,
@@ -22,6 +23,7 @@ from anban.core import (
     Task,
     new_artifact_id,
     new_capability_invocation_id,
+    new_checkpoint_id,
     new_context_entry_id,
     new_context_summary_id,
     new_event_id,
@@ -32,6 +34,8 @@ from anban.core import (
 from anban.persistence.mappers import (
     artifact_domain,
     artifact_record,
+    checkpoint_domain,
+    checkpoint_record,
     context_coverage_records,
     context_entry_domain,
     context_entry_record,
@@ -58,6 +62,7 @@ def domain_records() -> tuple[
     ExecutionRun,
     NodeRun,
     CapabilityInvocation,
+    Checkpoint,
     Artifact,
     Event,
 ]:
@@ -73,6 +78,13 @@ def domain_records() -> tuple[
         run_id=run.id,
         node_run_id=node.id,
         capability_name="process.execute",
+    )
+    checkpoint = Checkpoint(
+        id=new_checkpoint_id(),
+        run_id=run.id,
+        node_run_id=node.id,
+        invocation_id=invocation.id,
+        state_hash="b" * 64,
     )
     artifact = Artifact(
         id=new_artifact_id(),
@@ -90,18 +102,20 @@ def domain_records() -> tuple[
         node_run_id=node.id,
         invocation_id=invocation.id,
         artifact_id=artifact.id,
+        checkpoint_id=checkpoint.id,
         sequence=1,
         event_type="artifact.created",
     )
-    return task, run, node, invocation, artifact, event
+    return task, run, node, invocation, checkpoint, artifact, event
 
 
 def test_every_domain_record_round_trips_through_storage_model() -> None:
-    task, run, node, invocation, artifact, event = domain_records()
+    task, run, node, invocation, checkpoint, artifact, event = domain_records()
     assert task_domain(task_record(task)) == task
     assert run_domain(run_record(run)) == run
     assert node_domain(node_record(node)) == node
     assert invocation_domain(invocation_record(invocation)) == invocation
+    assert checkpoint_domain(checkpoint_record(checkpoint)) == checkpoint
     assert artifact_domain(artifact_record(artifact)) == artifact
     assert event_domain(event_record(event)) == event
 

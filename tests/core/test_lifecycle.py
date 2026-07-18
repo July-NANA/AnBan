@@ -9,10 +9,12 @@ import pytest
 
 from anban.core import (
     CAPABILITY_INVOCATION_TRANSITIONS,
+    CHECKPOINT_TRANSITIONS,
     EXECUTION_RUN_TRANSITIONS,
     NODE_RUN_TRANSITIONS,
     TASK_TRANSITIONS,
     CapabilityInvocationStatus,
+    CheckpointStatus,
     ErrorCategory,
     ErrorCode,
     ExecutionRunStatus,
@@ -20,6 +22,7 @@ from anban.core import (
     NodeRunStatus,
     TaskStatus,
     ensure_capability_invocation_transition,
+    ensure_checkpoint_transition,
     ensure_execution_run_transition,
     ensure_node_run_transition,
     ensure_task_transition,
@@ -43,6 +46,7 @@ from anban.core import (
             CAPABILITY_INVOCATION_TRANSITIONS,
             ensure_capability_invocation_transition,
         ),
+        ("checkpoint", CheckpointStatus, CHECKPOINT_TRANSITIONS, ensure_checkpoint_transition),
     ],
 )
 def test_every_transition_pair_is_allowed_or_fails_structurally[StatusT: StrEnum](
@@ -75,6 +79,7 @@ def test_every_transition_pair_is_allowed_or_fails_structurally[StatusT: StrEnum
         EXECUTION_RUN_TRANSITIONS,
         NODE_RUN_TRANSITIONS,
         CAPABILITY_INVOCATION_TRANSITIONS,
+        CHECKPOINT_TRANSITIONS,
     ],
 )
 def test_terminal_states_have_no_outgoing_transition(

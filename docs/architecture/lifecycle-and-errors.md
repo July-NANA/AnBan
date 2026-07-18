@@ -19,6 +19,10 @@ records never return to an active state.
 | CapabilityInvocation | `requested` | record creation | `running` |
 | CapabilityInvocation | `running` | `requested` | `succeeded`, `failed`, `cancelled`, `timed_out` |
 | CapabilityInvocation | terminal states | `running` | none |
+| Checkpoint | `waiting` | record creation | `resumed`, `cancel_requested`, `failed`, `cancelled`, `timed_out` |
+| Checkpoint | `resumed` | `waiting` | `completed`, `failed`, `cancel_requested`, `cancelled`, `timed_out` |
+| Checkpoint | `cancel_requested` | `waiting`, `resumed` | `failed`, `cancelled`, `timed_out` |
+| Checkpoint | terminal states | `waiting`, `resumed`, `cancel_requested` | none |
 
 For v0.5 background execution, `accepted` is a Capability result signal rather than a Core record
 state. The Invocation remains `running`; `capability.background_started` and one or more
@@ -67,14 +71,16 @@ The v0.1 retry surface is deliberately narrow. The model SDK may retry temporary
 up to the configured limit; this never replays a Capability. Separately, a transported but invalid
 model response may trigger at most three contract-only repair requests shared by one Agent Node.
 Events record the structural reason, attempt, repairability, exhaustion, and safe transport retry
-count without the response, Prompt, or Tool arguments. Waiting/resume and checkpoint behavior
-remain outside v0.1.
+count without the response, Prompt, or Tool arguments.
 
 The v0.5 background Process extension does not broaden automatic retry. Runtime may inspect
 bounded progress while awaiting one already-started process, and cancellation targets that exact
-Invocation. Fresh query services reconstruct accepted/progress/terminal correlation, but an
-in-flight operation is not yet recoverable after a full service-process exit; that requires the
-later durable Checkpoint and restart coordinator.
+Invocation. Async execution persists `checkpoint.created`, `checkpoint.waiting`, and `run.waiting`
+before returning control. Resume or cancel first commits its Checkpoint and Run Events, then releases
+or terminates the live execution. A failed transition write leaves the execution waiting and is safe
+to retry; a completed or uncertain Capability is never invoked again. Fresh query services
+reconstruct accepted/progress/Checkpoint/terminal correlation, but an in-flight operation is not
+yet recoverable after a full service-process exit; that requires the later restart coordinator.
 
 The v0.5 Main Agent adds bounded replanning without broadening automatic retries. Completion
 assessment is a structured Model decision, not another Capability call. A replan consumes one of a

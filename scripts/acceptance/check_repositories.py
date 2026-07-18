@@ -16,6 +16,8 @@ from anban.core import (
     Artifact,
     CapabilityInvocation,
     CapabilityInvocationStatus,
+    Checkpoint,
+    CheckpointStatus,
     ContextConflictState,
     ContextEntry,
     ContextEntryKind,
@@ -40,11 +42,13 @@ from anban.core import (
     TaskGraphValueSource,
     TaskStatus,
     ensure_capability_invocation_transition,
+    ensure_checkpoint_transition,
     ensure_execution_run_transition,
     ensure_node_run_transition,
     ensure_task_transition,
     new_artifact_id,
     new_capability_invocation_id,
+    new_checkpoint_id,
     new_context_entry_id,
     new_context_summary_id,
     new_event_id,
@@ -72,6 +76,7 @@ def records() -> tuple[
     ExecutionRun,
     NodeRun,
     CapabilityInvocation,
+    Checkpoint,
     tuple[Artifact, Artifact],
     tuple[Event, Event, Event],
 ]:
@@ -102,6 +107,14 @@ def records() -> tuple[
         run_id=run.id,
         node_run_id=node.id,
         capability_name="process.execute",
+    )
+    checkpoint = Checkpoint(
+        id=new_checkpoint_id(),
+        run_id=run.id,
+        node_run_id=node.id,
+        invocation_id=invocation.id,
+        state_hash="d" * 64,
+        metadata=SafeMetadata({"checkpoint_kind": "capability_wait"}),
     )
     artifact_one = Artifact(
         id=new_artifact_id(),
@@ -134,6 +147,7 @@ def records() -> tuple[
         run_id=run.id,
         node_run_id=node.id,
         invocation_id=invocation.id,
+        checkpoint_id=checkpoint.id,
         artifact_id=artifact_one.id,
         sequence=2,
         event_type="artifact.created",
@@ -153,6 +167,7 @@ def records() -> tuple[
         run,
         node,
         invocation,
+        checkpoint,
         (artifact_one, artifact_two),
         (event_one, event_two, event_three),
     )
@@ -183,7 +198,7 @@ def graph_spec(output_key: str) -> TaskGraphSpec:
 async def accept_repositories() -> None:
     engine = create_database_engine(load_configuration().database.require("test"))
     factory = SQLAlchemyUnitOfWorkFactory(engine)
-    task, graph_revisions, run, node, invocation, artifacts, events = records()
+    task, graph_revisions, run, node, invocation, checkpoint, artifacts, events = records()
     session_id = new_session_id()
     task_entry = ContextEntry(
         id=new_context_entry_id(),
@@ -234,6 +249,7 @@ async def accept_repositories() -> None:
             await unit.executions.add_run(run)
             await unit.executions.add_node_run(node)
             await unit.executions.add_invocation(invocation)
+            await unit.executions.add_checkpoint(checkpoint)
             for artifact in artifacts:
                 await unit.executions.add_artifact(artifact)
             for event in reversed(events):
@@ -255,6 +271,8 @@ async def accept_repositories() -> None:
                 raise RepositoryAcceptanceError("Run Graph revision reconstruction mismatch")
             if aggregate.nodes != (node,) or aggregate.invocations != (invocation,):
                 raise RepositoryAcceptanceError("Node or Invocation reconstruction mismatch")
+            if aggregate.checkpoints != (checkpoint,):
+                raise RepositoryAcceptanceError("Checkpoint reconstruction mismatch")
             if aggregate.artifacts != artifacts or aggregate.events != events:
                 raise RepositoryAcceptanceError("Artifact or Event reconstruction mismatch")
             if ordered != events:
@@ -319,17 +337,25 @@ async def accept_repositories() -> None:
         ensure_capability_invocation_transition(
             invocation.status, CapabilityInvocationStatus.RUNNING
         )
+        ensure_checkpoint_transition(checkpoint.status, CheckpointStatus.RESUMED)
         running_task = task.model_copy(update={"status": TaskStatus.RUNNING})
         running_run = run.model_copy(update={"status": ExecutionRunStatus.RUNNING})
         running_node = node.model_copy(update={"status": NodeRunStatus.RUNNING})
         running_invocation = invocation.model_copy(
             update={"status": CapabilityInvocationStatus.RUNNING}
         )
+        resumed_checkpoint = checkpoint.model_copy(
+            update={
+                "status": CheckpointStatus.RESUMED,
+                "resumed_at": checkpoint.created_at,
+            }
+        )
         async with factory() as unit:
             await unit.executions.update_task(running_task)
             await unit.executions.update_run(running_run)
             await unit.executions.update_node_run(running_node)
             await unit.executions.update_invocation(running_invocation)
+            await unit.executions.update_checkpoint(resumed_checkpoint)
             await unit.commit()
 
         async with factory() as unit:
@@ -341,6 +367,8 @@ async def accept_repositories() -> None:
                 raise RepositoryAcceptanceError("Node update was not durable")
             if await unit.executions.get_invocation(invocation.id) != running_invocation:
                 raise RepositoryAcceptanceError("Invocation update was not durable")
+            if await unit.executions.get_checkpoint(checkpoint.id) != resumed_checkpoint:
+                raise RepositoryAcceptanceError("Checkpoint update was not durable")
             for artifact in artifacts:
                 if await unit.executions.get_artifact(artifact.id) != artifact:
                     raise RepositoryAcceptanceError("Artifact read mismatch")

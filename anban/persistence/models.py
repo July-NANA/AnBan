@@ -32,7 +32,7 @@ from anban.core.context import (
 )
 from anban.core.errors import ErrorCode
 from anban.core.graph import GraphRevisionStatus
-from anban.core.models import CapabilityInvocationStatus, TaskStatus
+from anban.core.models import CapabilityInvocationStatus, CheckpointStatus, TaskStatus
 
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
@@ -49,6 +49,7 @@ def sql_enum_values(enum_type: type[StrEnum]) -> str:
 
 ACTIVE_STATUSES = sql_enum_values(TaskStatus)
 INVOCATION_STATUSES = sql_enum_values(CapabilityInvocationStatus)
+CHECKPOINT_STATUSES = sql_enum_values(CheckpointStatus)
 ERROR_CODES = sql_enum_values(ErrorCode)
 CONTEXT_SCOPES = sql_enum_values(ContextScope)
 CONTEXT_KINDS = sql_enum_values(ContextEntryKind)
@@ -220,6 +221,48 @@ class CapabilityInvocationRecord(SafeMetadataMixin, Base):
     error_code: Mapped[str | None] = mapped_column(String(64))
 
 
+class CheckpointRecord(SafeMetadataMixin, Base):
+    __tablename__ = "checkpoints"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["node_run_id", "run_id"],
+            ["node_runs.id", "node_runs.run_id"],
+            ondelete="CASCADE",
+            name="fk_checkpoints_node_run",
+        ),
+        ForeignKeyConstraint(
+            ["invocation_id", "run_id"],
+            ["capability_invocations.id", "capability_invocations.run_id"],
+            ondelete="CASCADE",
+            name="fk_checkpoints_invocation",
+        ),
+        CheckConstraint(f"status IN ({CHECKPOINT_STATUSES})", name="status_allowed"),
+        CheckConstraint("state_hash ~ '^[0-9a-f]{64}$'", name="state_hash_format"),
+        CheckConstraint(
+            f"error_code IS NULL OR error_code IN ({ERROR_CODES})", name="error_code_allowed"
+        ),
+        CheckConstraint("jsonb_typeof(metadata) = 'object'", name="metadata_object"),
+        UniqueConstraint("id", "run_id", name="uq_checkpoints_id_run_id"),
+        Index("ix_checkpoints_run_id_created_at", "run_id", "created_at"),
+        Index("ix_checkpoints_status_created_at", "status", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("execution_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    node_run_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    invocation_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    state_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+
+
 class ArtifactRecord(SafeMetadataMixin, Base):
     __tablename__ = "artifacts"
     __table_args__ = (
@@ -279,6 +322,12 @@ class EventRecord(SafeMetadataMixin, Base):
             ondelete="CASCADE",
             name="fk_events_artifact",
         ),
+        ForeignKeyConstraint(
+            ["checkpoint_id", "run_id"],
+            ["checkpoints.id", "checkpoints.run_id"],
+            ondelete="CASCADE",
+            name="fk_events_checkpoint",
+        ),
         CheckConstraint("sequence >= 1", name="sequence_positive"),
         CheckConstraint("jsonb_typeof(metadata) = 'object'", name="metadata_object"),
         UniqueConstraint("run_id", "sequence", name="uq_events_run_id_sequence"),
@@ -296,6 +345,7 @@ class EventRecord(SafeMetadataMixin, Base):
     node_run_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     invocation_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     artifact_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    checkpoint_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
 
 
 class ContextEntryRecord(SafeMetadataMixin, Base):

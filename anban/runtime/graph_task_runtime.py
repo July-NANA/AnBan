@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from anban.capability import ArtifactReference, CapabilityPort, InvocationContext
+from anban.capability import (
+    ArtifactReference,
+    CapabilityPort,
+    CapabilityResult,
+    InvocationContext,
+)
 from anban.core import ErrorCode, ErrorInfo, SafeMetadata, TaskGraphNode, TaskGraphSpec
 from anban.core.ids import new_node_run_id
 from anban.core.models import NodeRun
@@ -49,6 +54,10 @@ class PersistentGraphTaskRunner:
         response_repair_retries: int,
         artifact_cleanup: Callable[[InvocationContext, ArtifactReference], None] | None,
         metadata: SafeMetadata,
+        continuation_waiter: (
+            Callable[[InvocationContext, CapabilityResult], Awaitable[None]] | None
+        ) = None,
+        checkpoint_background: bool = False,
     ) -> None:
         self._model = model
         self._capabilities = capabilities
@@ -59,6 +68,8 @@ class PersistentGraphTaskRunner:
         self._response_repair_retries = response_repair_retries
         self._artifact_cleanup = artifact_cleanup
         self._metadata = metadata
+        self._continuation_waiter = continuation_waiter
+        self._checkpoint_background = checkpoint_background
         self._action_lock = asyncio.Lock()
         self._outcomes: list[AgentOutcome] = []
 
@@ -126,6 +137,7 @@ class PersistentGraphTaskRunner:
                     self._capabilities,
                     self._persistence,
                     artifact_cleanup=self._artifact_cleanup,
+                    checkpoint_background=self._checkpoint_background,
                 ),
                 sufficiency=self._sufficiency,
                 completion=(CompletionEvaluator() if self._sufficiency is not None else None),
@@ -133,6 +145,7 @@ class PersistentGraphTaskRunner:
                 observation_observer=self._persistence.agent_observed,
                 completion_observer=self._persistence.agent_completion_assessed,
                 replan_observer=self._persistence.agent_replan_decided,
+                continuation_waiter=self._continuation_waiter,
                 limits=self._limits,
                 response_repair_retries=self._response_repair_retries,
             )

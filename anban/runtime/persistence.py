@@ -44,6 +44,7 @@ from anban.runtime.agent_event_facts import (
     replan_event_facts,
     sufficiency_event_facts,
 )
+from anban.runtime.checkpoint_persistence import CheckpointPersistence
 from anban.runtime.contracts import (
     AgentObservation,
     AgentOutcome,
@@ -135,6 +136,7 @@ class RunPersistence:
         self.run = run
         self.node = node
         self._sequence = 0
+        self.checkpoints = CheckpointPersistence(factory, self._write)
 
     async def initialize(self) -> None:
         async def operation(repository: ExecutionRepository) -> None:
@@ -781,6 +783,7 @@ class RunPersistence:
             node_run_id=fact.node_run_id,
             invocation_id=fact.invocation_id,
             artifact_id=fact.artifact_id,
+            checkpoint_id=fact.checkpoint_id,
             metadata=fact.metadata,
         )
 

@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from anban.capability import ArtifactReference
 from anban.config import policy
 from anban.core.errors import ErrorInfo
-from anban.core.ids import ExecutionRunId, NodeRunId, SessionId, TaskId
+from anban.core.ids import (
+    CapabilityInvocationId,
+    CheckpointId,
+    ExecutionRunId,
+    NodeRunId,
+    SessionId,
+    TaskId,
+)
 from anban.core.metadata import SafeMetadata, validate_safe_text
 from anban.core.models import UtcDateTime, now_utc
 
@@ -456,3 +463,15 @@ class ExecutionResult(RuntimeValue):
     node_run_id: NodeRunId
     outcome: AgentOutcome
     persisted: bool
+
+
+class WaitingExecution(RuntimeValue):
+    """One durable pause returned before the Run reaches a terminal result."""
+
+    status: Literal[MainAgentPhase.WAITING] = MainAgentPhase.WAITING
+    task_id: TaskId
+    run_id: ExecutionRunId
+    node_run_id: NodeRunId
+    invocation_id: CapabilityInvocationId
+    checkpoint_id: CheckpointId
+    persisted: Literal[True] = True

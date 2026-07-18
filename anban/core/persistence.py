@@ -11,6 +11,7 @@ from anban.core.graph import GraphRevision
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    CheckpointId,
     ContextEntryId,
     EventId,
     ExecutionRunId,
@@ -22,6 +23,7 @@ from anban.core.ids import (
 from anban.core.models import (
     Artifact,
     CapabilityInvocation,
+    Checkpoint,
     Event,
     ExecutionRun,
     NodeRun,
@@ -38,6 +40,7 @@ class ExecutionRunAggregate:
     graph_revision: GraphRevision | None
     nodes: tuple[NodeRun, ...]
     invocations: tuple[CapabilityInvocation, ...]
+    checkpoints: tuple[Checkpoint, ...]
     artifacts: tuple[Artifact, ...]
     events: tuple[Event, ...]
 
@@ -72,6 +75,14 @@ class ExecutionRepository(Protocol):
     async def add_invocation(self, invocation: CapabilityInvocation) -> None: ...
 
     async def update_invocation(self, invocation: CapabilityInvocation) -> None: ...
+
+    async def add_checkpoint(self, checkpoint: Checkpoint) -> None: ...
+
+    async def get_checkpoint(self, checkpoint_id: CheckpointId) -> Checkpoint | None: ...
+
+    async def update_checkpoint(self, checkpoint: Checkpoint) -> None: ...
+
+    async def list_checkpoints(self, run_id: ExecutionRunId) -> tuple[Checkpoint, ...]: ...
 
     async def add_artifact(self, artifact: Artifact) -> None: ...
 

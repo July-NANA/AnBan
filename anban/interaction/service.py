@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from anban.core.ids import ExecutionRunId, SessionId, TaskId
+from anban.core.ids import CheckpointId, ExecutionRunId, SessionId, TaskId
 from anban.core.metadata import SafeMetadata, SafeScalar
 from anban.interaction.contracts import (
     InteractionEnvelope,
@@ -19,6 +19,7 @@ from anban.runtime import (
     RunDetail,
     RunObservability,
     RunSummary,
+    WaitingExecution,
 )
 
 
@@ -112,6 +113,21 @@ class InteractionService:
             envelope.content,
             metadata=interaction_metadata(envelope),
         )
+
+    async def start_async(
+        self, envelope: InteractionEnvelope
+    ) -> WaitingExecution | ExecutionResult:
+        require_existing_cli_path(envelope)
+        return await self._runtime_service().start_async(
+            envelope.content,
+            metadata=interaction_metadata(envelope),
+        )
+
+    async def resume_async(self, checkpoint_id: CheckpointId) -> WaitingExecution | ExecutionResult:
+        return await self._runtime_service().resume_async(checkpoint_id)
+
+    async def cancel_async(self, checkpoint_id: CheckpointId) -> ExecutionResult:
+        return await self._runtime_service().cancel_async(checkpoint_id)
 
     def chat(self) -> InteractionChatSession:
         return InteractionChatSession(self._runtime_service().chat())

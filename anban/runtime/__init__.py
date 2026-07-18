@@ -19,6 +19,7 @@ from anban.runtime.contracts import (
     ReplanDecision,
     SkillAcquisitionJustification,
     SufficiencyCandidate,
+    WaitingExecution,
 )
 from anban.runtime.graph_builder import (
     CompiledTaskGraph,
@@ -45,6 +46,7 @@ from anban.runtime.graph_routing import (
 )
 from anban.runtime.inspection import (
     ArtifactDetail,
+    CheckpointDetail,
     ContextDetail,
     ContextEntryDetail,
     ContextSummaryDetail,
@@ -81,6 +83,7 @@ __all__ = [
     "ContextDetail",
     "ContextEntryDetail",
     "ContextSummaryDetail",
+    "CheckpointDetail",
     "ExecutionQueryService",
     "ExecutionResult",
     "ExecutionStrategy",
@@ -117,4 +120,5 @@ __all__ = [
     "TaskRouteDecision",
     "TaskRouteEvaluator",
     "TraceEntry",
+    "WaitingExecution",
 ]

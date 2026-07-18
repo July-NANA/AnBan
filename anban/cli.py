@@ -29,6 +29,7 @@ from anban.runtime import (
     RunDetail,
     RunObservability,
     RunSummary,
+    WaitingExecution,
 )
 from anban.workspace import WorkspaceInitialization, initialize_workspace
 from scripts.workspace_bootstrap import WorkspaceResolutionError
@@ -50,6 +51,7 @@ def parser() -> argparse.ArgumentParser:
     add_json_option(workspace_init)
     run = commands.add_parser("run", help="Execute one durable task.")
     run.add_argument("values", nargs="+")
+    run.add_argument("--async", dest="async_mode", action="store_true")
     add_json_option(run)
     chat = commands.add_parser("chat", help="Start one bounded temporary chat.")
     add_json_option(chat)
@@ -104,6 +106,28 @@ async def execute_run(task: str, *, json_output: bool) -> int:
         await application.close()
     emit_result(result, json_output=json_output)
     return result_exit_code(result)
+
+
+async def execute_run_async(task: str, *, json_output: bool) -> int:
+    application = await build_application()
+    waiting: WaitingExecution | None = None
+    try:
+        current = await application.interactions.start_async(envelope(task))
+        while isinstance(current, WaitingExecution):
+            waiting = current
+            emit_waiting(waiting, json_output=json_output)
+            current = await application.interactions.resume_async(waiting.checkpoint_id)
+        emit_result(current, json_output=json_output)
+        return result_exit_code(current)
+    except asyncio.CancelledError:
+        if waiting is not None:
+            terminal = await asyncio.shield(
+                application.interactions.cancel_async(waiting.checkpoint_id)
+            )
+            emit_result(terminal, json_output=json_output)
+        raise
+    finally:
+        await asyncio.shield(application.close())
 
 
 async def execute_chat(*, json_output: bool) -> int:
@@ -281,6 +305,15 @@ def emit_result(result: ExecutionResult, *, json_output: bool) -> None:
         print(f"Run: {result.run_id}", file=sys.stderr)
 
 
+def emit_waiting(waiting: WaitingExecution, *, json_output: bool) -> None:
+    payload = waiting.model_dump(mode="json")
+    if json_output:
+        print(json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
+    else:
+        print(f"Waiting: {waiting.checkpoint_id}")
+        print(f"Run: {waiting.run_id}")
+
+
 def emit_workspace(result: WorkspaceInitialization, *, json_output: bool) -> None:
     payload = {
         "status": "initialized",
@@ -336,6 +369,9 @@ def emit_run_detail(detail: RunDetail, *, json_output: bool) -> None:
     print("Invocations:")
     for invocation in detail.invocations:
         print(f"  {invocation.id}  {invocation.capability_name}  {invocation.status.value}")
+    print("Checkpoints:")
+    for checkpoint in detail.checkpoints:
+        print(f"  {checkpoint.id}  {checkpoint.status.value}  {checkpoint.invocation_id}")
     print(f"Artifacts: {len(detail.artifacts)}")
     print(f"Trace complete: {str(detail.observability.complete).lower()}")
 
@@ -359,6 +395,7 @@ def emit_trace(trace: RunObservability, *, json_output: bool) -> None:
                 None if entry.node_run_id is None else f"node={entry.node_run_id}",
                 None if entry.invocation_id is None else f"invocation={entry.invocation_id}",
                 None if entry.artifact_id is None else f"artifact={entry.artifact_id}",
+                None if entry.checkpoint_id is None else f"checkpoint={entry.checkpoint_id}",
             )
             if value is not None
         ]
@@ -475,9 +512,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.command == "run":
             values = list(arguments.values)
             if values[0] == "show":
-                if len(values) != 2:
+                if len(values) != 2 or arguments.async_mode:
                     raise ValueError("run show requires one Run ID")
                 return asyncio.run(show_run(parse_run_id(values[1]), json_output=json_output))
+            if arguments.async_mode:
+                return asyncio.run(execute_run_async(" ".join(values), json_output=json_output))
             return asyncio.run(execute_run(" ".join(values), json_output=json_output))
         if arguments.command == "chat":
             return asyncio.run(execute_chat(json_output=json_output))

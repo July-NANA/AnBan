@@ -14,6 +14,7 @@ from anban.core.graph import GraphRevision
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    CheckpointId,
     ContextEntryId,
     EventId,
     ExecutionRunId,
@@ -24,6 +25,7 @@ from anban.core.ids import (
 )
 from anban.core.lifecycle import (
     ensure_capability_invocation_transition,
+    ensure_checkpoint_transition,
     ensure_execution_run_transition,
     ensure_node_run_transition,
     ensure_task_transition,
@@ -33,6 +35,8 @@ from anban.core.models import (
     Artifact,
     CapabilityInvocation,
     CapabilityInvocationStatus,
+    Checkpoint,
+    CheckpointStatus,
     Event,
     ExecutionRun,
     ExecutionRunStatus,
@@ -45,6 +49,8 @@ from anban.core.persistence import ExecutionRunAggregate
 from anban.persistence.mappers import (
     artifact_domain,
     artifact_record,
+    checkpoint_domain,
+    checkpoint_record,
     context_coverage_records,
     context_entry_domain,
     context_entry_record,
@@ -66,6 +72,7 @@ from anban.persistence.mappers import (
 from anban.persistence.models import (
     ArtifactRecord,
     CapabilityInvocationRecord,
+    CheckpointRecord,
     ContextEntryRecord,
     ContextSummaryCoverageRecord,
     ContextSummaryRecord,
@@ -253,6 +260,36 @@ class SQLAlchemyExecutionRepository:
         record.error_code = None if invocation.error_code is None else invocation.error_code.value
         record.safe_metadata = dict(invocation.metadata.root)
 
+    async def add_checkpoint(self, checkpoint: Checkpoint) -> None:
+        self._session.add(checkpoint_record(checkpoint))
+        await self._session.flush()
+
+    async def get_checkpoint(self, checkpoint_id: CheckpointId) -> Checkpoint | None:
+        record = await self._session.get(CheckpointRecord, checkpoint_id)
+        return None if record is None else checkpoint_domain(record)
+
+    async def update_checkpoint(self, checkpoint: Checkpoint) -> None:
+        result = await self._session.execute(
+            select(CheckpointRecord).where(CheckpointRecord.id == checkpoint.id).with_for_update()
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            raise missing_record("checkpoint", checkpoint.id)
+        ensure_checkpoint_transition(CheckpointStatus(record.status), checkpoint.status)
+        record.status = checkpoint.status.value
+        record.resumed_at = checkpoint.resumed_at
+        record.finished_at = checkpoint.finished_at
+        record.error_code = None if checkpoint.error_code is None else checkpoint.error_code.value
+        record.safe_metadata = dict(checkpoint.metadata.root)
+
+    async def list_checkpoints(self, run_id: ExecutionRunId) -> tuple[Checkpoint, ...]:
+        records = await self._session.scalars(
+            select(CheckpointRecord)
+            .where(CheckpointRecord.run_id == run_id)
+            .order_by(CheckpointRecord.created_at, CheckpointRecord.id)
+        )
+        return tuple(checkpoint_domain(record) for record in records.all())
+
     async def add_artifact(self, artifact: Artifact) -> None:
         self._session.add(artifact_record(artifact))
         await self._session.flush()
@@ -413,6 +450,7 @@ class SQLAlchemyExecutionRepository:
             graph_revision=graph_revision,
             nodes=tuple(node_domain(record) for record in node_records.all()),
             invocations=tuple(invocation_domain(record) for record in invocation_records.all()),
+            checkpoints=await self.list_checkpoints(run_id),
             artifacts=tuple(artifact_domain(record) for record in artifact_records.all()),
             events=await self.list_events(run_id),
         )

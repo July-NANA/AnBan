@@ -14,6 +14,7 @@ CapabilityInvocationId = NewType("CapabilityInvocationId", UUID)
 ArtifactId = NewType("ArtifactId", UUID)
 EventId = NewType("EventId", UUID)
 GraphRevisionId = NewType("GraphRevisionId", UUID)
+CheckpointId = NewType("CheckpointId", UUID)
 ContextEntryId = NewType("ContextEntryId", UUID)
 ContextSummaryId = NewType("ContextSummaryId", UUID)
 
@@ -52,6 +53,10 @@ def new_event_id() -> EventId:
 
 def new_graph_revision_id() -> GraphRevisionId:
     return GraphRevisionId(uuid4())
+
+
+def new_checkpoint_id() -> CheckpointId:
+    return CheckpointId(uuid4())
 
 
 def new_context_entry_id() -> ContextEntryId:

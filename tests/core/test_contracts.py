@@ -11,6 +11,8 @@ from pydantic import ValidationError
 from anban.core import (
     Artifact,
     CapabilityInvocation,
+    Checkpoint,
+    CheckpointStatus,
     Event,
     ExecutionRun,
     ExecutionRunId,
@@ -20,6 +22,7 @@ from anban.core import (
     TaskId,
     new_artifact_id,
     new_capability_invocation_id,
+    new_checkpoint_id,
     new_event_id,
     new_execution_run_id,
     new_graph_revision_id,
@@ -97,6 +100,29 @@ def test_domain_graph_serializes_and_restores_relationships() -> None:
     assert invocation.node_run_id == node.id
     assert artifact.invocation_id == invocation.id
     assert event.artifact_id == artifact.id
+
+
+def test_checkpoint_requires_correlated_waiting_and_terminal_state() -> None:
+    _, run, node, invocation, _, _ = domain_records()
+    checkpoint = Checkpoint(
+        id=new_checkpoint_id(),
+        run_id=run.id,
+        node_run_id=node.id,
+        invocation_id=invocation.id,
+        state_hash="c" * 64,
+    )
+
+    assert Checkpoint.model_validate_json(checkpoint.model_dump_json()) == checkpoint
+    with pytest.raises(ValidationError, match="resume timestamp"):
+        Checkpoint.model_validate({**checkpoint.model_dump(), "status": CheckpointStatus.RESUMED})
+    with pytest.raises(ValidationError, match="terminal timestamp"):
+        Checkpoint.model_validate(
+            {
+                **checkpoint.model_dump(),
+                "status": CheckpointStatus.COMPLETED,
+                "resumed_at": checkpoint.created_at,
+            }
+        )
 
 
 def test_timestamps_are_normalized_to_utc() -> None:

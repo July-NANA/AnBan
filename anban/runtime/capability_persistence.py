@@ -21,6 +21,7 @@ from anban.capability import (
     InvocationContext,
 )
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
+from anban.core.ids import CheckpointId
 from anban.core.metadata import SafeMetadata, SafeScalar
 from anban.runtime.persistence import RunPersistence
 
@@ -37,11 +38,14 @@ class PersistedCapabilityPort:
         persistence: RunPersistence,
         *,
         artifact_cleanup: ArtifactCleanup | None = None,
+        checkpoint_background: bool = False,
     ) -> None:
         self._inner = inner
         self._persistence = persistence
         self._artifact_cleanup = artifact_cleanup
         self._background_names: dict[str, str] = {}
+        self._checkpoint_background = checkpoint_background
+        self._checkpoint_ids: dict[str, CheckpointId] = {}
 
     def search(self, query: str | None = None) -> tuple[CapabilityDescriptor, ...]:
         return self._inner.search(query)
@@ -99,6 +103,19 @@ class PersistedCapabilityPort:
                         metadata=result.metadata,
                     ),
                 )
+                if self._checkpoint_background:
+                    checkpoint = await self._persistence.checkpoints.begin(name, context)
+                    self._checkpoint_ids[str(context.invocation_id)] = checkpoint.id
+                    result = result.model_copy(
+                        update={
+                            "metadata": SafeMetadata(
+                                {
+                                    **result.metadata.root,
+                                    "checkpoint_id": str(checkpoint.id),
+                                }
+                            )
+                        }
+                    )
             except Exception:
                 await self._abort_background(name, context)
                 raise
@@ -121,14 +138,14 @@ class PersistedCapabilityPort:
                 code=ErrorCode.EXECUTION_INTERRUPTED,
                 message="Capability execution was interrupted",
             )
-            await self._persist_terminal(
+            await self._terminalize_background(
                 name,
                 context,
                 CapabilityResult(status=CapabilityResultStatus.CANCELLED, error=error),
             )
             raise
         except AnbanError as exc:
-            await self._persist_terminal(
+            await self._terminalize_background(
                 name,
                 context,
                 CapabilityResult(status=CapabilityResultStatus.FAILED, error=exc.info),
@@ -139,16 +156,13 @@ class PersistedCapabilityPort:
                 code=ErrorCode.CAPABILITY_EXECUTION_FAILED,
                 message="Capability result wait failed",
             )
-            await self._persist_terminal(
+            await self._terminalize_background(
                 name,
                 context,
                 CapabilityResult(status=CapabilityResultStatus.FAILED, error=error),
             )
             raise AnbanError(error) from None
-        try:
-            await self._persist_terminal(name, context, result)
-        finally:
-            self._background_names.pop(str(context.invocation_id), None)
+        await self._terminalize_background(name, context, result)
         return result
 
     async def _persist_terminal(
@@ -229,8 +243,30 @@ class PersistedCapabilityPort:
         result = await self._inner.wait(context)
         try:
             await self._persist_terminal(name, context, result)
+            await self._finish_checkpoint(context, result)
         finally:
             self._background_names.pop(str(context.invocation_id), None)
+            self._checkpoint_ids.pop(str(context.invocation_id), None)
+
+    async def _finish_checkpoint(
+        self, context: InvocationContext, result: CapabilityResult
+    ) -> None:
+        checkpoint_id = self._checkpoint_ids.get(str(context.invocation_id))
+        if checkpoint_id is not None:
+            await self._persistence.checkpoints.finish(checkpoint_id, result)
+
+    async def _terminalize_background(
+        self,
+        name: str,
+        context: InvocationContext,
+        result: CapabilityResult,
+    ) -> None:
+        try:
+            await self._persist_terminal(name, context, result)
+            await self._finish_checkpoint(context, result)
+        finally:
+            self._background_names.pop(str(context.invocation_id), None)
+            self._checkpoint_ids.pop(str(context.invocation_id), None)
 
 
 def error_with_details(error: ErrorInfo, **details: SafeScalar) -> ErrorInfo:

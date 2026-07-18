@@ -11,6 +11,7 @@ from anban.core.graph import GraphRevision
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    CheckpointId,
     ContextEntryId,
     ContextSummaryId,
     EventId,
@@ -20,7 +21,15 @@ from anban.core.ids import (
     SessionId,
     TaskId,
 )
-from anban.core.models import Artifact, CapabilityInvocation, Event, ExecutionRun, NodeRun, Task
+from anban.core.models import (
+    Artifact,
+    CapabilityInvocation,
+    Checkpoint,
+    Event,
+    ExecutionRun,
+    NodeRun,
+    Task,
+)
 from anban.core.persistence import ExecutionRunAggregate
 
 
@@ -36,6 +45,9 @@ class MemoryStore:
     nodes: dict[NodeRunId, NodeRun] = field(default_factory=lambda: dict[NodeRunId, NodeRun]())
     invocations: dict[CapabilityInvocationId, CapabilityInvocation] = field(
         default_factory=lambda: dict[CapabilityInvocationId, CapabilityInvocation]()
+    )
+    checkpoints: dict[CheckpointId, Checkpoint] = field(
+        default_factory=lambda: dict[CheckpointId, Checkpoint]()
     )
     artifacts: dict[ArtifactId, Artifact] = field(
         default_factory=lambda: dict[ArtifactId, Artifact]()
@@ -55,6 +67,7 @@ class MemoryStore:
             graph_revisions=dict(self.graph_revisions),
             nodes=dict(self.nodes),
             invocations=dict(self.invocations),
+            checkpoints=dict(self.checkpoints),
             artifacts=dict(self.artifacts),
             events=dict(self.events),
             context_entries=dict(self.context_entries),
@@ -145,6 +158,31 @@ class MemoryRepository:
     async def update_invocation(self, invocation: CapabilityInvocation) -> None:
         self.store.invocations[invocation.id] = invocation
 
+    async def add_checkpoint(self, checkpoint: Checkpoint) -> None:
+        if checkpoint.id in self.store.checkpoints:
+            raise RuntimeError("test-only duplicate Checkpoint")
+        self.store.checkpoints[checkpoint.id] = checkpoint
+
+    async def get_checkpoint(self, checkpoint_id: CheckpointId) -> Checkpoint | None:
+        return self.store.checkpoints.get(checkpoint_id)
+
+    async def update_checkpoint(self, checkpoint: Checkpoint) -> None:
+        if checkpoint.id not in self.store.checkpoints:
+            raise RuntimeError("test-only missing Checkpoint")
+        self.store.checkpoints[checkpoint.id] = checkpoint
+
+    async def list_checkpoints(self, run_id: ExecutionRunId) -> tuple[Checkpoint, ...]:
+        return tuple(
+            sorted(
+                (
+                    checkpoint
+                    for checkpoint in self.store.checkpoints.values()
+                    if checkpoint.run_id == run_id
+                ),
+                key=lambda checkpoint: (checkpoint.created_at, checkpoint.id),
+            )
+        )
+
     async def add_artifact(self, artifact: Artifact) -> None:
         if self.factory.fail_add_artifact:
             self.factory.fail_add_artifact = False
@@ -212,6 +250,7 @@ class MemoryRepository:
                 for invocation in self.store.invocations.values()
                 if invocation.run_id == run_id
             ),
+            checkpoints=await self.list_checkpoints(run_id),
             artifacts=tuple(
                 artifact for artifact in self.store.artifacts.values() if artifact.run_id == run_id
             ),

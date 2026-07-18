@@ -7,6 +7,7 @@ from pydantic import Field
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    CheckpointId,
     ExecutionRunId,
     NodeRunId,
 )
@@ -21,6 +22,7 @@ _AUDIT_EVENT_PREFIXES = (
     "model.",
     "skill.",
     "capability.",
+    "checkpoint.",
     "context.",
     "graph.",
     "artifact.",
@@ -47,6 +49,8 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "capability_call_count",
         "capability_name",
         "choice_count",
+        "checkpoint_kind",
+        "checkpoint_status",
         "command",
         "content_empty",
         "content_present",
@@ -117,6 +121,7 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "side_effect_completed",
         "size_bytes",
         "status_code",
+        "state_hash",
         "strategy",
         "substantial_temporary_code",
         "sufficient",
@@ -153,6 +158,7 @@ class TraceEntry(RuntimeValue):
     node_run_id: NodeRunId | None = None
     invocation_id: CapabilityInvocationId | None = None
     artifact_id: ArtifactId | None = None
+    checkpoint_id: CheckpointId | None = None
     metadata: SafeMetadata = Field(default_factory=SafeMetadata)
 
 
@@ -194,6 +200,7 @@ def trace_entry(event: Event) -> TraceEntry:
         node_run_id=event.node_run_id,
         invocation_id=event.invocation_id,
         artifact_id=event.artifact_id,
+        checkpoint_id=event.checkpoint_id,
         metadata=SafeMetadata(
             {
                 key: value
@@ -217,6 +224,7 @@ def inspect_consistency(
     nodes = {node.id: node for node in aggregate.nodes}
     invocations = {invocation.id: invocation for invocation in aggregate.invocations}
     artifacts = {artifact.id: artifact for artifact in aggregate.artifacts}
+    checkpoints = {checkpoint.id: checkpoint for checkpoint in aggregate.checkpoints}
     if any(node.run_id != aggregate.run.id for node in nodes.values()):
         issues.add("node_run_mismatch")
     if any(
@@ -233,6 +241,13 @@ def inspect_consistency(
         for artifact in artifacts.values()
     ):
         issues.add("artifact_correlation_invalid")
+    if any(
+        checkpoint.run_id != aggregate.run.id
+        or checkpoint.node_run_id not in nodes
+        or checkpoint.invocation_id not in invocations
+        for checkpoint in checkpoints.values()
+    ):
+        issues.add("checkpoint_correlation_invalid")
     for event in events:
         if event.event_type.startswith(("node.", "model.")) and event.node_run_id is None:
             issues.add("event_node_missing")
@@ -240,6 +255,8 @@ def inspect_consistency(
             issues.add("event_invocation_missing")
         if event.event_type == "artifact.created" and event.artifact_id is None:
             issues.add("event_artifact_missing")
+        if event.event_type.startswith("checkpoint.") and event.checkpoint_id is None:
+            issues.add("event_checkpoint_missing")
         if event.node_run_id is not None and event.node_run_id not in nodes:
             issues.add("event_node_missing")
         if event.invocation_id is not None:
@@ -258,6 +275,18 @@ def inspect_consistency(
                 issues.add("event_artifact_missing")
             elif artifact.run_id != aggregate.run.id:
                 issues.add("event_artifact_mismatch")
+        if event.checkpoint_id is not None:
+            checkpoint = checkpoints.get(event.checkpoint_id)
+            if checkpoint is None:
+                issues.add("event_checkpoint_missing")
+            elif (
+                checkpoint.run_id != aggregate.run.id
+                or event.node_run_id is not None
+                and checkpoint.node_run_id != event.node_run_id
+                or event.invocation_id is not None
+                and checkpoint.invocation_id != event.invocation_id
+            ):
+                issues.add("event_checkpoint_mismatch")
 
     artifact_events = [event for event in events if event.event_type == "artifact.created"]
     if len(artifact_events) != len(artifacts) or {
@@ -297,6 +326,11 @@ def inspect_consistency(
         issues.add("node_incomplete")
     if any(invocation.status.value not in _TERMINAL for invocation in aggregate.invocations):
         issues.add("invocation_incomplete")
+    if any(
+        checkpoint.status.value not in {"completed", "failed", "cancelled", "timed_out"}
+        for checkpoint in aggregate.checkpoints
+    ):
+        issues.add("checkpoint_incomplete")
     final_type = "run.final" if aggregate.run.status.value == "succeeded" else "run.error"
     if not any(event.event_type == final_type for event in events):
         issues.add("terminal_event_missing")

@@ -5,6 +5,13 @@ The production CLI commands include `workspace init`, `run`, `chat`, `runs`, `tr
 supports `--json`. Run failures use stable error codes; Trace, Artifact, and Context queries work
 from a new database-only Application.
 
+`anban run --async <request>` uses the ordinary Interaction and Runtime Composition Root. It emits
+each durable waiting Checkpoint, resumes it, and emits the eventual terminal result; it does not
+reinvoke the accepted Capability. `anban run show <run-id>` lists bounded Checkpoint projections,
+and `anban trace <run-id>` includes their Run, Node, Invocation, and Checkpoint correlations. The
+current command can continue only while the originating service process remains alive; full
+process-exit recovery is a separate delivery.
+
 `capabilities list` returns a point-in-time snapshot. `capabilities search [TEXT]` accepts repeated
 `--kind`, `--available-only`, and a bounded `--limit`. `capabilities describe KEY` requires an
 exact inventory key and fails explicitly for unknown keys. These commands compose the current

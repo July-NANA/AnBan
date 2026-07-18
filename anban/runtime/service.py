@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
 from pydantic import JsonValue
@@ -12,12 +12,14 @@ from anban.capability import (
     ArtifactReference,
     CapabilityInventoryPort,
     CapabilityPort,
+    CapabilityResult,
     InvocationContext,
 )
 from anban.config import policy
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.graph import GraphRevision
 from anban.core.ids import (
+    CheckpointId,
     SessionId,
     new_execution_run_id,
     new_node_run_id,
@@ -31,6 +33,11 @@ from anban.model import ModelPort
 from anban.runtime.agent import FixedGeneralAgent
 from anban.runtime.capability_persistence import PersistedCapabilityPort
 from anban.runtime.completion import CompletionEvaluator
+from anban.runtime.continuation import (
+    ContinuationControl,
+    ContinuationManager,
+    ContinuationResult,
+)
 from anban.runtime.contracts import (
     AgentInput,
     AgentLimits,
@@ -88,6 +95,7 @@ class PersistentRuntime:
         self._artifact_cleanup = artifact_cleanup
         self._route_evaluator = route_evaluator
         self._graph_executor = graph_executor or TaskGraphExecutor()
+        self._continuations = ContinuationManager()
 
     @property
     def inventory(self) -> CapabilityInventoryPort:
@@ -103,6 +111,28 @@ class PersistentRuntime:
 
     async def execute(
         self, request: str, *, metadata: SafeMetadata | None = None
+    ) -> ExecutionResult:
+        return await self._execute(request, metadata=metadata)
+
+    async def start_async(
+        self, request: str, *, metadata: SafeMetadata | None = None
+    ) -> ContinuationResult:
+        return await self._continuations.start(
+            lambda control: self._execute(request, metadata=metadata, continuation=control)
+        )
+
+    async def resume_async(self, checkpoint_id: CheckpointId) -> ContinuationResult:
+        return await self._continuations.resume(checkpoint_id)
+
+    async def cancel_async(self, checkpoint_id: CheckpointId) -> ExecutionResult:
+        return await self._continuations.cancel(checkpoint_id)
+
+    async def _execute(
+        self,
+        request: str,
+        *,
+        metadata: SafeMetadata | None = None,
+        continuation: ContinuationControl | None = None,
     ) -> ExecutionResult:
         safe_metadata = metadata or SafeMetadata()
         task = Task(id=new_task_id(), request=request, metadata=safe_metadata)
@@ -214,6 +244,8 @@ class PersistentRuntime:
                     response_repair_retries=self._response_repair_retries,
                     artifact_cleanup=self._artifact_cleanup,
                     metadata=safe_metadata,
+                    continuation_waiter=self._continuation_waiter(continuation, persistence),
+                    checkpoint_background=continuation is not None,
                 )
                 graph_input: dict[str, JsonValue] = (
                     {TASK_REQUEST_INPUT: request}
@@ -226,16 +258,16 @@ class PersistentRuntime:
                     routing_model_turns=decision.model_turn_count,
                 )
             else:
-                outcome = await self._fixed_agent(persisted_model, persistence).execute(
-                    AgentInput(request=request, run_id=run.id, node_run_id=node.id)
-                )
+                outcome = await self._fixed_agent(
+                    persisted_model, persistence, continuation
+                ).execute(AgentInput(request=request, run_id=run.id, node_run_id=node.id))
                 outcome = outcome.model_copy(
                     update={
                         "model_turn_count": outcome.model_turn_count + decision.model_turn_count
                     }
                 )
         else:
-            outcome = await self._fixed_agent(persisted_model, persistence).execute(
+            outcome = await self._fixed_agent(persisted_model, persistence, continuation).execute(
                 AgentInput(request=request, run_id=run.id, node_run_id=node.id)
             )
         try:
@@ -273,6 +305,7 @@ class PersistentRuntime:
         self,
         model: ModelPort,
         persistence: RunPersistence,
+        continuation: ContinuationControl | None = None,
     ) -> FixedGeneralAgent:
         return FixedGeneralAgent(
             model,
@@ -280,6 +313,7 @@ class PersistentRuntime:
                 self._capabilities,
                 persistence,
                 artifact_cleanup=self._artifact_cleanup,
+                checkpoint_background=continuation is not None,
             ),
             sufficiency=self._sufficiency,
             completion=(CompletionEvaluator() if self._sufficiency is not None else None),
@@ -287,9 +321,23 @@ class PersistentRuntime:
             observation_observer=persistence.agent_observed,
             completion_observer=persistence.agent_completion_assessed,
             replan_observer=persistence.agent_replan_decided,
+            continuation_waiter=self._continuation_waiter(continuation, persistence),
             limits=self._limits,
             response_repair_retries=self._response_repair_retries,
         )
+
+    @staticmethod
+    def _continuation_waiter(
+        continuation: ContinuationControl | None,
+        persistence: RunPersistence,
+    ) -> Callable[[InvocationContext, CapabilityResult], Awaitable[None]] | None:
+        if continuation is None:
+            return None
+
+        async def wait(context: InvocationContext, result: CapabilityResult) -> None:
+            await continuation.pause(context, result, persistence)
+
+        return wait
 
     def chat(self) -> PersistentChatSession:
         return PersistentChatSession(

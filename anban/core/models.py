@@ -13,6 +13,7 @@ from anban.core.errors import ErrorCode
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    CheckpointId,
     EventId,
     ExecutionRunId,
     GraphRevisionId,
@@ -77,6 +78,16 @@ class CapabilityInvocationStatus(StrEnum):
     TIMED_OUT = "timed_out"
 
 
+class CheckpointStatus(StrEnum):
+    WAITING = "waiting"
+    RESUMED = "resumed"
+    CANCEL_REQUESTED = "cancel_requested"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
+
+
 class DomainModel(BaseModel):
     """Strict immutable base for domain values."""
 
@@ -134,6 +145,45 @@ class CapabilityInvocation(DomainModel):
     metadata: SafeMetadata = Field(default_factory=SafeMetadata)
 
 
+class Checkpoint(DomainModel):
+    """Durable coordination fact for one paused Capability continuation."""
+
+    id: CheckpointId
+    run_id: ExecutionRunId
+    node_run_id: NodeRunId
+    invocation_id: CapabilityInvocationId
+    status: CheckpointStatus = CheckpointStatus.WAITING
+    state_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: UtcDateTime = Field(default_factory=now_utc)
+    resumed_at: UtcDateTime | None = None
+    finished_at: UtcDateTime | None = None
+    error_code: ErrorCode | None = None
+    metadata: SafeMetadata = Field(default_factory=SafeMetadata)
+
+    @model_validator(mode="after")
+    def validate_checkpoint_state(self) -> Self:
+        terminal = self.status in {
+            CheckpointStatus.COMPLETED,
+            CheckpointStatus.FAILED,
+            CheckpointStatus.CANCELLED,
+            CheckpointStatus.TIMED_OUT,
+        }
+        if (self.resumed_at is not None) != (self.status is not CheckpointStatus.WAITING):
+            raise ValueError("Checkpoint resume timestamp disagrees with status")
+        if terminal != (self.finished_at is not None):
+            raise ValueError("Checkpoint terminal timestamp disagrees with status")
+        if (self.error_code is not None) != (
+            self.status
+            in {
+                CheckpointStatus.FAILED,
+                CheckpointStatus.CANCELLED,
+                CheckpointStatus.TIMED_OUT,
+            }
+        ):
+            raise ValueError("Checkpoint error code disagrees with status")
+        return self
+
+
 class Artifact(DomainModel):
     id: ArtifactId
     run_id: ExecutionRunId
@@ -164,4 +214,5 @@ class Event(DomainModel):
     node_run_id: NodeRunId | None = None
     invocation_id: CapabilityInvocationId | None = None
     artifact_id: ArtifactId | None = None
+    checkpoint_id: CheckpointId | None = None
     metadata: SafeMetadata = Field(default_factory=SafeMetadata)

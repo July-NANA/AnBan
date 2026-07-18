@@ -27,6 +27,7 @@ from anban.runtime import (
     ExecutionResult,
     RunDetail,
     RunObservability,
+    WaitingExecution,
 )
 from anban.workspace import default_configuration_text
 from scripts.workspace_bootstrap import resolve_workspace
@@ -269,12 +270,16 @@ def isolated_environment(root: Path, source: AnbanConfiguration) -> Generator[No
                 os.environ[name] = value
 
 
-async def submit(prompt: str) -> ExecutionResult:
+async def submit(prompt: str, *, async_mode: bool = False) -> ExecutionResult:
     application = await build_application()
     try:
-        return await application.interactions.submit(
-            InteractionEnvelope(id=new_interaction_id(), content=prompt)
-        )
+        envelope = InteractionEnvelope(id=new_interaction_id(), content=prompt)
+        if not async_mode:
+            return await application.interactions.submit(envelope)
+        current = await application.interactions.start_async(envelope)
+        while isinstance(current, WaitingExecution):
+            current = await application.interactions.resume_async(current.checkpoint_id)
+        return current
     finally:
         await application.close()
 
@@ -322,11 +327,13 @@ async def gate_a() -> dict[str, object]:
             f"endpoint {endpoint} using an available command-line or Python program and verify its "
             "gate-http-ok response, demonstrate stdin or an environment override, and generate "
             "gate-a-result.txt and gate-a-summary.json, collecting both together as declared "
-            "Artifacts from one successful process execution. Run that Artifact-producing "
-            "process with process.execute background=true so its real accepted, progress, and "
+            "Artifacts. Perform all listed operations and produce both Artifacts with exactly one "
+            "process.execute invocation using background=true; do not make exploratory or "
+            "additional process calls. Its real accepted, progress, and "
             "terminal lifecycle can be verified. Do not claim completion unless every operation "
             "really ran. Once those operations and Artifact collection have succeeded, stop "
-            "executing commands and summarize; do not add redundant verification commands."
+            "executing commands and summarize; do not add redundant verification commands.",
+            async_mode=True,
         )
     require_success(result, "Gate A")
     observation = await trace(result.run_id)
@@ -417,9 +424,34 @@ async def gate_a() -> dict[str, object]:
         or detail.observability.inconsistencies
     ):
         raise RuntimeGateError("Gate A restart query is incomplete")
+    checkpoints = tuple(
+        checkpoint
+        for checkpoint in detail.checkpoints
+        if checkpoint.invocation_id == background_terminal.invocation_id
+    )
+    checkpoint_events = {
+        entry.event_type
+        for entry in detail.observability.trace
+        if entry.checkpoint_id in {checkpoint.id for checkpoint in checkpoints}
+    }
+    if (
+        len(checkpoints) != 1
+        or checkpoints[0].status.value != "completed"
+        or not {
+            "checkpoint.created",
+            "checkpoint.waiting",
+            "checkpoint.resumed",
+            "checkpoint.completed",
+            "run.waiting",
+            "run.resumed",
+        }
+        <= checkpoint_events
+    ):
+        raise RuntimeGateError("Gate A Checkpoint continuation is incomplete")
     return {
         "run_id": str(result.run_id),
         "background_invocation_id": correlation,
+        "checkpoint_id": str(checkpoints[0].id),
         "artifact_ids": [str(item.id) for item in artifacts],
     }
 

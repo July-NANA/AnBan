@@ -17,6 +17,7 @@ from anban.core.graph import GraphRevision, GraphRevisionStatus, TaskGraphSpec
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
+    CheckpointId,
     ContextEntryId,
     ContextSummaryId,
     EventId,
@@ -31,6 +32,8 @@ from anban.core.models import (
     Artifact,
     CapabilityInvocation,
     CapabilityInvocationStatus,
+    Checkpoint,
+    CheckpointStatus,
     Event,
     ExecutionRun,
     ExecutionRunStatus,
@@ -42,6 +45,7 @@ from anban.core.models import (
 from anban.persistence.models import (
     ArtifactRecord,
     CapabilityInvocationRecord,
+    CheckpointRecord,
     ContextEntryRecord,
     ContextSummaryCoverageRecord,
     ContextSummaryRecord,
@@ -289,6 +293,38 @@ def invocation_domain(record: CapabilityInvocationRecord) -> CapabilityInvocatio
     )
 
 
+def checkpoint_record(checkpoint: Checkpoint) -> CheckpointRecord:
+    return CheckpointRecord(
+        id=checkpoint.id,
+        run_id=checkpoint.run_id,
+        node_run_id=checkpoint.node_run_id,
+        invocation_id=checkpoint.invocation_id,
+        status=checkpoint.status.value,
+        state_hash=checkpoint.state_hash,
+        created_at=checkpoint.created_at,
+        resumed_at=checkpoint.resumed_at,
+        finished_at=checkpoint.finished_at,
+        error_code=None if checkpoint.error_code is None else checkpoint.error_code.value,
+        safe_metadata=dict(checkpoint.metadata.root),
+    )
+
+
+def checkpoint_domain(record: CheckpointRecord) -> Checkpoint:
+    return Checkpoint(
+        id=CheckpointId(record.id),
+        run_id=ExecutionRunId(record.run_id),
+        node_run_id=NodeRunId(record.node_run_id),
+        invocation_id=CapabilityInvocationId(record.invocation_id),
+        status=CheckpointStatus(record.status),
+        state_hash=record.state_hash,
+        created_at=record.created_at,
+        resumed_at=record.resumed_at,
+        finished_at=record.finished_at,
+        error_code=error_code(record.error_code),
+        metadata=metadata(record.safe_metadata),
+    )
+
+
 def artifact_record(artifact: Artifact) -> ArtifactRecord:
     return ArtifactRecord(
         id=artifact.id,
@@ -331,6 +367,7 @@ def event_record(event: Event) -> EventRecord:
         node_run_id=event.node_run_id,
         invocation_id=event.invocation_id,
         artifact_id=event.artifact_id,
+        checkpoint_id=event.checkpoint_id,
         safe_metadata=dict(event.metadata.root),
     )
 
@@ -347,5 +384,8 @@ def event_domain(record: EventRecord) -> Event:
             None if record.invocation_id is None else CapabilityInvocationId(record.invocation_id)
         ),
         artifact_id=None if record.artifact_id is None else ArtifactId(record.artifact_id),
+        checkpoint_id=(
+            None if record.checkpoint_id is None else CheckpointId(record.checkpoint_id)
+        ),
         metadata=metadata(record.safe_metadata),
     )

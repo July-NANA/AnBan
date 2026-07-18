@@ -16,6 +16,7 @@ EXPECTED_TABLES = {
     "graph_revisions",
     "node_runs",
     "capability_invocations",
+    "checkpoints",
     "artifacts",
     "events",
     "context_entries",
@@ -28,6 +29,7 @@ def test_schema_has_only_the_authorized_authoritative_tables() -> None:
     assert set(Base.metadata.tables) == EXPECTED_TABLES
     assert "graph_revision_id" in Base.metadata.tables["execution_runs"].c
     assert "metadata" in Base.metadata.tables["events"].c
+    assert "checkpoint_id" in Base.metadata.tables["events"].c
 
 
 def test_run_relationships_use_foreign_keys() -> None:
@@ -46,7 +48,7 @@ def test_event_order_and_run_detail_indexes_exist() -> None:
     run_indexes = Base.metadata.tables["execution_runs"].indexes
     assert {"task_id"} in ({column.name for column in index.columns} for index in run_indexes)
     assert {"created_at"} in ({column.name for column in index.columns} for index in run_indexes)
-    for table_name in ("node_runs", "capability_invocations", "artifacts"):
+    for table_name in ("node_runs", "capability_invocations", "checkpoints", "artifacts"):
         assert any(
             "run_id" in {column.name for column in index.columns}
             for index in Base.metadata.tables[table_name].indexes
@@ -83,8 +85,8 @@ def test_alembic_has_one_reversible_head_revision() -> None:
     configuration = Config(repository / "alembic.ini")
     scripts = ScriptDirectory.from_config(configuration)
     head = scripts.get_current_head()
-    assert head == "0005_graph_revisions"
+    assert head == "0006_checkpoints"
     revision = scripts.get_revision(head)
     assert revision is not None
-    assert revision.down_revision == "0004_context_memory"
+    assert revision.down_revision == "0005_graph_revisions"
     assert callable(revision.module.downgrade)

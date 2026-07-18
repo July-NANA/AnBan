@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from anban.core.graph import GraphRevision
-from anban.core.ids import ArtifactId, CapabilityInvocationId, NodeRunId
+from anban.core.ids import ArtifactId, CapabilityInvocationId, CheckpointId, NodeRunId
 from anban.core.metadata import SafeMetadata
 from anban.core.models import ExecutionRun, Task
 from anban.core.persistence import ExecutionRepository
@@ -19,6 +19,7 @@ class EventFact:
     node_run_id: NodeRunId | None = None
     invocation_id: CapabilityInvocationId | None = None
     artifact_id: ArtifactId | None = None
+    checkpoint_id: CheckpointId | None = None
 
 
 @dataclass(frozen=True)

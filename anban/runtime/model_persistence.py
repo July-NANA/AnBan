@@ -15,6 +15,10 @@ class PersistedModelPort:
         self._persistence = persistence
         self._turn_number = 0
 
+    @property
+    def turn_count(self) -> int:
+        return self._turn_number
+
     async def complete(self, request: ModelRequest) -> ModelTurn:
         self._turn_number += 1
         turn_number = self._turn_number

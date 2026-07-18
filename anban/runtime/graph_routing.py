@@ -1,0 +1,175 @@
+"""Model-governed selection between the fixed Agent and dynamic Task graph paths."""
+
+from __future__ import annotations
+
+import json
+from enum import StrEnum
+from typing import Self
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+from anban.config import policy
+from anban.core import AnbanError, ErrorCode, ErrorInfo, SafeMetadata, TaskGraphSpec
+from anban.core.metadata import validate_safe_text
+from anban.model import ModelMessage, ModelPort, ModelRequest
+from anban.runtime.contracts import RuntimeValue
+
+TASK_REQUEST_INPUT = "task_request"
+_ROUTE_SCHEMA: dict[str, JsonValue] = {
+    "type": "object",
+    "properties": {
+        "route": {"type": "string"},
+        "rationale": {"type": "string"},
+        "graph_spec": {"type": "object"},
+    },
+    "required": ["route", "rationale", "graph_spec"],
+    "additionalProperties": False,
+}
+_GRAPH_SCHEMA = json.dumps(
+    TaskGraphSpec.model_json_schema(),
+    ensure_ascii=False,
+    separators=(",", ":"),
+    sort_keys=True,
+)
+_SYSTEM_INSTRUCTIONS = (
+    "Select the lowest-complexity truthful Runtime path for this task. Choose fixed_agent when the "
+    "bounded General Agent loop can complete the goal, including when it needs multiple sequential "
+    "Capability or Skill calls. Choose task_graph only when explicit multi-node dependencies, "
+    "conditional branches, bounded iteration, parallel work with a join, or a nested subgraph is "
+    "materially required. For fixed_agent return an empty graph_spec. For task_graph return one "
+    "complete TaskGraphSpec matching the supplied schema. A graph may have no external inputs or "
+    f"may declare exactly one input named {TASK_REQUEST_INPUT}; no other graph input is available. "
+    "Action objectives must describe real work, control flow must use the closed node and edge "
+    "meanings, every loop and parallel path must be bounded, and the graph must expose a terminal "
+    "answer. Never infer execution success. Return only the closed route object. TaskGraphSpec "
+    f"schema: {_GRAPH_SCHEMA}"
+)
+_REPAIR_INSTRUCTIONS = (
+    "The previous route response was not a valid closed routing decision or TaskGraphSpec. Decide "
+    "again from the same task, preserve the lowest-complexity rule, and return exactly the "
+    "required route, rationale, and graph_spec fields."
+)
+
+
+class TaskExecutionRoute(StrEnum):
+    FIXED_AGENT = "fixed_agent"
+    TASK_GRAPH = "task_graph"
+
+
+class TaskRouteDecision(RuntimeValue):
+    """Validated Main Agent routing fact with optional executable graph data."""
+
+    route: TaskExecutionRoute
+    rationale: str = Field(min_length=1, max_length=2048)
+    graph_spec: TaskGraphSpec | None = None
+    model_turn_count: int = Field(ge=1, le=policy.MODEL_RESPONSE_REPAIR_RETRIES_MAX + 1)
+
+    @field_validator("rationale")
+    @classmethod
+    def validate_rationale(cls, value: str) -> str:
+        return validate_safe_text(value, label="Task route rationale", max_length=2048)
+
+    @model_validator(mode="after")
+    def validate_route_shape(self) -> Self:
+        if (self.route is TaskExecutionRoute.TASK_GRAPH) != (self.graph_spec is not None):
+            raise ValueError("Task route and graph presence disagree")
+        return self
+
+
+class _ModelRouteDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    route: TaskExecutionRoute
+    rationale: str = Field(min_length=1, max_length=2048)
+    graph_spec: dict[str, JsonValue]
+
+    @field_validator("rationale")
+    @classmethod
+    def validate_rationale(cls, value: str) -> str:
+        return validate_safe_text(value, label="Task route rationale", max_length=2048)
+
+
+class TaskRouteEvaluator:
+    """Use the independent Model Port to select and validate one Runtime path."""
+
+    async def decide(
+        self,
+        request: str,
+        model: ModelPort,
+        *,
+        repair_limit: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
+    ) -> TaskRouteDecision:
+        if not (
+            policy.MODEL_RESPONSE_REPAIR_RETRIES_MIN
+            <= repair_limit
+            <= policy.MODEL_RESPONSE_REPAIR_RETRIES_MAX
+        ):
+            raise ValueError("Task route repair budget is outside policy")
+        for repair_attempt in range(repair_limit + 1):
+            try:
+                turn = await model.complete(
+                    ModelRequest(
+                        messages=(
+                            ModelMessage(role="system", content=_SYSTEM_INSTRUCTIONS),
+                            *(
+                                ()
+                                if repair_attempt == 0
+                                else (
+                                    ModelMessage(
+                                        role="system",
+                                        content=_REPAIR_INSTRUCTIONS,
+                                    ),
+                                )
+                            ),
+                            ModelMessage(role="user", content=request),
+                        ),
+                        response_schema=_ROUTE_SCHEMA,
+                        max_output_tokens=16_384,
+                        repair_attempt=repair_attempt,
+                        repair_limit=repair_limit,
+                    )
+                )
+                return self._validate_turn(turn.structured_output, repair_attempt + 1)
+            except AnbanError as exc:
+                if exc.info.code is not ErrorCode.MODEL_RESPONSE_INVALID:
+                    raise
+            except (ValidationError, ValueError):
+                pass
+        raise AnbanError(
+            ErrorInfo(
+                code=ErrorCode.MODEL_RESPONSE_INVALID,
+                message="Task route response was invalid",
+                details=SafeMetadata({"reason": "task_route_invalid"}),
+            )
+        )
+
+    @staticmethod
+    def _validate_turn(
+        structured_output: dict[str, JsonValue] | None,
+        model_turn_count: int,
+    ) -> TaskRouteDecision:
+        if structured_output is None:
+            raise ValueError("structured route is missing")
+        decision = _ModelRouteDecision.model_validate(structured_output)
+        if decision.route is TaskExecutionRoute.FIXED_AGENT:
+            if decision.graph_spec:
+                raise ValueError("fixed route cannot carry a graph")
+            graph_spec = None
+        else:
+            graph_spec = TaskGraphSpec.model_validate(decision.graph_spec)
+            if graph_spec.input_keys not in {(), (TASK_REQUEST_INPUT,)}:
+                raise ValueError("Task graph requests unavailable external inputs")
+        return TaskRouteDecision(
+            route=decision.route,
+            rationale=decision.rationale,
+            graph_spec=graph_spec,
+            model_turn_count=model_turn_count,
+        )

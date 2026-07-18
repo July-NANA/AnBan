@@ -37,6 +37,12 @@ from anban.runtime.graph_execution import (
     TaskGraphExecutionResult,
     TaskGraphExecutor,
 )
+from anban.runtime.graph_routing import (
+    TASK_REQUEST_INPUT,
+    TaskExecutionRoute,
+    TaskRouteDecision,
+    TaskRouteEvaluator,
+)
 from anban.runtime.inspection import (
     ArtifactDetail,
     ContextDetail,
@@ -106,5 +112,9 @@ __all__ = [
     "TaskGraphExecutionFailureReason",
     "TaskGraphExecutionResult",
     "TaskGraphExecutor",
+    "TASK_REQUEST_INPUT",
+    "TaskExecutionRoute",
+    "TaskRouteDecision",
+    "TaskRouteEvaluator",
     "TraceEntry",
 ]

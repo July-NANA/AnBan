@@ -1,4 +1,4 @@
-"""Composition root for production v0.1 Adapters."""
+"""Composition root for production Adapters and governed Runtime paths."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ from anban.runtime import (
     ExecutionQueryService,
     PersistentRuntime,
     TaskGraphExecutor,
+    TaskRouteEvaluator,
 )
 
 
@@ -124,6 +125,8 @@ async def build_application() -> Application:
         )
         workspace_boundary = WorkspaceBoundary(configuration.workspace)
         sufficiency = CapabilitySufficiencyEvaluator(inventory)
+        graph_builder = DynamicTaskGraphBuilder()
+        graph_executor = TaskGraphExecutor(graph_builder)
         runtime = PersistentRuntime(
             model,
             capabilities,
@@ -133,15 +136,16 @@ async def build_application() -> Application:
             limits=AgentLimits(**configuration.agent.model_dump()),
             response_repair_retries=model_configuration.response_repair_retries,
             artifact_cleanup=workspace_boundary.delete_artifact,
+            route_evaluator=TaskRouteEvaluator(),
+            graph_executor=graph_executor,
         )
         queries = ExecutionQueryService(unit_of_work)
-        graph_builder = DynamicTaskGraphBuilder()
         return Application(
             InteractionService(runtime, queries),
             inventory,
             sufficiency,
             graph_builder,
-            TaskGraphExecutor(graph_builder),
+            graph_executor,
             model,
             engine,
         )

@@ -22,9 +22,11 @@ _AUDIT_EVENT_PREFIXES = (
     "skill.",
     "capability.",
     "context.",
+    "graph.",
     "artifact.",
     "run.final",
     "run.error",
+    "run.graph_",
 )
 _CAPABILITY_TERMINAL_EVENTS = frozenset(
     {"capability.completed", "capability.failed", "capability.cancelled", "capability.timed_out"}
@@ -67,6 +69,12 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "finish_reason",
         "final_hash",
         "function_name_present",
+        "graph_node_count",
+        "graph_node_id",
+        "graph_node_kind",
+        "graph_revision_id",
+        "graph_selected",
+        "graph_spec_hash",
         "high_improvisation_risk",
         "input_tokens",
         "invocation_compensation_failed",
@@ -96,6 +104,7 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "rationale_hash",
         "repeated_reusable_need",
         "response_variant",
+        "route",
         "reason",
         "result_kind",
         "retry_safe",

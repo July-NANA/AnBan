@@ -15,6 +15,7 @@ from anban.capability import (
     InvocationContext,
 )
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
+from anban.core.graph import GraphRevision
 from anban.core.ids import (
     ArtifactId,
     CapabilityInvocationId,
@@ -214,6 +215,53 @@ class RunPersistence:
             (EventFact("node.started", node_run_id=node.id),),
         )
         self.node = node
+
+    async def record_task_route(
+        self,
+        route: str,
+        *,
+        rationale_hash: str,
+        revision: GraphRevision | None = None,
+    ) -> None:
+        """Persist the selected path and atomically attach an optional initial graph."""
+
+        if revision is not None and (
+            revision.task_id != self.task.id or self.run.graph_revision_id is not None
+        ):
+            raise ValueError("Graph revision cannot be attached to this Run")
+        run = self.run.model_copy(
+            update={
+                "graph_revision_id": (
+                    self.run.graph_revision_id if revision is None else revision.id
+                )
+            }
+        )
+
+        async def operation(repository: ExecutionRepository) -> None:
+            if revision is not None:
+                await repository.add_graph_revision(revision)
+                await repository.update_run(run)
+
+        metadata = SafeMetadata(
+            {
+                "route": route,
+                "graph_selected": revision is not None,
+                "graph_revision_id": None if revision is None else str(revision.id),
+                "graph_spec_hash": None if revision is None else revision.spec_hash,
+                "graph_node_count": None if revision is None else len(revision.spec.nodes),
+                "rationale_hash": rationale_hash,
+            }
+        )
+        facts = [EventFact("agent.route_selected", metadata, node_run_id=self.node.id)]
+        if revision is not None:
+            facts.extend(
+                (
+                    EventFact("graph.revision_created", metadata, node_run_id=self.node.id),
+                    EventFact("run.graph_revision_linked", metadata, node_run_id=self.node.id),
+                )
+            )
+        await self._write("task_route_selected", operation, tuple(facts))
+        self.run = run
 
     async def model_requested(self, turn_number: int, request: ModelRequest) -> None:
         metadata = SafeMetadata(

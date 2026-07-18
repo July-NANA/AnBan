@@ -430,8 +430,8 @@ class AgentOutcome(RuntimeValue):
     status: AgentOutcomeStatus
     final_text: str | None = Field(default=None, max_length=32_768)
     error: ErrorInfo | None = None
-    model_turn_count: int = Field(ge=0, le=policy.AGENT_MAX_MODEL_TURNS_MAX)
-    capability_call_count: int = Field(ge=0, le=policy.AGENT_MAX_CAPABILITY_CALLS_MAX)
+    model_turn_count: int = Field(ge=0, le=131_072)
+    capability_call_count: int = Field(ge=0, le=131_072)
     artifacts: tuple[ArtifactReference, ...] = Field(default=(), max_length=32)
 
     @model_validator(mode="after")

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from datetime import timedelta
+
+from pydantic import JsonValue
 
 from anban.capability import (
     ArtifactReference,
@@ -13,6 +16,7 @@ from anban.capability import (
 )
 from anban.config import policy
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
+from anban.core.graph import GraphRevision
 from anban.core.ids import (
     SessionId,
     new_execution_run_id,
@@ -34,6 +38,13 @@ from anban.runtime.contracts import (
     AgentOutcomeStatus,
     ExecutionResult,
 )
+from anban.runtime.graph_execution import TaskGraphExecutor
+from anban.runtime.graph_routing import (
+    TASK_REQUEST_INPUT,
+    TaskExecutionRoute,
+    TaskRouteEvaluator,
+)
+from anban.runtime.graph_task_runtime import PersistentGraphTaskRunner
 from anban.runtime.model_persistence import PersistedModelPort
 from anban.runtime.persistence import RunPersistence
 from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
@@ -51,7 +62,7 @@ _STORAGE_FAILURE_DETAILS = frozenset(
 
 
 class PersistentRuntime:
-    """Create, execute, and durably finalize one fixed General Agent Run."""
+    """Route, execute, and durably finalize one fixed-Agent or Task-graph Run."""
 
     def __init__(
         self,
@@ -64,6 +75,8 @@ class PersistentRuntime:
         limits: AgentLimits | None = None,
         response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
         artifact_cleanup: Callable[[InvocationContext, ArtifactReference], None] | None = None,
+        route_evaluator: TaskRouteEvaluator | None = None,
+        graph_executor: TaskGraphExecutor | None = None,
     ) -> None:
         self._model = model
         self._capabilities = capabilities
@@ -73,6 +86,8 @@ class PersistentRuntime:
         self._limits = limits
         self._response_repair_retries = response_repair_retries
         self._artifact_cleanup = artifact_cleanup
+        self._route_evaluator = route_evaluator
+        self._graph_executor = graph_executor or TaskGraphExecutor()
 
     @property
     def inventory(self) -> CapabilityInventoryPort:
@@ -113,8 +128,154 @@ class PersistentRuntime:
                 persisted=persisted,
             )
 
-        agent = FixedGeneralAgent(
-            PersistedModelPort(self._model, persistence),
+        persisted_model = PersistedModelPort(self._model, persistence)
+        graph_execution = False
+        if self._route_evaluator is not None:
+            try:
+                decision = await self._route_evaluator.decide(
+                    request,
+                    persisted_model,
+                    repair_limit=self._response_repair_retries,
+                )
+                revision = (
+                    None
+                    if decision.graph_spec is None
+                    else GraphRevision.create(
+                        task_id=task.id,
+                        reason="Initial validated Main Agent graph route.",
+                        spec=decision.graph_spec,
+                    )
+                )
+                await persistence.record_task_route(
+                    decision.route.value,
+                    rationale_hash=hashlib.sha256(decision.rationale.encode()).hexdigest(),
+                    revision=revision,
+                )
+            except AnbanError as exc:
+                outcome = routing_failure_outcome(exc.info, persisted_model.turn_count)
+                persisted = await self.recover_terminal(persistence, outcome)
+                return ExecutionResult(
+                    task_id=task.id,
+                    run_id=run.id,
+                    node_run_id=node.id,
+                    outcome=outcome,
+                    persisted=persisted,
+                )
+            except (ValueError, TypeError):
+                outcome = routing_failure_outcome(
+                    ErrorInfo(
+                        code=ErrorCode.PERSISTENCE_WRITE_FAILED,
+                        message="Task route persistence failed",
+                    ),
+                    persisted_model.turn_count,
+                )
+                persisted = await self.recover_terminal(persistence, outcome)
+                return ExecutionResult(
+                    task_id=task.id,
+                    run_id=run.id,
+                    node_run_id=node.id,
+                    outcome=outcome,
+                    persisted=persisted,
+                )
+            if decision.route is TaskExecutionRoute.TASK_GRAPH:
+                graph_execution = True
+                planning_outcome = AgentOutcome(
+                    status=AgentOutcomeStatus.SUCCEEDED,
+                    final_text="Validated Task graph route selected.",
+                    model_turn_count=decision.model_turn_count,
+                    capability_call_count=0,
+                )
+                try:
+                    await persistence.finish_node(planning_outcome)
+                except AnbanError as exc:
+                    outcome = storage_failure_outcome(
+                        exc.info,
+                        stage="graph_planning_finalize",
+                        model_turn_count=decision.model_turn_count,
+                    )
+                    persisted = await self.recover_run_terminal(persistence, outcome)
+                    return ExecutionResult(
+                        task_id=task.id,
+                        run_id=run.id,
+                        node_run_id=node.id,
+                        outcome=outcome,
+                        persisted=persisted,
+                    )
+                spec = decision.graph_spec
+                if spec is None:
+                    raise RuntimeError("validated graph route lost its spec")
+                runner = PersistentGraphTaskRunner(
+                    persisted_model,
+                    self._capabilities,
+                    persistence,
+                    self._graph_executor,
+                    sufficiency=self._sufficiency,
+                    limits=self._limits,
+                    response_repair_retries=self._response_repair_retries,
+                    artifact_cleanup=self._artifact_cleanup,
+                    metadata=safe_metadata,
+                )
+                graph_input: dict[str, JsonValue] = (
+                    {TASK_REQUEST_INPUT: request}
+                    if spec.input_keys == (TASK_REQUEST_INPUT,)
+                    else {}
+                )
+                outcome = await runner.execute(
+                    spec,
+                    graph_input,
+                    routing_model_turns=decision.model_turn_count,
+                )
+            else:
+                outcome = await self._fixed_agent(persisted_model, persistence).execute(
+                    AgentInput(request=request, run_id=run.id, node_run_id=node.id)
+                )
+                outcome = outcome.model_copy(
+                    update={
+                        "model_turn_count": outcome.model_turn_count + decision.model_turn_count
+                    }
+                )
+        else:
+            outcome = await self._fixed_agent(persisted_model, persistence).execute(
+                AgentInput(request=request, run_id=run.id, node_run_id=node.id)
+            )
+        try:
+            if graph_execution:
+                await persistence.finish_run(outcome)
+            else:
+                await persistence.finish(outcome)
+        except AnbanError as exc:
+            if await self.matches_terminal(persistence, outcome):
+                persisted = True
+            else:
+                outcome = storage_failure_outcome(
+                    exc.info,
+                    stage="finalize",
+                    model_turn_count=outcome.model_turn_count,
+                    capability_call_count=outcome.capability_call_count,
+                    artifacts=outcome.artifacts,
+                )
+                persisted = await (
+                    self.recover_run_terminal(persistence, outcome)
+                    if graph_execution
+                    else self.recover_terminal(persistence, outcome)
+                )
+        else:
+            persisted = True
+        return ExecutionResult(
+            task_id=task.id,
+            run_id=run.id,
+            node_run_id=node.id,
+            outcome=outcome,
+            persisted=persisted,
+        )
+
+    def _fixed_agent(
+        self,
+        model: ModelPort,
+        persistence: RunPersistence,
+    ) -> FixedGeneralAgent:
+        return FixedGeneralAgent(
+            model,
             PersistedCapabilityPort(
                 self._capabilities,
                 persistence,
@@ -128,32 +289,6 @@ class PersistentRuntime:
             replan_observer=persistence.agent_replan_decided,
             limits=self._limits,
             response_repair_retries=self._response_repair_retries,
-        )
-        outcome = await agent.execute(
-            AgentInput(request=request, run_id=run.id, node_run_id=node.id)
-        )
-        try:
-            await persistence.finish(outcome)
-        except AnbanError as exc:
-            if await self.matches_terminal(persistence, outcome):
-                persisted = True
-            else:
-                outcome = storage_failure_outcome(
-                    exc.info,
-                    stage="finalize",
-                    model_turn_count=outcome.model_turn_count,
-                    capability_call_count=outcome.capability_call_count,
-                    artifacts=outcome.artifacts,
-                )
-                persisted = await self.recover_terminal(persistence, outcome)
-        else:
-            persisted = True
-        return ExecutionResult(
-            task_id=task.id,
-            run_id=run.id,
-            node_run_id=node.id,
-            outcome=outcome,
-            persisted=persisted,
         )
 
     def chat(self) -> PersistentChatSession:
@@ -188,6 +323,24 @@ class PersistentRuntime:
             if aggregate.run.status.value == "created":
                 await persistence.start()
             await persistence.finish(outcome)
+            return await PersistentRuntime.matches_terminal(persistence, outcome)
+        except AnbanError:
+            return False
+
+    @staticmethod
+    async def recover_run_terminal(
+        persistence: RunPersistence,
+        outcome: AgentOutcome,
+    ) -> bool:
+        """Confirm or persist one Run terminal after its graph nodes already finished."""
+
+        try:
+            aggregate = await persistence.load()
+            if aggregate is None:
+                return False
+            if aggregate.run.status.value == outcome.status.value:
+                return True
+            await persistence.finish_run(outcome)
             return await PersistentRuntime.matches_terminal(persistence, outcome)
         except AnbanError:
             return False
@@ -529,4 +682,19 @@ def storage_failure_outcome(
         model_turn_count=model_turn_count,
         capability_call_count=capability_call_count,
         artifacts=artifacts,
+    )
+
+
+def routing_failure_outcome(cause: ErrorInfo, model_turn_count: int) -> AgentOutcome:
+    """Retain one explicit model or persistence failure from route selection."""
+
+    return AgentOutcome(
+        status=(
+            AgentOutcomeStatus.TIMED_OUT
+            if cause.code is ErrorCode.MODEL_TIMEOUT
+            else AgentOutcomeStatus.FAILED
+        ),
+        error=cause,
+        model_turn_count=model_turn_count,
+        capability_call_count=0,
     )

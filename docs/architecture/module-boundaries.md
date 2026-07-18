@@ -42,9 +42,13 @@ The generic Task graph executor resolves declared bindings, evaluates every clos
 operator, bounds loops and total node executions, limits real action parallelism, waits for joins,
 and recursively runs nested subgraphs. It calls one explicitly supplied asynchronous action
 executor and validates every returned output shape; it performs no automatic retry or fallback.
-Graph selection, durable Node/Invocation scheduling, checkpoints, and restart recovery remain
-later deliveries. Immutable `GraphRevision` persistence is available through the existing Unit of
-Work boundary.
+The production Composition Root adds one structured Main Agent route decision: adequate simple
+work retains the fixed Agent, while materially structured work must supply a fully validated graph.
+The selected route is durable; a graph route atomically appends and links its initial
+`GraphRevision`, then each real action executes as its own durable Node through the existing Agent,
+Model, Capability, Invocation, Artifact, and Event path. Invalid planning or node JSON fails the
+Run rather than falling back to the fixed Agent. Checkpoints, background continuation, and restart
+recovery remain later deliveries.
 
 ## Model
 

@@ -16,10 +16,13 @@ instead of silently treating unsupported input as new work.
 
 ## Core
 
-Owns authoritative Task, ExecutionRun, NodeRun, CapabilityInvocation, Artifact, Event, and bounded
-Task/Session Context identity, relationships, lifecycle terms, structured errors, safe metadata,
-and persistence Protocols. Core
-must not absorb provider clients, SQLAlchemy models, transport details, or scheduling.
+Owns authoritative Task, ExecutionRun, NodeRun, CapabilityInvocation, Artifact, Event, bounded
+Task/Session Context, and `TaskGraphSpec` identity-free structured graph vocabulary. A graph spec
+contains only closed node/edge kinds, explicit dependencies, input/output bindings, entry and
+terminal identities, nested subgraphs, and hard budgets. Its validator rejects hidden cycles,
+invalid control shapes, unreachable nodes, bindings outside dependency scope, and unbounded loop or
+parallel behavior before Runtime can build it. Core does not execute the spec and must not absorb
+provider clients, SQLAlchemy models, transport details, or scheduling.
 
 ## Runtime
 
@@ -32,6 +35,8 @@ replan decision. Proposed final text, successful Skill activation, stored Memory
 Capability output are not terminal facts. The next alternative must match one exact ready
 strategy/target, while identical completed or uncertain calls remain replay-protected. Waiting,
 resume, and checkpoints are not v0.1 behavior.
+Runtime does not yet generate or execute `TaskGraphSpec`; immutable `GraphRevision` persistence and
+the one generic LangGraph builder remain the next authorized deliveries.
 
 ## Model
 

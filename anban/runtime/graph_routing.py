@@ -17,7 +17,14 @@ from pydantic import (
 )
 
 from anban.config import policy
-from anban.core import AnbanError, ErrorCode, ErrorInfo, SafeMetadata, TaskGraphSpec
+from anban.core import (
+    AnbanError,
+    ErrorCode,
+    ErrorInfo,
+    SafeMetadata,
+    TaskGraphSpec,
+    TaskGraphValidationReason,
+)
 from anban.core.metadata import validate_safe_text
 from anban.model import ModelMessage, ModelPort, ModelRequest
 from anban.runtime.contracts import RuntimeValue
@@ -113,6 +120,7 @@ class TaskRouteEvaluator:
             <= policy.MODEL_RESPONSE_REPAIR_RETRIES_MAX
         ):
             raise ValueError("Task route repair budget is outside policy")
+        last_validation_reason = "response_shape_invalid"
         for repair_attempt in range(repair_limit + 1):
             try:
                 turn = await model.complete(
@@ -141,14 +149,34 @@ class TaskRouteEvaluator:
             except AnbanError as exc:
                 if exc.info.code is not ErrorCode.MODEL_RESPONSE_INVALID:
                     raise
-            except (ValidationError, ValueError):
-                pass
+            except (ValidationError, ValueError) as exc:
+                last_validation_reason = self._validation_reason(exc)
         raise AnbanError(
             ErrorInfo(
                 code=ErrorCode.MODEL_RESPONSE_INVALID,
                 message="Task route response was invalid",
-                details=SafeMetadata({"reason": "task_route_invalid"}),
+                details=SafeMetadata(
+                    {
+                        "reason": "task_route_invalid",
+                        "last_validation_reason": last_validation_reason,
+                    }
+                ),
             )
+        )
+
+    @staticmethod
+    def _validation_reason(exc: ValidationError | ValueError) -> str:
+        rendered = str(exc)
+        for reason in TaskGraphValidationReason:
+            if reason.value in rendered:
+                return reason.value
+        stable_messages = {
+            "fixed route cannot carry a graph": "fixed_route_graph_present",
+            "Task graph requests unavailable external inputs": "external_input_unavailable",
+        }
+        return next(
+            (value for message, value in stable_messages.items() if message in rendered),
+            "response_shape_invalid",
         )
 
     @staticmethod

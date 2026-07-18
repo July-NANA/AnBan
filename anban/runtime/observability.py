@@ -89,6 +89,7 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "message_role",
         "memory_operation",
         "low_implementation_confidence",
+        "last_validation_reason",
         "model",
         "model_turn_count",
         "must_fail",

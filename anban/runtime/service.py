@@ -20,6 +20,7 @@ from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.graph import GraphRevision
 from anban.core.ids import (
     CheckpointId,
+    InteractionId,
     SessionId,
     new_execution_run_id,
     new_node_run_id,
@@ -27,7 +28,7 @@ from anban.core.ids import (
     new_task_id,
 )
 from anban.core.metadata import SafeMetadata
-from anban.core.models import ExecutionRun, NodeRun, Task, now_utc
+from anban.core.models import ExecutionRun, NodeRun, Task, UtcDateTime, now_utc
 from anban.core.persistence import UnitOfWorkFactory
 from anban.model import ModelPort
 from anban.runtime.agent import FixedGeneralAgent
@@ -56,6 +57,7 @@ from anban.runtime.model_persistence import PersistedModelPort
 from anban.runtime.persistence import RunPersistence
 from anban.runtime.recovery import RuntimeRecovery
 from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
+from anban.runtime.update_service import RuntimeUpdateService
 
 _STORAGE_FAILURE_DETAILS = frozenset(
     {
@@ -97,6 +99,9 @@ class PersistentRuntime:
         self._route_evaluator = route_evaluator
         self._graph_executor = graph_executor or TaskGraphExecutor()
         self._continuations = ContinuationManager()
+        self._updates = RuntimeUpdateService(
+            model, unit_of_work, response_repair_retries=response_repair_retries
+        )
 
     @property
     def inventory(self) -> CapabilityInventoryPort:
@@ -135,6 +140,33 @@ class PersistentRuntime:
     async def detach_async(self, checkpoint_id: CheckpointId) -> None:
         await self._continuations.abandon(checkpoint_id)
 
+    async def bind_resume_correlation(
+        self, checkpoint_id: CheckpointId, namespace: str, fingerprint: str
+    ) -> None:
+        await self._updates.bind_resume(checkpoint_id, namespace, fingerprint)
+
+    async def resolve_resume_correlation(self, namespace: str, fingerprint: str) -> CheckpointId:
+        return await self._updates.resolve_resume(namespace, fingerprint)
+
+    async def apply_interaction_update(
+        self,
+        checkpoint_id: CheckpointId,
+        content: str,
+        interaction_id: InteractionId,
+        source: str,
+        received_at: UtcDateTime,
+    ) -> ExecutionResult:
+        await self._updates.apply(
+            checkpoint_id,
+            content,
+            interaction_id,
+            source,
+            received_at,
+        )
+        if self._continuations.contains(checkpoint_id):
+            await self._continuations.abandon(checkpoint_id)
+        return await self._recovery().resume(checkpoint_id)
+
     def _recovery(self) -> RuntimeRecovery:
         return RuntimeRecovery(
             self._model,
@@ -142,6 +174,7 @@ class PersistentRuntime:
             self._unit_of_work,
             self._sufficiency,
             artifact_cleanup=self._artifact_cleanup,
+            response_repair_retries=self._response_repair_retries,
         )
 
     async def _execute(

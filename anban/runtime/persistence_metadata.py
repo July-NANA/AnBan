@@ -59,6 +59,7 @@ PERSISTENCE_DIAGNOSTIC_METADATA = frozenset(
         "artifact_cleanup_succeeded",
         "compensation_error_code",
         "invocation_compensation_failed",
+        "last_validation_reason",
         "persistence_state_unconfirmed",
         "reason",
     }

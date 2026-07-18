@@ -21,6 +21,7 @@ from anban.core.ids import (
     SessionId,
     TaskId,
 )
+from anban.core.metadata import SafeMetadata
 from anban.core.models import (
     Artifact,
     CapabilityInvocation,
@@ -100,6 +101,20 @@ class MemoryRepository:
 
     async def update_run(self, run: ExecutionRun) -> None:
         self.store.runs[run.id] = run
+
+    async def set_run_graph_revision(
+        self,
+        run_id: ExecutionRunId,
+        expected_revision_id: GraphRevisionId | None,
+        revision_id: GraphRevisionId,
+    ) -> None:
+        run = self.store.runs[run_id]
+        if run.graph_revision_id != expected_revision_id:
+            raise RuntimeError("test-only Run Graph revision conflict")
+        revision = self.store.graph_revisions[revision_id]
+        if revision.task_id != run.task_id:
+            raise RuntimeError("test-only Run Graph revision Task mismatch")
+        self.store.runs[run_id] = run.model_copy(update={"graph_revision_id": revision_id})
 
     async def add_graph_revision(self, revision: GraphRevision) -> None:
         if revision.id in self.store.graph_revisions:
@@ -208,6 +223,19 @@ class MemoryRepository:
 
     async def get_event(self, event_id: EventId) -> Event | None:
         return self.store.events.get(event_id)
+
+    async def find_event(self, event_type: str, metadata_match: SafeMetadata) -> Event | None:
+        matches = tuple(
+            event
+            for event in self.store.events.values()
+            if event.event_type == event_type
+            and all(
+                event.metadata.root.get(key) == value for key, value in metadata_match.root.items()
+            )
+        )
+        if len(matches) > 1:
+            raise RuntimeError("test-only ambiguous Event metadata lookup")
+        return None if not matches else matches[0]
 
     async def list_events(self, run_id: ExecutionRunId) -> tuple[Event, ...]:
         return tuple(

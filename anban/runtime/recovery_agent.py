@@ -40,10 +40,13 @@ class RecoveredContinuationAgent:
         model: PersistedModelPort,
         sufficiency: CapabilitySufficiencyEvaluator,
         persistence: RunPersistence,
+        *,
+        response_repair_retries: int,
     ) -> None:
         self._model = model
         self._sufficiency = sufficiency
         self._persistence = persistence
+        self._response_repair_retries = response_repair_retries
 
     async def execute(
         self,
@@ -100,8 +103,23 @@ class RecoveredContinuationAgent:
                 prior_capability_calls,
                 prior_artifacts,
             )
+        repair_attempts = 0
         try:
-            assessment = await self._sufficiency.assess(request, self._model)
+            repair_request = False
+            while True:
+                try:
+                    assessment = await self._sufficiency.assess(
+                        request,
+                        self._model,
+                        repair_attempt=repair_attempts if repair_request else 0,
+                        repair_limit=self._response_repair_retries,
+                    )
+                    break
+                except AnbanError as exc:
+                    if not self._can_repair(exc, repair_attempts):
+                        raise
+                    repair_attempts += 1
+                    repair_request = True
             await self._persistence.agent_sufficiency_assessed(assessment)
             messages = [
                 ModelMessage(role="system", content=GENERAL_SYSTEM_INSTRUCTIONS),
@@ -115,17 +133,43 @@ class RecoveredContinuationAgent:
                     content=f"{_RECOVERY_INSTRUCTION}\n{RESPONSE_CONTRACT_REMINDER}",
                 ),
             ]
-            turn = await self._model.complete(ModelRequest(messages=tuple(messages)))
+            repair_request = False
+            while True:
+                try:
+                    turn = await self._model.complete(
+                        ModelRequest(
+                            messages=tuple(messages),
+                            repair_attempt=repair_attempts if repair_request else 0,
+                            repair_limit=self._response_repair_retries,
+                        )
+                    )
+                    break
+                except AnbanError as exc:
+                    if not self._can_repair(exc, repair_attempts):
+                        raise
+                    repair_attempts += 1
+                    repair_request = True
             final_text = self._final_text(turn)
             messages.append(ModelMessage(role="assistant", content=final_text))
-            evaluated = await CompletionEvaluator().assess(
-                transcript=tuple(messages),
-                assessment=assessment,
-                observations=(recorded,),
-                proposed_final=final_text,
-                remaining_replans=0,
-                model=self._model,
-            )
+            repair_request = False
+            while True:
+                try:
+                    evaluated = await CompletionEvaluator().assess(
+                        transcript=tuple(messages),
+                        assessment=assessment,
+                        observations=(recorded,),
+                        proposed_final=final_text,
+                        remaining_replans=0,
+                        model=self._model,
+                        repair_attempt=repair_attempts if repair_request else 0,
+                        repair_limit=self._response_repair_retries,
+                    )
+                    break
+                except AnbanError as exc:
+                    if not self._can_repair(exc, repair_attempts):
+                        raise
+                    repair_attempts += 1
+                    repair_request = True
             await self._persistence.agent_completion_assessed(evaluated.completion)
         except AnbanError as exc:
             return self._failure(
@@ -164,6 +208,13 @@ class RecoveredContinuationAgent:
             model_turn_count=prior_model_turns + self._model.turn_count,
             capability_call_count=prior_capability_calls,
             artifacts=(*prior_artifacts, *result.artifacts),
+        )
+
+    def _can_repair(self, exc: AnbanError, repair_attempts: int) -> bool:
+        return (
+            exc.info.code is ErrorCode.MODEL_RESPONSE_INVALID
+            and exc.info.details.root.get("repairable") is True
+            and repair_attempts < self._response_repair_retries
         )
 
     @staticmethod

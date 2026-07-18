@@ -54,6 +54,7 @@ from anban.runtime.contracts import (
     CompletionAssessment,
     ReplanDecision,
 )
+from anban.runtime.interaction_update_persistence import InteractionUpdatePersistence
 from anban.runtime.persistence_errors import audit_trace_error, persistence_error
 from anban.runtime.persistence_events import EventFact, task_route_transition
 from anban.runtime.persistence_metadata import (
@@ -122,6 +123,7 @@ class RunPersistence:
         self.node = node
         self._sequence = sequence
         self.checkpoints = CheckpointPersistence(factory, self._write)
+        self.interaction_updates = InteractionUpdatePersistence(self._write)
         self.recovery = RecoveryPersistence(self._write)
 
     async def initialize(self) -> None:

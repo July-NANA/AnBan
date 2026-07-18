@@ -164,6 +164,28 @@ class SQLAlchemyExecutionRepository:
         record.error_code = None if run.error_code is None else run.error_code.value
         record.safe_metadata = dict(run.metadata.root)
 
+    async def set_run_graph_revision(
+        self,
+        run_id: ExecutionRunId,
+        expected_revision_id: GraphRevisionId | None,
+        revision_id: GraphRevisionId,
+    ) -> None:
+        result = await self._session.execute(
+            select(ExecutionRunRecord).where(ExecutionRunRecord.id == run_id).with_for_update()
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            raise missing_record("execution_run", run_id)
+        if (
+            ExecutionRunStatus(record.status) is not ExecutionRunStatus.RUNNING
+            or record.graph_revision_id != expected_revision_id
+        ):
+            raise graph_revision_conflict("run_revision_changed")
+        revision = await self._session.get(GraphRevisionRecord, revision_id)
+        if revision is None or revision.task_id != record.task_id:
+            raise graph_revision_conflict("run_revision_task_mismatch")
+        record.graph_revision_id = revision_id
+
     async def add_graph_revision(self, revision: GraphRevision) -> None:
         current = await self.get_current_graph_revision(revision.task_id, lock=True)
         if revision.previous_revision_id is None:
@@ -399,6 +421,24 @@ class SQLAlchemyExecutionRepository:
     async def get_event(self, event_id: EventId) -> Event | None:
         record = await self._session.get(EventRecord, event_id)
         return None if record is None else event_domain(record)
+
+    async def find_event(self, event_type: str, metadata_match: SafeMetadata) -> Event | None:
+        records = tuple(
+            (
+                await self._session.scalars(
+                    select(EventRecord)
+                    .where(
+                        EventRecord.event_type == event_type,
+                        EventRecord.safe_metadata.contains(dict(metadata_match.root)),
+                    )
+                    .order_by(EventRecord.occurred_at, EventRecord.id)
+                    .limit(2)
+                )
+            ).all()
+        )
+        if len(records) > 1:
+            raise inconsistent_run()
+        return None if not records else event_domain(records[0])
 
     async def list_events(self, run_id: ExecutionRunId) -> tuple[Event, ...]:
         result = await self._session.scalars(

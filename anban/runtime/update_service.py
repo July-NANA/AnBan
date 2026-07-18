@@ -1,0 +1,283 @@
+"""Durable coordination for correlated mid-run supplemental input."""
+
+from __future__ import annotations
+
+import hashlib
+
+from anban.core.context import (
+    ContextConflictState,
+    ContextEntry,
+    ContextEntryKind,
+    ContextScope,
+    ContextSensitivity,
+    ContextSource,
+    ContextSourceKind,
+    TaskContext,
+)
+from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
+from anban.core.graph import GraphRevision
+from anban.core.ids import (
+    CheckpointId,
+    InteractionId,
+    TaskId,
+    new_context_entry_id,
+)
+from anban.core.metadata import SafeMetadata
+from anban.core.models import Checkpoint, CheckpointStatus, ExecutionRunStatus, UtcDateTime
+from anban.core.persistence import ExecutionRunAggregate, UnitOfWorkFactory
+from anban.model import ModelPort
+from anban.runtime.interaction_updates import (
+    InteractionUpdateDecision,
+    InteractionUpdateEvaluator,
+    InteractionUpdateImpact,
+)
+from anban.runtime.model_persistence import PersistedModelPort
+from anban.runtime.persistence import RunPersistence
+from anban.runtime.persistence_errors import persistence_error
+
+
+class RuntimeUpdateService:
+    """Resolve one external correlation and append one governed update."""
+
+    def __init__(
+        self,
+        model: ModelPort,
+        factory: UnitOfWorkFactory,
+        *,
+        evaluator: InteractionUpdateEvaluator | None = None,
+        response_repair_retries: int,
+    ) -> None:
+        self._model = model
+        self._factory = factory
+        self._evaluator = evaluator or InteractionUpdateEvaluator()
+        self._response_repair_retries = response_repair_retries
+
+    async def bind_resume(
+        self,
+        checkpoint_id: CheckpointId,
+        namespace: str,
+        fingerprint: str,
+    ) -> None:
+        aggregate, checkpoint = await self._load(checkpoint_id)
+        existing = tuple(
+            event
+            for event in aggregate.events
+            if event.event_type == "interaction.resume_bound"
+            and event.checkpoint_id == checkpoint_id
+        )
+        if existing:
+            metadata = existing[-1].metadata.root
+            if (
+                metadata.get("resume_namespace") == namespace
+                and metadata.get("resume_correlation_hash") == fingerprint
+            ):
+                return
+            raise self._error("conflicting")
+        persistence = self._persistence(aggregate, checkpoint)
+        try:
+            await persistence.interaction_updates.bind_resume(
+                checkpoint,
+                namespace,
+                fingerprint,
+            )
+        except AnbanError:
+            raise
+        except Exception:
+            raise persistence_error("interaction_resume_bound") from None
+
+    async def resolve_resume(self, namespace: str, fingerprint: str) -> CheckpointId:
+        try:
+            async with self._factory() as unit:
+                event = await unit.executions.find_event(
+                    "interaction.resume_bound",
+                    SafeMetadata(
+                        {
+                            "resume_namespace": namespace,
+                            "resume_correlation_hash": fingerprint,
+                        }
+                    ),
+                )
+        except AnbanError:
+            raise
+        except Exception:
+            raise persistence_error("interaction_resume_lookup") from None
+        if event is None or event.checkpoint_id is None:
+            raise self._error("unknown")
+        _, checkpoint = await self._load(event.checkpoint_id)
+        if checkpoint.status is not CheckpointStatus.WAITING:
+            raise self._error("ineligible")
+        return checkpoint.id
+
+    async def apply(
+        self,
+        checkpoint_id: CheckpointId,
+        content: str,
+        interaction_id: InteractionId,
+        source: str,
+        received_at: UtcDateTime,
+    ) -> InteractionUpdateDecision | None:
+        aggregate, checkpoint = await self._load(checkpoint_id)
+        if any(
+            event.event_type == "interaction.update_received"
+            and event.metadata.root.get("interaction_id") == str(interaction_id)
+            for event in aggregate.events
+        ):
+            return None
+        persistence = self._persistence(aggregate, checkpoint)
+        model = PersistedModelPort(self._model, persistence)
+        protected = self._protected_node_ids(aggregate)
+        decision = await self._evaluator.decide(
+            aggregate.task.request,
+            content,
+            None if aggregate.graph_revision is None else aggregate.graph_revision.spec,
+            protected,
+            model,
+            repair_limit=self._response_repair_retries,
+        )
+        revision = self._revision(aggregate, decision)
+        entry = ContextEntry(
+            id=new_context_entry_id(),
+            scope=ContextScope.TASK,
+            task_id=aggregate.task.id,
+            kind=ContextEntryKind.SUPPLEMENT,
+            content=content,
+            source=ContextSource(
+                kind=ContextSourceKind.INTERACTION,
+                reference=f"interaction:{interaction_id}",
+                observed_at=received_at,
+            ),
+            sensitivity=ContextSensitivity.INTERNAL,
+            metadata=SafeMetadata(
+                {
+                    "interaction_id": str(interaction_id),
+                    "checkpoint_id": str(checkpoint.id),
+                    "source": source,
+                    "content_hash": hashlib.sha256(content.encode()).hexdigest(),
+                    "update_impact": decision.impact.value,
+                    "graph_revision_id": None if revision is None else str(revision.id),
+                }
+            ),
+        )
+        await self._validate_context(aggregate.task.id, entry)
+        try:
+            await persistence.interaction_updates.apply(
+                checkpoint,
+                entry,
+                decision,
+                revision,
+                aggregate.run.graph_revision_id,
+            )
+        except AnbanError:
+            raise
+        except Exception:
+            raise persistence_error("interaction_update_applied") from None
+        return decision
+
+    async def supplements(self, task_id: TaskId, checkpoint_id: CheckpointId) -> tuple[str, ...]:
+        try:
+            async with self._factory() as unit:
+                entries = await unit.executions.list_context_entries(ContextScope.TASK, task_id)
+        except AnbanError:
+            raise
+        except Exception:
+            raise persistence_error("interaction_update_context") from None
+        return tuple(
+            entry.content
+            for entry in entries
+            if entry.kind is ContextEntryKind.SUPPLEMENT
+            and entry.state in {ContextConflictState.ACTIVE, ContextConflictState.CONFLICTING}
+            and entry.metadata.root.get("checkpoint_id") == str(checkpoint_id)
+        )
+
+    async def _validate_context(self, task_id: TaskId, entry: ContextEntry) -> None:
+        try:
+            async with self._factory() as unit:
+                entries = await unit.executions.list_context_entries(ContextScope.TASK, task_id)
+                summaries = await unit.executions.list_context_summaries(ContextScope.TASK, task_id)
+        except AnbanError:
+            raise
+        except Exception:
+            raise persistence_error("interaction_update_context") from None
+        active = tuple(
+            item
+            for item in entries
+            if item.state in {ContextConflictState.ACTIVE, ContextConflictState.CONFLICTING}
+        )
+        try:
+            TaskContext(task_id=task_id, entries=(*active, entry), summaries=summaries)
+        except ValueError:
+            raise self._error("interaction_update_context_limit") from None
+
+    async def _load(self, checkpoint_id: CheckpointId) -> tuple[ExecutionRunAggregate, Checkpoint]:
+        try:
+            async with self._factory() as unit:
+                checkpoint = await unit.executions.get_checkpoint(checkpoint_id)
+                aggregate = (
+                    None
+                    if checkpoint is None
+                    else await unit.executions.load_run(checkpoint.run_id)
+                )
+        except AnbanError:
+            raise
+        except Exception:
+            raise persistence_error("interaction_update_load") from None
+        if checkpoint is None or aggregate is None:
+            raise self._error("unknown")
+        if (
+            checkpoint.status is not CheckpointStatus.WAITING
+            or aggregate.run.status is not ExecutionRunStatus.RUNNING
+        ):
+            raise self._error("ineligible")
+        return aggregate, checkpoint
+
+    def _persistence(
+        self,
+        aggregate: ExecutionRunAggregate,
+        checkpoint: Checkpoint,
+    ) -> RunPersistence:
+        node = next((item for item in aggregate.nodes if item.id == checkpoint.node_run_id), None)
+        if node is None:
+            raise RuntimeUpdateService._error("ineligible")
+        return RunPersistence(
+            self._factory,
+            aggregate.task,
+            aggregate.run,
+            node,
+            sequence=max((event.sequence for event in aggregate.events), default=0),
+        )
+
+    @staticmethod
+    def _protected_node_ids(aggregate: ExecutionRunAggregate) -> tuple[str, ...]:
+        values: list[str] = []
+        for node in aggregate.nodes:
+            graph_node_id = node.metadata.root.get("graph_node_id")
+            if isinstance(graph_node_id, str) and graph_node_id not in values:
+                values.append(graph_node_id)
+        return tuple(values)
+
+    @staticmethod
+    def _revision(
+        aggregate: ExecutionRunAggregate,
+        decision: InteractionUpdateDecision,
+    ) -> GraphRevision | None:
+        if decision.impact is InteractionUpdateImpact.CONTEXT_ONLY:
+            return None
+        if decision.graph_spec is None:
+            raise RuntimeError("structural update lost its validated graph")
+        return GraphRevision.create(
+            task_id=aggregate.task.id,
+            previous_revision_id=aggregate.run.graph_revision_id,
+            reason=decision.rationale,
+            spec=decision.graph_spec,
+            metadata=SafeMetadata({"revision_source": "interaction_update"}),
+        )
+
+    @staticmethod
+    def _error(reason: str) -> AnbanError:
+        return AnbanError(
+            ErrorInfo(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="Interaction correlation or update is unavailable",
+                details=SafeMetadata({"reason": reason}),
+            )
+        )

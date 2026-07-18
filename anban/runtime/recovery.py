@@ -17,10 +17,11 @@ from anban.capability import (
     InventoryKind,
     InvocationContext,
 )
+from anban.core.context import ContextConflictState, ContextEntryKind, ContextScope
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.graph import TaskGraphNode
-from anban.core.ids import CheckpointId
-from anban.core.metadata import SafeMetadata
+from anban.core.ids import CheckpointId, TaskId
+from anban.core.metadata import SafeMetadata, validate_safe_text
 from anban.core.models import (
     CapabilityInvocation,
     Checkpoint,
@@ -65,12 +66,14 @@ class RuntimeRecovery:
         sufficiency: CapabilitySufficiencyEvaluator | None,
         *,
         artifact_cleanup: Callable[[InvocationContext, ArtifactReference], None] | None = None,
+        response_repair_retries: int,
     ) -> None:
         self._model = model
         self._capabilities = capabilities
         self._factory = factory
         self._sufficiency = sufficiency
         self._artifact_cleanup = artifact_cleanup
+        self._response_repair_retries = response_repair_retries
 
     async def resume(self, checkpoint_id: CheckpointId, *, cancel: bool = False) -> ExecutionResult:
         aggregate, checkpoint, invocation, node = await self._load(checkpoint_id)
@@ -159,12 +162,38 @@ class RuntimeRecovery:
                 outcome.status.value,
             )
             return await self._finish(persistence, outcome)
-        agent = RecoveredContinuationAgent(model, self._sufficiency, persistence)
+        agent = RecoveredContinuationAgent(
+            model,
+            self._sufficiency,
+            persistence,
+            response_repair_retries=self._response_repair_retries,
+        )
         descriptor = self._capabilities.describe(invocation.capability_name)
         strategy = self._strategy(descriptor)
+        try:
+            effective_request = await self._effective_request(
+                aggregate.task.id,
+                checkpoint.id,
+                aggregate.task.request,
+            )
+        except AnbanError as exc:
+            outcome = self._failure(
+                exc.info.code,
+                "Recovered Interaction update is invalid",
+                "interaction_update_context_invalid",
+                aggregate,
+            )
+            await persistence.recovery.completed(
+                checkpoint.id,
+                checkpoint.node_run_id,
+                checkpoint.invocation_id,
+                attempt,
+                outcome.status.value,
+            )
+            return await self._finish(persistence, outcome)
         if aggregate.graph_revision is None:
             outcome = await agent.execute(
-                aggregate.task.request,
+                effective_request,
                 invocation.capability_name,
                 invocation.id,
                 result,
@@ -185,6 +214,7 @@ class RuntimeRecovery:
                 invocation,
                 result,
                 strategy,
+                effective_request,
             )
         await persistence.recovery.completed(
             checkpoint.id,
@@ -208,6 +238,7 @@ class RuntimeRecovery:
         invocation: CapabilityInvocation,
         result: CapabilityResult,
         strategy: ExecutionStrategy,
+        effective_request: str,
     ) -> AgentOutcome:
         if aggregate.graph_revision is None:
             raise RuntimeError("validated recovery result lost its type")
@@ -259,7 +290,7 @@ class RuntimeRecovery:
 
         spec = aggregate.graph_revision.spec
         graph_input: dict[str, JsonValue] = (
-            {TASK_REQUEST_INPUT: aggregate.task.request}
+            {TASK_REQUEST_INPUT: effective_request}
             if spec.input_keys == (TASK_REQUEST_INPUT,)
             else {}
         )
@@ -270,7 +301,7 @@ class RuntimeRecovery:
             TaskGraphExecutor(),
             sufficiency=self._sufficiency,
             limits=None,
-            response_repair_retries=0,
+            response_repair_retries=self._response_repair_retries,
             artifact_cleanup=self._artifact_cleanup,
             metadata=aggregate.run.metadata,
             replay_actions=tuple(replay),
@@ -284,6 +315,41 @@ class RuntimeRecovery:
                 next(node for node in aggregate.nodes if node.id == route_event.node_run_id),
             ),
         )
+
+    async def _effective_request(
+        self,
+        task_id: TaskId,
+        checkpoint_id: CheckpointId,
+        request: str,
+    ) -> str:
+        try:
+            async with self._factory() as unit:
+                entries = await unit.executions.list_context_entries(ContextScope.TASK, task_id)
+        except AnbanError:
+            raise
+        except Exception:
+            raise self._error("interaction_update_context_load_failed") from None
+        supplements = tuple(
+            entry.content
+            for entry in entries
+            if entry.kind is ContextEntryKind.SUPPLEMENT
+            and entry.state in {ContextConflictState.ACTIVE, ContextConflictState.CONFLICTING}
+            and entry.metadata.root.get("checkpoint_id") == str(checkpoint_id)
+        )
+        if not supplements:
+            return request
+        combined = f"{request}\n\nAuthoritative mid-run supplemental user input:\n" + "\n".join(
+            f"- {value}" for value in supplements
+        )
+        try:
+            return validate_safe_text(
+                combined,
+                label="Updated Task request",
+                max_length=32_768,
+                allow_absolute_paths=True,
+            )
+        except ValueError:
+            raise self._error("interaction_update_context_invalid") from None
 
     @staticmethod
     def _strategy(descriptor: CapabilityDescriptor) -> ExecutionStrategy:

@@ -9,12 +9,17 @@ from anban.interaction.contracts import (
     InteractionInputKind,
     InteractionRoute,
 )
-from anban.interaction.service import InteractionChatSession, InteractionService
+from anban.interaction.service import (
+    CorrelatedWaitingExecution,
+    InteractionChatSession,
+    InteractionService,
+)
 
 __all__ = [
     "CorrelationFailureReason",
     "CorrelationKey",
     "CorrelationPurpose",
+    "CorrelatedWaitingExecution",
     "InteractionChatSession",
     "InteractionCorrelation",
     "InteractionEnvelope",

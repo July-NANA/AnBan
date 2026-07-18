@@ -102,6 +102,49 @@ def test_detached_start_and_fresh_checkpoint_commands_dispatch(
     ]
 
 
+def test_mid_run_update_dispatches_external_correlation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: list[tuple[str, str, str, bool]] = []
+
+    async def update(
+        namespace: str,
+        correlation_value: str,
+        content: str,
+        *,
+        json_output: bool,
+    ) -> int:
+        received.append((namespace, correlation_value, content, json_output))
+        return cli.EXIT_SUCCESS
+
+    monkeypatch.setattr(cli, "execute_run_update", update)
+
+    assert (
+        cli.main(
+            [
+                "run",
+                "update",
+                "anban.continuation",
+                "opaque-correlation",
+                "Apply",
+                "the",
+                "new",
+                "constraint.",
+                "--json",
+            ]
+        )
+        == cli.EXIT_SUCCESS
+    )
+    assert received == [
+        (
+            "anban.continuation",
+            "opaque-correlation",
+            "Apply the new constraint.",
+            True,
+        )
+    ]
+
+
 def test_detach_requires_async_mode(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["run", "detached work", "--detach"]) == cli.EXIT_USAGE
     assert "validation_failed" in capsys.readouterr().err

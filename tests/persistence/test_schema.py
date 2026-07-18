@@ -45,6 +45,11 @@ def test_event_order_and_run_detail_indexes_exist() -> None:
         and tuple(column.name for column in item.columns) == ("run_id", "sequence")
         for item in events.constraints
     )
+    assert {
+        "uq_events_interaction_resume_checkpoint",
+        "uq_events_interaction_resume_correlation",
+        "uq_events_interaction_update_identity",
+    } <= {index.name for index in events.indexes}
     run_indexes = Base.metadata.tables["execution_runs"].indexes
     assert {"task_id"} in ({column.name for column in index.columns} for index in run_indexes)
     assert {"created_at"} in ({column.name for column in index.columns} for index in run_indexes)
@@ -85,8 +90,9 @@ def test_alembic_has_one_reversible_head_revision() -> None:
     configuration = Config(repository / "alembic.ini")
     scripts = ScriptDirectory.from_config(configuration)
     head = scripts.get_current_head()
-    assert head == "0007_node_run_outputs"
+    assert head == "0008_interaction_updates"
+    assert len(head) <= 32
     revision = scripts.get_revision(head)
     assert revision is not None
-    assert revision.down_revision == "0006_checkpoints"
+    assert revision.down_revision == "0007_node_run_outputs"
     assert callable(revision.module.downgrade)

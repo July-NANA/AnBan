@@ -354,6 +354,27 @@ class EventRecord(SafeMetadataMixin, Base):
     checkpoint_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
 
 
+Index(
+    "uq_events_interaction_resume_checkpoint",
+    EventRecord.checkpoint_id,
+    unique=True,
+    postgresql_where=EventRecord.event_type == "interaction.resume_bound",
+)
+Index(
+    "uq_events_interaction_resume_correlation",
+    EventRecord.safe_metadata["resume_namespace"].as_string(),
+    EventRecord.safe_metadata["resume_correlation_hash"].as_string(),
+    unique=True,
+    postgresql_where=EventRecord.event_type == "interaction.resume_bound",
+)
+Index(
+    "uq_events_interaction_update_identity",
+    EventRecord.safe_metadata["interaction_id"].as_string(),
+    unique=True,
+    postgresql_where=EventRecord.event_type == "interaction.update_received",
+)
+
+
 class ContextEntryRecord(SafeMetadataMixin, Base):
     __tablename__ = "context_entries"
     __table_args__ = (

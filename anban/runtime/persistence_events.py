@@ -46,7 +46,7 @@ def task_route_transition(
     async def operation(repository: ExecutionRepository) -> None:
         if revision is not None:
             await repository.add_graph_revision(revision)
-            await repository.update_run(updated_run)
+            await repository.set_run_graph_revision(run.id, None, revision.id)
 
     metadata = SafeMetadata(
         {

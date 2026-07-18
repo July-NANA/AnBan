@@ -20,6 +20,7 @@ from anban.core.ids import (
     SessionId,
     TaskId,
 )
+from anban.core.metadata import SafeMetadata
 from anban.core.models import (
     Artifact,
     CapabilityInvocation,
@@ -60,6 +61,13 @@ class ExecutionRepository(Protocol):
 
     async def update_run(self, run: ExecutionRun) -> None: ...
 
+    async def set_run_graph_revision(
+        self,
+        run_id: ExecutionRunId,
+        expected_revision_id: GraphRevisionId | None,
+        revision_id: GraphRevisionId,
+    ) -> None: ...
+
     async def add_graph_revision(self, revision: GraphRevision) -> None: ...
 
     async def get_graph_revision(self, revision_id: GraphRevisionId) -> GraphRevision | None: ...
@@ -91,6 +99,8 @@ class ExecutionRepository(Protocol):
     async def add_event(self, event: Event) -> None: ...
 
     async def get_event(self, event_id: EventId) -> Event | None: ...
+
+    async def find_event(self, event_type: str, metadata_match: SafeMetadata) -> Event | None: ...
 
     async def get_node_run(self, node_run_id: NodeRunId) -> NodeRun | None: ...
 

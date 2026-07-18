@@ -20,7 +20,15 @@ from anban.application import (
 )
 from anban.core.errors import AnbanError, ErrorCategory, ErrorCode, ErrorInfo
 from anban.core.ids import CheckpointId, ExecutionRunId, SessionId, TaskId, new_interaction_id
-from anban.interaction import InteractionEnvelope
+from anban.interaction import (
+    CorrelatedWaitingExecution,
+    CorrelationKey,
+    CorrelationPurpose,
+    InteractionCorrelation,
+    InteractionEnvelope,
+    InteractionInputKind,
+    InteractionRoute,
+)
 from anban.runtime import (
     AgentOutcomeStatus,
     ArtifactDetail,
@@ -154,6 +162,36 @@ async def execute_checkpoint(
         return result_exit_code(current)
     finally:
         await asyncio.shield(application.close())
+
+
+async def execute_run_update(
+    namespace: str,
+    correlation_value: str,
+    content: str,
+    *,
+    json_output: bool,
+) -> int:
+    application = await build_application()
+    try:
+        result = await application.interactions.submit(
+            InteractionEnvelope(
+                id=new_interaction_id(),
+                input_kind=InteractionInputKind.SUPPLEMENTAL_INPUT,
+                content=content,
+                correlation=InteractionCorrelation(
+                    route=InteractionRoute.RESUME_ELIGIBLE_RUN,
+                    resume_key=CorrelationKey(
+                        purpose=CorrelationPurpose.RESUME,
+                        namespace=namespace,
+                        value=correlation_value,
+                    ),
+                ),
+            )
+        )
+    finally:
+        await application.close()
+    emit_result(result, json_output=json_output)
+    return result_exit_code(result)
 
 
 async def execute_chat(*, json_output: bool) -> int:
@@ -338,6 +376,9 @@ def emit_waiting(waiting: WaitingExecution, *, json_output: bool) -> None:
     else:
         print(f"Waiting: {waiting.checkpoint_id}")
         print(f"Run: {waiting.run_id}")
+        if isinstance(waiting, CorrelatedWaitingExecution):
+            print(f"Resume namespace: {waiting.resume_key.namespace}")
+            print(f"Resume correlation: {waiting.resume_key.value}")
 
 
 def emit_workspace(result: WorkspaceInitialization, *, json_output: bool) -> None:
@@ -548,6 +589,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     execute_checkpoint(
                         parse_checkpoint_id(values[1]),
                         cancel=values[0] == "cancel",
+                        json_output=json_output,
+                    )
+                )
+            if values[0] == "update":
+                if len(values) < 4 or arguments.async_mode or arguments.detach:
+                    raise ValueError(
+                        "run update requires a namespace, correlation value, and content"
+                    )
+                return asyncio.run(
+                    execute_run_update(
+                        values[1],
+                        values[2],
+                        " ".join(values[3:]),
                         json_output=json_output,
                     )
                 )

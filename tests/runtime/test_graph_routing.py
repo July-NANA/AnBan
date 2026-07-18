@@ -109,6 +109,7 @@ async def test_invalid_route_exhaustion_and_nonrepairable_model_failure_are_expl
         await TaskRouteEvaluator().decide("Reject an invalid route.", model, repair_limit=1)
     assert invalid.value.info.code is ErrorCode.MODEL_RESPONSE_INVALID
     assert invalid.value.info.details.root["reason"] == "task_route_invalid"
+    assert invalid.value.info.details.root["last_validation_reason"] == "fixed_route_graph_present"
 
     unavailable = AnbanError(
         ErrorInfo(code=ErrorCode.MODEL_TRANSPORT_FAILED, message="Model transport failed")

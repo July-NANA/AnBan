@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
+from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import CheckpointId, ExecutionRunId, SessionId, TaskId
 from anban.core.metadata import SafeMetadata, SafeScalar
 from anban.interaction.contracts import (
+    CorrelationKey,
+    CorrelationPurpose,
     InteractionEnvelope,
     InteractionInputKind,
     InteractionRoute,
@@ -21,6 +26,14 @@ from anban.runtime import (
     RunSummary,
     WaitingExecution,
 )
+
+_CONTINUATION_NAMESPACE = "anban.continuation"
+
+
+class CorrelatedWaitingExecution(WaitingExecution):
+    """Waiting projection carrying one opaque external resume correlation."""
+
+    resume_key: CorrelationKey
 
 
 def interaction_metadata(envelope: InteractionEnvelope) -> SafeMetadata:
@@ -108,6 +121,8 @@ class InteractionService:
         self._queries = queries
 
     async def submit(self, envelope: InteractionEnvelope) -> ExecutionResult:
+        if envelope.input_kind is InteractionInputKind.SUPPLEMENTAL_INPUT:
+            return await self._submit_update(envelope)
         require_existing_cli_path(envelope)
         return await self._runtime_service().execute(
             envelope.content,
@@ -116,21 +131,74 @@ class InteractionService:
 
     async def start_async(
         self, envelope: InteractionEnvelope
-    ) -> WaitingExecution | ExecutionResult:
+    ) -> CorrelatedWaitingExecution | ExecutionResult:
         require_existing_cli_path(envelope)
-        return await self._runtime_service().start_async(
+        result = await self._runtime_service().start_async(
             envelope.content,
             metadata=interaction_metadata(envelope),
         )
+        return await self._correlate_waiting(result)
 
-    async def resume_async(self, checkpoint_id: CheckpointId) -> WaitingExecution | ExecutionResult:
-        return await self._runtime_service().resume_async(checkpoint_id)
+    async def resume_async(
+        self, checkpoint_id: CheckpointId
+    ) -> CorrelatedWaitingExecution | ExecutionResult:
+        return await self._correlate_waiting(
+            await self._runtime_service().resume_async(checkpoint_id)
+        )
 
     async def cancel_async(self, checkpoint_id: CheckpointId) -> ExecutionResult:
         return await self._runtime_service().cancel_async(checkpoint_id)
 
     async def detach_async(self, checkpoint_id: CheckpointId) -> None:
         await self._runtime_service().detach_async(checkpoint_id)
+
+    async def _correlate_waiting(
+        self,
+        result: WaitingExecution | ExecutionResult,
+    ) -> CorrelatedWaitingExecution | ExecutionResult:
+        if not isinstance(result, WaitingExecution):
+            return result
+        key = CorrelationKey(
+            purpose=CorrelationPurpose.RESUME,
+            namespace=_CONTINUATION_NAMESPACE,
+            value=uuid4().hex,
+        )
+        await self._runtime_service().bind_resume_correlation(
+            result.checkpoint_id,
+            key.namespace,
+            key.fingerprint,
+        )
+        return CorrelatedWaitingExecution(
+            **result.model_dump(),
+            resume_key=key,
+        )
+
+    async def _submit_update(self, envelope: InteractionEnvelope) -> ExecutionResult:
+        correlation = envelope.correlation
+        if (
+            correlation.route is not InteractionRoute.RESUME_ELIGIBLE_RUN
+            or correlation.resume_key is None
+            or correlation.deduplication_key is not None
+        ):
+            raise AnbanError(
+                ErrorInfo(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message="Supplemental Interaction correlation is invalid",
+                    details=SafeMetadata({"reason": "malformed"}),
+                )
+            )
+        key = correlation.resume_key
+        checkpoint_id = await self._runtime_service().resolve_resume_correlation(
+            key.namespace,
+            key.fingerprint,
+        )
+        return await self._runtime_service().apply_interaction_update(
+            checkpoint_id,
+            envelope.content,
+            envelope.id,
+            envelope.source,
+            envelope.received_at,
+        )
 
     def chat(self) -> InteractionChatSession:
         return InteractionChatSession(self._runtime_service().chat())

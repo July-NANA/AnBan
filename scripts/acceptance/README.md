@@ -22,12 +22,13 @@ These commands fail closed and emit only bounded evidence:
   or Tool order. Gate A strictly proves that one Process Invocation can collect two Artifacts; the
   semantic recovery variants separately prove Run-level persistence and restart queries for at
   least two valid Artifacts without prescribing how many legitimate Invocations the model uses.
-- `pnpm run acceptance:p1-main-agent`: eight real-model Runs in an isolated Workspace through the
+- `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
-  ready-Skill variants, one multi-Skill Task, clarification without a side effect, and explicit
-  failure without an Artifact. Two ready Skills, their identities, markers, and task objects are
-  generated for each Gate run. Every case is reconstructed through a fresh query-only Application
-  and reconciles terminal database, Audit, Trace, Invocation, and Artifact facts.
+  ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three
+  explicit-failure variants without an Artifact. Two ready Skills, their identities, markers, and
+  task objects are generated for each Gate run. Every case is reconstructed through a fresh
+  query-only Application and reconciles terminal database, Audit, Trace, Invocation, and Artifact
+  facts.
 - `pnpm run acceptance:p1`: the complete #72 sequence: local quality/build/Doctor, online Doctor,
   PostgreSQL, real Model Gateway, real local Capabilities, P1 Main Agent cases, the existing real
   Process/Skill-acquisition Runtime Gate, and security regression. It stops on the first real

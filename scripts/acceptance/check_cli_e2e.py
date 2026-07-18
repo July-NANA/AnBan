@@ -296,6 +296,23 @@ def require_success(result: ExecutionResult, label: str) -> None:
         raise RuntimeGateError(f"{label} did not complete successfully")
 
 
+def sufficient_process_path_issues(
+    strategy: object,
+    target: object,
+    audit_event_types: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Reject Skill acquisition or activation when the real Process path is sufficient."""
+
+    issues: set[str] = set()
+    if strategy != "use_process" or target != "process.execute":
+        issues.add("process_not_selected")
+    if "agent.skill_acquisition_requested" in audit_event_types:
+        issues.add("skill_acquisition_requested")
+    if "skill.activated" in audit_event_types:
+        issues.add("skill_activated")
+    return tuple(sorted(issues))
+
+
 async def gate_a() -> dict[str, object]:
     with local_http_endpoint() as endpoint:
         result = await submit(
@@ -320,6 +337,17 @@ async def gate_a() -> dict[str, object]:
     ]
     if not observation.complete or observation.inconsistencies or not capability_events:
         raise RuntimeGateError("Gate A Trace is incomplete")
+    sufficiency = next(
+        (entry for entry in observation.audit if entry.event_type == "agent.sufficiency_assessed"),
+        None,
+    )
+    path_issues = sufficient_process_path_issues(
+        None if sufficiency is None else sufficiency.metadata.root.get("strategy"),
+        None if sufficiency is None else sufficiency.metadata.root.get("target"),
+        tuple(entry.event_type for entry in observation.audit),
+    )
+    if path_issues:
+        raise RuntimeGateError(f"Gate A sufficient Process path is invalid: {list(path_issues)}")
     summary_keys = {
         "command",
         "argument_count",

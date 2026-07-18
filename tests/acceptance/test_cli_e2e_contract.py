@@ -10,6 +10,7 @@ from scripts.acceptance.check_cli_e2e import (
     RecoverableArtifactEvidence,
     recoverable_artifact_failure,
     recoverable_artifact_issues,
+    sufficient_process_path_issues,
 )
 
 
@@ -122,3 +123,46 @@ def test_recoverable_artifact_failure_is_a_safe_bounded_matrix() -> None:
     assert "artifact_invocations=1" in message
     assert "capability_invocations=1" in message
     assert "artifact_events=1" in message
+
+
+def test_sufficient_process_path_needs_no_skill_activity() -> None:
+    assert (
+        sufficient_process_path_issues(
+            "use_process",
+            "process.execute",
+            ("agent.sufficiency_assessed", "capability.completed", "run.final"),
+        )
+        == ()
+    )
+
+
+@pytest.mark.parametrize(
+    ("strategy", "target", "events", "expected"),
+    [
+        (
+            "acquire_skill",
+            None,
+            ("agent.sufficiency_assessed",),
+            ("process_not_selected",),
+        ),
+        (
+            "use_process",
+            "process.execute",
+            ("agent.skill_acquisition_requested",),
+            ("skill_acquisition_requested",),
+        ),
+        (
+            "use_process",
+            "process.execute",
+            ("skill.activated",),
+            ("skill_activated",),
+        ),
+    ],
+)
+def test_sufficient_process_path_rejects_non_process_or_skill_search(
+    strategy: object,
+    target: object,
+    events: tuple[str, ...],
+    expected: tuple[str, ...],
+) -> None:
+    assert sufficient_process_path_issues(strategy, target, events) == expected

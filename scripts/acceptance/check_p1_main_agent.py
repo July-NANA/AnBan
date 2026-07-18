@@ -228,24 +228,33 @@ async def accept_ready_skill_variants(slug: str) -> list[CaseEvidence]:
     return cases
 
 
-async def accept_multiple_skills(first: str, second: str) -> CaseEvidence:
-    task_object = uuid4().hex[:14]
-    result = await submit(
+async def accept_multiple_skill_variants(first: str, second: str) -> list[CaseEvidence]:
+    task_objects = (uuid4().hex[:14], uuid4().hex[:14], uuid4().hex[:14])
+    prompts = (
         f"One goal requires both independently ready Skills {first} and {second}. For task object "
-        f"{task_object}, activate and follow each real Skill, execute their instructions, and "
-        "return the resulting managed Artifacts. Do not merge or invent either Skill."
+        f"{task_objects[0]}, activate and follow each real Skill, execute their instructions, and "
+        "return the resulting managed Artifacts. Do not merge or invent either Skill.",
+        f"Complete a fresh combined validation for {task_objects[1]} with both {second} and "
+        f"{first}. Each discovered Skill must be activated and used for its independent output; "
+        "finish only after both managed Artifacts exist.",
+        f"任务对象 {task_objects[2]} 同时需要两个现有 Skill：{first} 与 {second}。请真实激活并"
+        "执行两者的指令，分别保留可追溯的 Artifact；任一结果缺失都不能宣告完成。",
     )
-    detail = await query_detail(result)
-    require_reconstructed(result, detail, expected_status=AgentOutcomeStatus.SUCCEEDED)
-    require_events(
-        detail,
-        {"skill.activated", "artifact.created", "agent.completion_assessed", "run.final"},
-    )
-    if not {first, second} <= activated_skills(detail):
-        raise P1GateError("one Task did not activate both independently ready Skills")
-    if len(detail.artifacts) < 2:
-        raise P1GateError("multi-Skill Task did not persist both real outputs")
-    return evidence("multiple_skills", result, detail)
+    cases: list[CaseEvidence] = []
+    for index, prompt in enumerate(prompts, start=1):
+        result = await submit(prompt)
+        detail = await query_detail(result)
+        require_reconstructed(result, detail, expected_status=AgentOutcomeStatus.SUCCEEDED)
+        require_events(
+            detail,
+            {"skill.activated", "artifact.created", "agent.completion_assessed", "run.final"},
+        )
+        if not {first, second} <= activated_skills(detail):
+            raise P1GateError("one Task did not activate both independently ready Skills")
+        if len(detail.artifacts) < 2:
+            raise P1GateError("multi-Skill Task did not persist both real outputs")
+        cases.append(evidence(f"multiple_skills_variant_{index}", result, detail))
+    return cases
 
 
 async def accept_clarification() -> CaseEvidence:
@@ -263,19 +272,31 @@ async def accept_clarification() -> CaseEvidence:
     return evidence("clarification", result, detail)
 
 
-async def accept_explicit_failure() -> CaseEvidence:
-    missing = f"unavailable-{uuid4().hex}"
-    result = await submit(
-        f"The result can only be produced by the executable named {missing}. Do not install, "
-        "download, emulate, or substitute anything. If that exact executable is unavailable, "
-        "record an explicit failure and do not fabricate output."
+async def accept_explicit_failure_variants() -> list[CaseEvidence]:
+    missing_program = f"unavailable-{uuid4().hex}"
+    missing_file = f"tmp/absent-{uuid4().hex}.dat"
+    missing_skill = f"@missing/{uuid4().hex[:16]}"
+    prompts = (
+        f"The result can only be produced by the executable named {missing_program}. Do not "
+        "install, download, emulate, or substitute anything. If that exact executable is "
+        "unavailable, record an explicit failure and do not fabricate output.",
+        f"Report the real digest of the existing Workspace file {missing_file}. The file must "
+        "already exist: do not create, replace, or infer it. If it is absent, fail explicitly "
+        "without an Artifact or invented digest.",
+        f"This task is authorized to use only the already-installed Skill {missing_skill}. Do not "
+        "install a Skill and do not substitute Process, Memory, or another Skill. If that exact "
+        "ready Skill is unavailable, record an explicit failure.",
     )
-    detail = await query_detail(result)
-    require_reconstructed(result, detail, expected_status=AgentOutcomeStatus.FAILED)
-    require_events(detail, {"agent.failure_selected", "run.error"})
-    if detail.artifacts:
-        raise P1GateError("explicit failure fabricated an Artifact")
-    return evidence("explicit_failure", result, detail)
+    cases: list[CaseEvidence] = []
+    for index, prompt in enumerate(prompts, start=1):
+        result = await submit(prompt)
+        detail = await query_detail(result)
+        require_reconstructed(result, detail, expected_status=AgentOutcomeStatus.FAILED)
+        require_events(detail, {"agent.failure_selected", "run.error"})
+        if detail.artifacts:
+            raise P1GateError("explicit failure fabricated an Artifact")
+        cases.append(evidence(f"explicit_failure_variant_{index}", result, detail))
+    return cases
 
 
 async def accept_p1_main_agent() -> dict[str, object]:
@@ -303,13 +324,15 @@ async def accept_p1_main_agent() -> dict[str, object]:
         cases.append(await accept_direct_answer())
         cases.append(await accept_memory_capability())
         cases.extend(await accept_ready_skill_variants(primary))
-        cases.append(await accept_multiple_skills(primary, secondary))
+        cases.extend(await accept_multiple_skill_variants(primary, secondary))
         cases.append(await accept_clarification())
-        cases.append(await accept_explicit_failure())
+        cases.extend(await accept_explicit_failure_variants())
     return {
         "cases": [asdict(item) for item in cases],
         "case_count": len(cases),
         "ready_skill_variant_count": 3,
+        "multi_skill_variant_count": 3,
+        "explicit_failure_variant_count": 3,
         "dynamic_skill_count": 2,
     }
 

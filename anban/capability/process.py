@@ -20,6 +20,7 @@ from anban.capability.contracts import (
     CapabilityDescriptor,
     CapabilityResult,
     CapabilityResultStatus,
+    InventoryKind,
     InvocationContext,
 )
 from anban.capability.workspace import WorkspaceBoundary, capability_error
@@ -562,6 +563,7 @@ class ProcessCapability:
                 "Execute an available program without an implicit shell; supports bounded I/O, "
                 "environment overrides, working directories, and declared output Artifacts."
             ),
+            inventory_kind=InventoryKind.PROCESS,
             input_schema={
                 "type": "object",
                 "properties": {

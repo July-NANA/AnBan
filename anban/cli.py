@@ -7,6 +7,7 @@ import asyncio
 import json
 import sys
 from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -14,6 +15,7 @@ from pydantic import ValidationError
 from anban.application import (
     Application,
     build_application,
+    build_inventory_application,
     build_query_application,
 )
 from anban.core.errors import AnbanError, ErrorCategory, ErrorCode, ErrorInfo
@@ -59,6 +61,23 @@ def parser() -> argparse.ArgumentParser:
     artifacts = commands.add_parser("artifacts", help="List logical Run Artifacts.")
     artifacts.add_argument("run_id")
     add_json_option(artifacts)
+    capabilities = commands.add_parser("capabilities", help="Inspect available Agent paths.")
+    capability_commands = capabilities.add_subparsers(dest="capability_command", required=True)
+    capability_list = capability_commands.add_parser("list", help="Show the inventory snapshot.")
+    add_json_option(capability_list)
+    capability_search = capability_commands.add_parser(
+        "search", help="Search the bounded inventory."
+    )
+    capability_search.add_argument("text", nargs="?")
+    capability_search.add_argument("--kind", action="append", default=[])
+    capability_search.add_argument("--available-only", action="store_true")
+    capability_search.add_argument("--limit", type=int, default=32)
+    add_json_option(capability_search)
+    capability_describe = capability_commands.add_parser(
+        "describe", help="Describe one exact inventory key."
+    )
+    capability_describe.add_argument("key")
+    add_json_option(capability_describe)
     return root
 
 
@@ -161,6 +180,24 @@ async def list_artifacts(run_id: ExecutionRunId, *, json_output: bool) -> int:
     finally:
         await application.close()
     emit_artifacts(artifacts, json_output=json_output)
+    return EXIT_SUCCESS
+
+
+def inspect_capabilities(arguments: argparse.Namespace, *, json_output: bool) -> int:
+    application = build_inventory_application()
+    if arguments.capability_command == "list":
+        snapshot = application.snapshot()
+        emit_inventory_snapshot(snapshot, json_output=json_output)
+    elif arguments.capability_command == "search":
+        items = application.search(
+            text=arguments.text,
+            kinds=tuple(arguments.kind),
+            include_unavailable=not arguments.available_only,
+            limit=arguments.limit,
+        )
+        emit_inventory_items(items, json_output=json_output)
+    else:
+        emit_inventory_item(application.describe(arguments.key), json_output=json_output)
     return EXIT_SUCCESS
 
 
@@ -308,6 +345,38 @@ def emit_artifacts(artifacts: tuple[ArtifactDetail, ...], *, json_output: bool) 
         print(f"{artifact.id}  {artifact.size_bytes}  {artifact.media_type}  {artifact.uri}")
 
 
+def emit_inventory_snapshot(snapshot: Any, *, json_output: bool) -> None:
+    if json_output:
+        print(snapshot.model_dump_json())
+        return
+    print(f"Generated: {snapshot.generated_at.isoformat()}")
+    emit_inventory_items(snapshot.items, json_output=False)
+
+
+def emit_inventory_items(items: Sequence[Any], *, json_output: bool) -> None:
+    if json_output:
+        print(
+            json.dumps(
+                [item.model_dump(mode="json") for item in items],
+                separators=(",", ":"),
+            )
+        )
+        return
+    print("KEY  KIND  AVAILABILITY  NAME")
+    for item in items:
+        print(f"{item.key}  {item.kind.value}  {item.availability.value}  {item.name}")
+
+
+def emit_inventory_item(item: Any, *, json_output: bool) -> None:
+    if json_output:
+        print(item.model_dump_json())
+        return
+    emit_inventory_items((item,), json_output=False)
+    print(f"Description: {item.description}")
+    if item.unavailable_reason is not None:
+        print(f"Unavailable: {item.unavailable_reason}")
+
+
 def result_exit_code(result: ExecutionResult) -> int:
     if not result.persisted:
         return EXIT_FAILURE
@@ -364,6 +433,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return asyncio.run(list_runs(arguments.limit, json_output=json_output))
         if arguments.command == "trace":
             return asyncio.run(show_trace(parse_run_id(arguments.run_id), json_output=json_output))
+        if arguments.command == "capabilities":
+            return inspect_capabilities(arguments, json_output=json_output)
         return asyncio.run(list_artifacts(parse_run_id(arguments.run_id), json_output=json_output))
     except KeyboardInterrupt:
         emit_error("execution_interrupted", "Execution was interrupted", json_output=json_output)

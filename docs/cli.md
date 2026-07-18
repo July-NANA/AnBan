@@ -1,8 +1,15 @@
-# v0.1 CLI Reference
+# CLI Reference
 
-The production CLI commands are `workspace init`, `run`, `chat`, `runs`, `trace`, and `artifacts`.
-Every command supports `--json`. Run failures use stable error codes; Trace and Artifact queries
-work from a new database-only Application.
+The production CLI commands include `workspace init`, `run`, `chat`, `runs`, `trace`, `artifacts`,
+and the v0.5 `capabilities` inspection group. Every command supports `--json`. Run failures use
+stable error codes; Trace and Artifact queries work from a new database-only Application.
+
+`capabilities list` returns a point-in-time snapshot. `capabilities search [TEXT]` accepts repeated
+`--kind`, `--available-only`, and a bounded `--limit`. `capabilities describe KEY` requires an
+exact inventory key and fails explicitly for unknown keys. These commands compose the current
+Workspace Registry, Skill catalog, and model configuration without executing a Capability or
+opening model/database clients. MCP, Memory, and sub-agent paths remain visible as unavailable
+until their owning v0.5 deliveries implement them.
 
 The Agent sees only `skill.activate` and `process.execute`. The Process input accepts `command`,
 string `args`, optional `cwd`, `env` name/value entries, text `stdin`, `timeout`, and declared

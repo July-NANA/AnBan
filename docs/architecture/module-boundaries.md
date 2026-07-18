@@ -22,8 +22,11 @@ Owns the Model Port and its adapters. Model reasoning is deliberately separate f
 ## Capability
 
 Owns `CapabilityPort`, `CapabilityHandler`, the Registry, uniform `SKILL.md` discovery/activation,
-and the general Process Handler. Production Capability names are exactly `skill.activate` and
-`process.execute`. A concrete tool normally adds a Skill, not a Handler. No Skill source or
+the general Process Handler, and the read-only `CapabilityInventoryPort` projection. The unified
+inventory describes the independently configured Model, registered Capabilities, ready Skills,
+Process, and explicitly unavailable future MCP, Memory, and sub-agent paths without invoking any
+of them or creating a second Registry. Production Capability names are exactly `skill.activate`
+and `process.execute`. A concrete tool normally adds a Skill, not a Handler. No Skill source or
 installer receives a special branch. MCP and external Agents remain future categories.
 
 ## Persistence

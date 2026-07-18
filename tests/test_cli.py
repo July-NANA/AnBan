@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 import anban.cli as cli
+from anban.application import InventoryApplication
+from anban.capability import CapabilityRegistry, UnifiedCapabilityInventory
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 
 
@@ -99,6 +101,47 @@ def test_raw_exception_text_is_never_emitted(
     output = capsys.readouterr()
     assert canary not in output.out + output.err
     assert "execution_failed" in output.err
+
+
+def test_capability_inventory_cli_lists_searches_and_describes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    application = InventoryApplication(
+        UnifiedCapabilityInventory(CapabilityRegistry(), model_available=True)
+    )
+    monkeypatch.setattr(cli, "build_inventory_application", lambda: application)
+
+    assert cli.main(["capabilities", "list", "--json"]) == cli.EXIT_SUCCESS
+    snapshot = json.loads(capsys.readouterr().out)
+    assert snapshot["generated_at"]
+    assert {item["kind"] for item in snapshot["items"]} >= {
+        "model",
+        "mcp",
+        "memory",
+        "sub_agent",
+    }
+
+    assert (
+        cli.main(
+            [
+                "capabilities",
+                "search",
+                "durable context",
+                "--kind",
+                "memory",
+                "--limit",
+                "3",
+                "--json",
+            ]
+        )
+        == cli.EXIT_SUCCESS
+    )
+    matches = json.loads(capsys.readouterr().out)
+    assert [item["key"] for item in matches] == ["memory:context"]
+
+    assert cli.main(["capabilities", "describe", "model:default", "--json"]) == cli.EXIT_SUCCESS
+    assert json.loads(capsys.readouterr().out)["availability"] == "ready"
 
 
 @pytest.mark.parametrize(

@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import timedelta
 
-from anban.capability import ArtifactReference, CapabilityPort, InvocationContext
+from anban.capability import (
+    ArtifactReference,
+    CapabilityInventoryPort,
+    CapabilityPort,
+    InvocationContext,
+)
 from anban.config import policy
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import new_execution_run_id, new_node_run_id, new_task_id
@@ -45,6 +50,7 @@ class PersistentRuntime:
         capabilities: CapabilityPort,
         unit_of_work: UnitOfWorkFactory,
         *,
+        inventory: CapabilityInventoryPort | None = None,
         limits: AgentLimits | None = None,
         response_repair_retries: int = policy.MODEL_RESPONSE_REPAIR_RETRIES_DEFAULT,
         artifact_cleanup: Callable[[InvocationContext, ArtifactReference], None] | None = None,
@@ -52,9 +58,16 @@ class PersistentRuntime:
         self._model = model
         self._capabilities = capabilities
         self._unit_of_work = unit_of_work
+        self._inventory = inventory
         self._limits = limits
         self._response_repair_retries = response_repair_retries
         self._artifact_cleanup = artifact_cleanup
+
+    @property
+    def inventory(self) -> CapabilityInventoryPort:
+        if self._inventory is None:
+            raise RuntimeError("Capability inventory is not configured")
+        return self._inventory
 
     async def execute(
         self, request: str, *, metadata: SafeMetadata | None = None

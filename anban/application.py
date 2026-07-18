@@ -6,7 +6,14 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from anban.capability import local_capability_registry
+from anban.capability import (
+    CapabilityInventoryItem,
+    CapabilityInventoryPort,
+    CapabilityInventoryQuery,
+    CapabilityInventorySnapshot,
+    InventoryKind,
+    local_capability_components,
+)
 from anban.capability.workspace import WorkspaceBoundary
 from anban.config import load_configuration
 from anban.interaction import InteractionService
@@ -20,6 +27,7 @@ class Application:
     """Owned production resources and the Interaction entry point."""
 
     interactions: InteractionService
+    inventory: CapabilityInventoryPort
     _model: OpenAICompatibleAdapter
     _engine: AsyncEngine
 
@@ -39,6 +47,36 @@ class QueryApplication:
         await self._engine.dispose()
 
 
+@dataclass(frozen=True)
+class InventoryApplication:
+    """Read-only composition for truthful inventory inspection without execution prerequisites."""
+
+    inventory: CapabilityInventoryPort
+
+    def snapshot(self) -> CapabilityInventorySnapshot:
+        return self.inventory.snapshot()
+
+    def search(
+        self,
+        *,
+        text: str | None,
+        kinds: tuple[str, ...],
+        include_unavailable: bool,
+        limit: int,
+    ) -> tuple[CapabilityInventoryItem, ...]:
+        return self.inventory.search(
+            CapabilityInventoryQuery(
+                text=text,
+                kinds=tuple(InventoryKind(kind) for kind in kinds),
+                include_unavailable=include_unavailable,
+                limit=limit,
+            )
+        )
+
+    def describe(self, key: str) -> CapabilityInventoryItem:
+        return self.inventory.describe(key)
+
+
 async def build_application() -> Application:
     """Compose real Adapters without exposing them to the CLI command handlers."""
 
@@ -49,7 +87,7 @@ async def build_application() -> Application:
     )
     engine = create_database_engine(configuration.database.require("development"))
     try:
-        capabilities = local_capability_registry(
+        capabilities, inventory = local_capability_components(
             workspace_root=configuration.workspace,
             process_default_timeout_seconds=configuration.process.default_timeout_seconds,
             process_max_timeout_seconds=configuration.process.max_timeout_seconds,
@@ -60,18 +98,20 @@ async def build_application() -> Application:
             max_artifacts=configuration.process.max_artifacts,
             artifact_max_bytes=configuration.process.artifact_max_bytes,
             protected_values=configuration.protected_values(),
+            model_available=True,
         )
         workspace_boundary = WorkspaceBoundary(configuration.workspace)
         runtime = PersistentRuntime(
             model,
             capabilities,
             SQLAlchemyUnitOfWorkFactory(engine),
+            inventory=inventory,
             limits=AgentLimits(**configuration.agent.model_dump()),
             response_repair_retries=model_configuration.response_repair_retries,
             artifact_cleanup=workspace_boundary.delete_artifact,
         )
         queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
-        return Application(InteractionService(runtime, queries), model, engine)
+        return Application(InteractionService(runtime, queries), inventory, model, engine)
     except BaseException:
         await model.aclose()
         await engine.dispose()
@@ -83,3 +123,23 @@ async def build_query_application() -> QueryApplication:
     engine = create_database_engine(configuration.database.require("development"))
     queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
     return QueryApplication(InteractionService(None, queries), engine)
+
+
+def build_inventory_application() -> InventoryApplication:
+    """Compose inventory from current Workspace facts without opening model or database clients."""
+
+    configuration = load_configuration()
+    _, inventory = local_capability_components(
+        workspace_root=configuration.workspace,
+        process_default_timeout_seconds=configuration.process.default_timeout_seconds,
+        process_max_timeout_seconds=configuration.process.max_timeout_seconds,
+        stdout_max_bytes=configuration.process.stdout_max_bytes,
+        stderr_max_bytes=configuration.process.stderr_max_bytes,
+        stdin_max_bytes=configuration.process.stdin_max_bytes,
+        max_arguments=configuration.process.max_arguments,
+        max_artifacts=configuration.process.max_artifacts,
+        artifact_max_bytes=configuration.process.artifact_max_bytes,
+        protected_values=configuration.protected_values(),
+        model_available=configuration.model is not None,
+    )
+    return InventoryApplication(inventory)

@@ -186,6 +186,7 @@ class CapabilityDescriptor(CapabilityValue):
     description: str = Field(min_length=1, max_length=1024)
     input_schema: dict[str, JsonValue]
     kind: CapabilityKind = CapabilityKind.TOOL
+    inventory_kind: InventoryKind = InventoryKind.CAPABILITY
     available: bool = True
 
     @field_validator("description")
@@ -195,6 +196,8 @@ class CapabilityDescriptor(CapabilityValue):
 
     @model_validator(mode="after")
     def validate_schema(self) -> Self:
+        if self.inventory_kind in {InventoryKind.MODEL, InventoryKind.SKILL}:
+            raise ValueError("Capability descriptor has an invalid inventory kind")
         try:
             validate_input_schema(self.input_schema)
         except SchemaDefinitionError as exc:

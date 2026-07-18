@@ -20,7 +20,8 @@ from anban.capability.contracts import (
     RiskLevel,
     SideEffectLevel,
 )
-from anban.capability.local import local_capability_registry
+from anban.capability.inventory import UnifiedCapabilityInventory
+from anban.capability.local import local_capability_components, local_capability_registry
 from anban.capability.registry import CapabilityRegistry
 from anban.capability.skill import (
     SkillActivationCapability,
@@ -53,5 +54,7 @@ __all__ = [
     "SkillDiagnostic",
     "SkillPackage",
     "WorkspaceSkillCatalog",
+    "UnifiedCapabilityInventory",
+    "local_capability_components",
     "local_capability_registry",
 ]

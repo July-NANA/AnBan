@@ -3,10 +3,11 @@
 from datetime import datetime
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 
 from anban.capability import (
     AvailabilityStatus,
+    CapabilityDescriptor,
     CapabilityInventoryItem,
     CapabilityInventoryQuery,
     CapabilityInventorySnapshot,
@@ -124,3 +125,18 @@ def test_contract_rejects_source_provider_and_skill_specific_fields() -> None:
     payload["provider"] = "forbidden"
     with pytest.raises(ValidationError):
         CapabilityInventoryItem.model_validate(payload)
+
+
+def test_model_and_skill_inventory_kinds_cannot_be_misrepresented_as_handlers() -> None:
+    descriptor: dict[str, JsonValue] = {
+        "name": "fixture.action",
+        "description": "Execute one fixture action.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    }
+    for kind in (InventoryKind.MODEL, InventoryKind.SKILL):
+        with pytest.raises(ValidationError):
+            CapabilityDescriptor.model_validate({**descriptor, "inventory_kind": kind})

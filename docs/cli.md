@@ -26,6 +26,13 @@ supplemental `InteractionEnvelope`; it does not call Runtime by Checkpoint ident
 shown to the caller but never stored in PostgreSQL or Audit/Trace. Unknown or terminal correlation
 fails explicitly.
 
+The same eligible-Run route accepts an ordinary user reply with
+`anban run reply <namespace> <correlation-value> <content...>` and an explicit human-input event
+with `anban run human-input <namespace> <correlation-value> <content...>`. All three commands use
+the same durable inbox, bounded update classification, Task Context, immutable revision, and
+Checkpoint recovery path while preserving their distinct semantic input kind in Audit and Context
+metadata. Unsupported machine-result kinds remain unavailable until their owning delivery.
+
 `capabilities list` returns a point-in-time snapshot. `capabilities search [TEXT]` accepts repeated
 `--kind`, `--available-only`, and a bounded `--limit`. `capabilities describe KEY` requires an
 exact inventory key and fails explicitly for unknown keys. These commands compose the current

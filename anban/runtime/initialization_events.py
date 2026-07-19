@@ -39,17 +39,23 @@ def initialization_event_facts(
         EventFact("node.created", node_run_id=node_run_id),
     ]
     if _REQUIRED_INTERACTION_METADATA.issubset(metadata.root):
-        facts.append(
-            EventFact(
-                "interaction.routed",
-                metadata_projection(metadata, _INTERACTION_METADATA),
-                node_run_id=node_run_id,
-            )
-        )
+        facts.append(interaction_routed_event_fact(metadata, node_run_id))
         inbox = inbox_routed_event_fact(metadata, node_run_id)
         if inbox is not None:
             facts.append(inbox)
     return tuple(facts)
+
+
+def interaction_routed_event_fact(metadata: SafeMetadata, node_run_id: NodeRunId) -> EventFact:
+    """Project one normalized Interaction route without transport-owned content."""
+
+    if not _REQUIRED_INTERACTION_METADATA.issubset(metadata.root):
+        raise ValueError("Interaction route metadata is incomplete")
+    return EventFact(
+        "interaction.routed",
+        metadata_projection(metadata, _INTERACTION_METADATA),
+        node_run_id=node_run_id,
+    )
 
 
 def managed_inbox_interaction(metadata: SafeMetadata) -> InteractionId | None:

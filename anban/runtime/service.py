@@ -153,14 +153,14 @@ class PersistentRuntime:
         checkpoint_id: CheckpointId,
         content: str,
         interaction_id: InteractionId,
-        source: str,
+        metadata: SafeMetadata,
         received_at: UtcDateTime,
     ) -> ExecutionResult:
         await self._updates.apply(
             checkpoint_id,
             content,
             interaction_id,
-            source,
+            metadata,
             received_at,
         )
         if self._continuations.contains(checkpoint_id):

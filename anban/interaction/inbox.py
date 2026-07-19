@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from datetime import timedelta
+from uuid import UUID
 
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.ids import CheckpointId, ExecutionRunId, InteractionId, NodeRunId, TaskId
@@ -160,6 +161,27 @@ class InteractionInboxCoordinator:
             raise
         except Exception:
             raise self._persistence_error("inbox_completion_failed") from None
+
+    async def complete_origin(self, result: ExecutionResult) -> None:
+        """Finish the delivery that originally created an asynchronously resumed Run."""
+
+        try:
+            async with self._factory() as unit:
+                aggregate = await unit.executions.load_run(result.run_id)
+        except AnbanError:
+            raise
+        except Exception:
+            raise self._persistence_error("inbox_origin_load_failed") from None
+        if aggregate is None or aggregate.task.metadata.root.get("inbox_managed") is not True:
+            return
+        value = aggregate.task.metadata.root.get("interaction_id")
+        if not isinstance(value, str):
+            raise self._persistence_error("inbox_origin_missing")
+        try:
+            interaction_id = InteractionId(UUID(value))
+        except ValueError:
+            raise self._persistence_error("inbox_origin_invalid") from None
+        await self.complete(interaction_id, result)
 
     async def route_checkpoint(
         self, interaction_id: InteractionId, checkpoint_id: CheckpointId

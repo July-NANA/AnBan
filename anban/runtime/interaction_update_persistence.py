@@ -1,4 +1,4 @@
-"""Ordered persistence for correlated mid-run update facts."""
+"""Ordered persistence for correlated human-origin input facts."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 
 from anban.core.context import ContextEntry
 from anban.core.graph import GraphRevision
-from anban.core.ids import GraphRevisionId
+from anban.core.ids import GraphRevisionId, InteractionId, NodeRunId
 from anban.core.metadata import SafeMetadata
 from anban.core.models import Checkpoint, CheckpointStatus
 from anban.core.persistence import ExecutionRepository
@@ -15,6 +15,11 @@ from anban.runtime.graph_result_reuse import (
     GraphResultDecision,
     GraphResultDisposition,
     GraphResultPlan,
+)
+from anban.runtime.initialization_events import (
+    inbox_routed_event_fact,
+    interaction_routed_event_fact,
+    route_managed_inbox,
 )
 from anban.runtime.interaction_updates import InteractionUpdateDecision
 from anban.runtime.persistence_events import EventFact
@@ -66,12 +71,25 @@ class InteractionUpdatePersistence:
         decision: InteractionUpdateDecision,
         revision: GraphRevision | None,
         previous_revision_id: GraphRevisionId | None,
-        result_plan: GraphResultPlan | None = None,
+        result_plan: GraphResultPlan | None,
+        interaction_metadata: SafeMetadata,
+        root_node_run_id: NodeRunId,
     ) -> None:
+        task_id = entry.task_id
+        if task_id is None:
+            raise ValueError("Interaction update requires Task Context")
+
         async def operation(repository: ExecutionRepository) -> None:
             current = await repository.get_checkpoint(checkpoint.id)
             if current is None or current.status is not CheckpointStatus.WAITING:
                 raise ValueError("Checkpoint is not eligible for an Interaction update")
+            await route_managed_inbox(
+                repository,
+                interaction_metadata,
+                task_id,
+                checkpoint.run_id,
+                root_node_run_id,
+            )
             await repository.add_context_entry(entry)
             if revision is not None:
                 await repository.add_graph_revision(revision)
@@ -87,6 +105,8 @@ class InteractionUpdatePersistence:
         metadata = SafeMetadata(
             {
                 "interaction_id": interaction_id,
+                "source": interaction_metadata.root.get("source"),
+                "input_kind": interaction_metadata.root.get("input_kind"),
                 "update_impact": decision.impact.value,
                 "update_content_hash": content_hash,
                 "rationale_hash": rationale_hash,
@@ -99,37 +119,44 @@ class InteractionUpdatePersistence:
                 "side_effect_replayed": False,
             }
         )
-        facts = [
-            EventFact(
-                "interaction.update_received",
-                metadata,
-                node_run_id=checkpoint.node_run_id,
-                invocation_id=checkpoint.invocation_id,
-                checkpoint_id=checkpoint.id,
-            ),
-            EventFact(
-                "interaction.update_classified",
-                metadata,
-                node_run_id=checkpoint.node_run_id,
-                invocation_id=checkpoint.invocation_id,
-                checkpoint_id=checkpoint.id,
-            ),
-            EventFact(
-                "context.recorded",
-                SafeMetadata(
-                    {
-                        "scope": "task",
-                        "entry_id": str(entry.id),
-                        "entry_kind": entry.kind.value,
-                        "source_kind": entry.source.kind.value,
-                        "content_hash": content_hash,
-                    }
+        facts = [interaction_routed_event_fact(interaction_metadata, checkpoint.node_run_id)]
+        inbox_fact = inbox_routed_event_fact(interaction_metadata, root_node_run_id)
+        if inbox_fact is not None:
+            facts.append(inbox_fact)
+        facts.extend(
+            [
+                EventFact(
+                    "interaction.update_received",
+                    metadata,
+                    node_run_id=checkpoint.node_run_id,
+                    invocation_id=checkpoint.invocation_id,
+                    checkpoint_id=checkpoint.id,
                 ),
-                node_run_id=checkpoint.node_run_id,
-                invocation_id=checkpoint.invocation_id,
-                checkpoint_id=checkpoint.id,
-            ),
-        ]
+                EventFact(
+                    "interaction.update_classified",
+                    metadata,
+                    node_run_id=checkpoint.node_run_id,
+                    invocation_id=checkpoint.invocation_id,
+                    checkpoint_id=checkpoint.id,
+                ),
+                EventFact(
+                    "context.recorded",
+                    SafeMetadata(
+                        {
+                            "scope": "task",
+                            "entry_id": str(entry.id),
+                            "entry_kind": entry.kind.value,
+                            "source_kind": entry.source.kind.value,
+                            "input_kind": interaction_metadata.root.get("input_kind"),
+                            "content_hash": content_hash,
+                        }
+                    ),
+                    node_run_id=checkpoint.node_run_id,
+                    invocation_id=checkpoint.invocation_id,
+                    checkpoint_id=checkpoint.id,
+                ),
+            ]
+        )
         if revision is not None:
             facts.extend(
                 (
@@ -177,42 +204,58 @@ class InteractionUpdatePersistence:
     async def reject_results(
         self,
         checkpoint: Checkpoint,
-        interaction_id: str,
+        interaction_id: InteractionId,
         content_hash: str,
         decision: InteractionUpdateDecision,
         revision: GraphRevision,
         previous_revision_id: GraphRevisionId | None,
         result_plan: GraphResultPlan,
+        interaction_metadata: SafeMetadata,
+        root_node_run_id: NodeRunId,
     ) -> None:
         async def operation(repository: ExecutionRepository) -> None:
             current = await repository.get_checkpoint(checkpoint.id)
             if current is None or current.status is not CheckpointStatus.WAITING:
                 raise ValueError("Checkpoint is not eligible for an Interaction update")
+            await route_managed_inbox(
+                repository,
+                interaction_metadata,
+                revision.task_id,
+                checkpoint.run_id,
+                root_node_run_id,
+            )
 
         metadata = self._update_metadata(
-            interaction_id,
+            str(interaction_id),
             content_hash,
             decision,
             None,
             previous_revision_id,
+            interaction_metadata,
             proposed_spec_hash=revision.spec_hash,
         )
-        facts = [
-            EventFact(
-                "interaction.update_received",
-                metadata,
-                node_run_id=checkpoint.node_run_id,
-                invocation_id=checkpoint.invocation_id,
-                checkpoint_id=checkpoint.id,
-            ),
-            EventFact(
-                "interaction.update_classified",
-                metadata,
-                node_run_id=checkpoint.node_run_id,
-                invocation_id=checkpoint.invocation_id,
-                checkpoint_id=checkpoint.id,
-            ),
-        ]
+        facts = [interaction_routed_event_fact(interaction_metadata, checkpoint.node_run_id)]
+        inbox_fact = inbox_routed_event_fact(interaction_metadata, root_node_run_id)
+        if inbox_fact is not None:
+            facts.append(inbox_fact)
+        facts.extend(
+            [
+                EventFact(
+                    "interaction.update_received",
+                    metadata,
+                    node_run_id=checkpoint.node_run_id,
+                    invocation_id=checkpoint.invocation_id,
+                    checkpoint_id=checkpoint.id,
+                ),
+                EventFact(
+                    "interaction.update_classified",
+                    metadata,
+                    node_run_id=checkpoint.node_run_id,
+                    invocation_id=checkpoint.invocation_id,
+                    checkpoint_id=checkpoint.id,
+                ),
+            ]
+        )
         rejected = tuple(
             item
             for item in result_plan.decisions
@@ -254,12 +297,15 @@ class InteractionUpdatePersistence:
         decision: InteractionUpdateDecision,
         revision: GraphRevision | None,
         previous_revision_id: GraphRevisionId | None,
+        interaction_metadata: SafeMetadata,
         *,
         proposed_spec_hash: str | None = None,
     ) -> SafeMetadata:
         return SafeMetadata(
             {
                 "interaction_id": interaction_id,
+                "source": interaction_metadata.root.get("source"),
+                "input_kind": interaction_metadata.root.get("input_kind"),
                 "update_impact": decision.impact.value,
                 "update_content_hash": content_hash,
                 "rationale_hash": hashlib.sha256(decision.rationale.encode()).hexdigest(),

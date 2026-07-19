@@ -1,4 +1,4 @@
-"""Durable coordination for correlated mid-run supplemental input."""
+"""Durable coordination for correlated human-origin mid-run input."""
 
 from __future__ import annotations
 
@@ -116,10 +116,11 @@ class RuntimeUpdateService:
         checkpoint_id: CheckpointId,
         content: str,
         interaction_id: InteractionId,
-        source: str,
+        interaction_metadata: SafeMetadata,
         received_at: UtcDateTime,
     ) -> InteractionUpdateDecision | None:
         aggregate, checkpoint = await self._load(checkpoint_id)
+        source, input_kind = self._interaction_fields(interaction_id, interaction_metadata)
         if any(
             event.event_type == "interaction.update_received"
             and event.metadata.root.get("interaction_id") == str(interaction_id)
@@ -149,12 +150,14 @@ class RuntimeUpdateService:
             try:
                 await persistence.interaction_updates.reject_results(
                     checkpoint,
-                    str(interaction_id),
+                    interaction_id,
                     content_hash,
                     decision,
                     revision,
                     aggregate.run.graph_revision_id,
                     result_plan,
+                    interaction_metadata,
+                    aggregate.nodes[0].id,
                 )
             except AnbanError:
                 raise
@@ -178,6 +181,7 @@ class RuntimeUpdateService:
                     "interaction_id": str(interaction_id),
                     "checkpoint_id": str(checkpoint.id),
                     "source": source,
+                    "input_kind": input_kind,
                     "content_hash": content_hash,
                     "update_impact": decision.impact.value,
                     "graph_revision_id": None if revision is None else str(revision.id),
@@ -193,12 +197,31 @@ class RuntimeUpdateService:
                 revision,
                 aggregate.run.graph_revision_id,
                 result_plan,
+                interaction_metadata,
+                aggregate.nodes[0].id,
             )
         except AnbanError:
             raise
         except Exception:
             raise persistence_error("interaction_update_applied") from None
         return decision
+
+    @classmethod
+    def _interaction_fields(
+        cls,
+        interaction_id: InteractionId,
+        metadata: SafeMetadata,
+    ) -> tuple[str, str]:
+        source = metadata.root.get("source")
+        input_kind = metadata.root.get("input_kind")
+        if (
+            not isinstance(source, str)
+            or not isinstance(input_kind, str)
+            or metadata.root.get("interaction_id") != str(interaction_id)
+            or metadata.root.get("interaction_route") != "resume_eligible_run"
+        ):
+            raise cls._error("malformed")
+        return source, input_kind
 
     async def supplements(self, task_id: TaskId, checkpoint_id: CheckpointId) -> tuple[str, ...]:
         try:

@@ -30,6 +30,13 @@ from anban.runtime import (
 )
 
 _CONTINUATION_NAMESPACE = "anban.continuation"
+_HUMAN_RESUME_INPUTS = frozenset(
+    {
+        InteractionInputKind.USER_MESSAGE,
+        InteractionInputKind.SUPPLEMENTAL_INPUT,
+        InteractionInputKind.HUMAN_INPUT,
+    }
+)
 
 
 class CorrelatedWaitingExecution(WaitingExecution):
@@ -169,6 +176,8 @@ class InteractionService:
             raise
         if self._inbox is not None:
             await _finish_delivery(self._inbox, envelope.id, result)
+            if envelope.correlation.route is InteractionRoute.RESUME_ELIGIBLE_RUN:
+                await self._inbox.complete_origin(result)
         return result
 
     async def start_async(
@@ -193,12 +202,16 @@ class InteractionService:
     async def resume_async(
         self, checkpoint_id: CheckpointId
     ) -> CorrelatedWaitingExecution | ExecutionResult:
-        return await self._correlate_waiting(
-            await self._runtime_service().resume_async(checkpoint_id)
-        )
+        result = await self._runtime_service().resume_async(checkpoint_id)
+        if isinstance(result, ExecutionResult) and self._inbox is not None:
+            await self._inbox.complete_origin(result)
+        return await self._correlate_waiting(result)
 
     async def cancel_async(self, checkpoint_id: CheckpointId) -> ExecutionResult:
-        return await self._runtime_service().cancel_async(checkpoint_id)
+        result = await self._runtime_service().cancel_async(checkpoint_id)
+        if self._inbox is not None:
+            await self._inbox.complete_origin(result)
+        return result
 
     async def detach_async(self, checkpoint_id: CheckpointId) -> None:
         await self._runtime_service().detach_async(checkpoint_id)
@@ -229,23 +242,20 @@ class InteractionService:
         if (
             correlation.route is not InteractionRoute.RESUME_ELIGIBLE_RUN
             or correlation.resume_key is None
-            or correlation.deduplication_key is not None
         ):
             raise _routing_error("malformed")
-        if envelope.input_kind is not InteractionInputKind.SUPPLEMENTAL_INPUT:
+        if envelope.input_kind not in _HUMAN_RESUME_INPUTS:
             raise _routing_error("resume_input_unavailable")
         key = correlation.resume_key
         checkpoint_id = await self._runtime_service().resolve_resume_correlation(
             key.namespace,
             key.fingerprint,
         )
-        if self._inbox is not None:
-            await self._inbox.route_checkpoint(envelope.id, checkpoint_id)
         return await self._runtime_service().apply_interaction_update(
             checkpoint_id,
             envelope.content,
             envelope.id,
-            envelope.source,
+            interaction_metadata(envelope, inbox_managed=self._inbox is not None),
             envelope.received_at,
         )
 

@@ -175,12 +175,29 @@ async def execute_run_update(
     *,
     json_output: bool,
 ) -> int:
+    return await execute_run_input(
+        InteractionInputKind.SUPPLEMENTAL_INPUT,
+        namespace,
+        correlation_value,
+        content,
+        json_output=json_output,
+    )
+
+
+async def execute_run_input(
+    input_kind: InteractionInputKind,
+    namespace: str,
+    correlation_value: str,
+    content: str,
+    *,
+    json_output: bool,
+) -> int:
     application = await build_application()
     try:
         result = await application.interactions.submit(
             InteractionEnvelope(
                 id=new_interaction_id(),
-                input_kind=InteractionInputKind.SUPPLEMENTAL_INPUT,
+                input_kind=input_kind,
                 content=content,
                 correlation=InteractionCorrelation(
                     route=InteractionRoute.RESUME_ELIGIBLE_RUN,
@@ -623,10 +640,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                         json_output=json_output,
                     )
                 )
-            if values[0] == "update":
+            if values[0] in {"reply", "update", "human-input"}:
                 if len(values) < 4 or arguments.async_mode or arguments.detach:
                     raise ValueError(
-                        "run update requires a namespace, correlation value, and content"
+                        f"run {values[0]} requires a namespace, correlation value, and content"
+                    )
+                if values[0] != "update":
+                    kind = (
+                        InteractionInputKind.USER_MESSAGE
+                        if values[0] == "reply"
+                        else InteractionInputKind.HUMAN_INPUT
+                    )
+                    return asyncio.run(
+                        execute_run_input(
+                            kind,
+                            values[1],
+                            values[2],
+                            " ".join(values[3:]),
+                            json_output=json_output,
+                        )
                     )
                 return asyncio.run(
                     execute_run_update(

@@ -46,6 +46,7 @@ class InteractionInputKind(StrEnum):
 
     USER_MESSAGE = "user_message"
     SUPPLEMENTAL_INPUT = "supplemental_input"
+    HUMAN_INPUT = "human_input"
     ASYNC_CAPABILITY_RESULT = "async_capability_result"
     MCP_RESULT = "mcp_result"
     SUBAGENT_RESULT = "subagent_result"

@@ -1,7 +1,8 @@
-"""Read-only v0.1 release-candidate closure checks for the exact pushed SHA."""
+"""Read-only v0.5 release-candidate closure checks for the exact pushed SHA."""
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import re
@@ -9,10 +10,12 @@ import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import cast
 
 from scripts.workspace_bootstrap import REPOSITORY
 
-EXPECTED_VERSION = "0.1.0"
+EXPECTED_VERSION = "0.5.0"
+EXPECTED_MIGRATION_HEAD = "0012_schedule_occurrences"
 MAX_COMMAND_OUTPUT = 65_536
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 HOST_PATH_PATTERN = re.compile(r"/(?:Users|home)/[^\s`]+|[A-Za-z]:\\\\")
@@ -24,6 +27,8 @@ DOCUMENTS = (
     "docs/architecture/workspace.md",
     "docs/cli.md",
     "docs/releases/v0.1.0.md",
+    "docs/releases/v0.5.0.md",
+    "docs/specs/v0.5-acceptance.md",
     "scripts/acceptance/README.md",
 )
 CLI_HELP = (
@@ -89,6 +94,18 @@ def check_repository_surface() -> None:
         text = (REPOSITORY / relative).read_text(encoding="utf-8")
         if HOST_PATH_PATTERN.search(text):
             raise ReleaseClosureError("release documentation contains a physical host path")
+    notes = (REPOSITORY / "docs/releases/v0.5.0.md").read_text(encoding="utf-8")
+    if any(f"S{index:02d}" not in notes for index in range(1, 13)):
+        raise ReleaseClosureError("release documentation omits a scenario")
+    package: object = json.loads((REPOSITORY / "package.json").read_text(encoding="utf-8"))
+    scripts_value = (
+        cast(dict[str, object], package).get("scripts") if isinstance(package, dict) else None
+    )
+    required = {"acceptance:p1", "acceptance:p2", "acceptance:p3", "acceptance:v0.5"}
+    if not isinstance(scripts_value, dict) or not required.issubset(
+        cast(dict[str, object], scripts_value)
+    ):
+        raise ReleaseClosureError("release Gate command surface is incomplete")
 
 
 def check_cli_and_migrations() -> None:
@@ -97,9 +114,8 @@ def check_cli_and_migrations() -> None:
     for profile in ("development", "test"):
         environment = dict(os.environ)
         environment["ANBAN_DATABASE_PROFILE"] = profile
-        if "(head)" not in command(
-            sys.executable, "-m", "alembic", "current", environment=environment
-        ):
+        current = command(sys.executable, "-m", "alembic", "current", environment=environment)
+        if "(head)" not in current or EXPECTED_MIGRATION_HEAD not in current:
             raise ReleaseClosureError("a PostgreSQL migration profile is not at head")
 
 
@@ -130,17 +146,17 @@ def main() -> int:
         check_cli_and_migrations()
         package_version = installed_version()
     except ReleaseClosureError:
-        print("v0.1 release closure: FAIL [acceptance_invalid]", file=sys.stderr)
+        print("v0.5 release closure: FAIL [acceptance_invalid]", file=sys.stderr)
         return 1
     except Exception as exc:
-        print(f"v0.1 release closure: FAIL ({type(exc).__name__})", file=sys.stderr)
+        print(f"v0.5 release closure: FAIL ({type(exc).__name__})", file=sys.stderr)
         return 1
     print(
-        "v0.1 release closure: PASS - clean synced branch, package, CLI, migrations, docs, "
+        "v0.5 release closure: PASS - clean synced branch, package, CLI, migrations, docs, "
         "protected files"
     )
     print(
-        f"v0.1 release evidence: sha={sha} package={package_version} "
+        f"v0.5 release evidence: sha={sha} package={package_version} "
         f"python={platform.python_version()} platform={sys.platform} interpreter=current"
     )
     return 0

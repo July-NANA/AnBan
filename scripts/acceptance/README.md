@@ -100,9 +100,20 @@ These commands fail closed and emit only bounded evidence:
   PostgreSQL, real Model Gateway, real local Capabilities, P1 Main Agent cases, the existing real
   Process/Skill-acquisition Runtime Gate, and security regression. It stops on the first real
   failure and never converts missing integration conditions into success.
+- `pnpm run acceptance:p2`: the #71 candidate sequence: deterministic quality/build/Doctor,
+  migration and repository checks, real structural Interaction updates, graph result reuse,
+  complete service-exit recovery, Human Input, asynchronous result routing, and security.
+- `pnpm run acceptance:p3`: the #73 P3 sequence: deterministic gates plus real Interaction inbox,
+  Human/async feedback, MCP, sub-agent, authenticated Webhook, timezone schedules, concurrent
+  Automation workers, and security evidence.
+- `pnpm run acceptance:release`: read-only v0.5 candidate closure for clean synchronized `anban`,
+  package version, complete CLI help, both migration profiles, documentation, and protected files.
+- `pnpm run acceptance:v0.5`: the complete exact-candidate S01-S12 chain. It runs P1, P2, P3, then
+  release closure and stops at the first truthful failure.
 - `pnpm run acceptance:security`: deterministic fail-closed and Secret-boundary tests.
-- `pnpm run acceptance:v0.1`: local quality, Doctor base/online/web, database, model, Capability,
-  Runtime, security, and release-closure checks.
+- `pnpm run acceptance:v0.1`: retained v0.1 behavioral regression over the current package; local
+  quality, Doctor base/online/web, database, model, Capability, Runtime, security, and current
+  release-closure checks.
 
 Gate E failure paths remain production-path tests: missing program, nonzero exit, timeout,
 cancellation, output/Artifact failure, damaged Skill, model repair/exhaustion, database/Event

@@ -14,6 +14,7 @@
     "acceptance:runtime": "python -m scripts.acceptance.check_cli_e2e",
     "acceptance:interaction-update": "python -m scripts.acceptance.check_interaction_updates",
     "acceptance:graph-result-reuse": "python -m scripts.acceptance.check_graph_result_reuse",
+    "acceptance:interaction-gateway": "python -m scripts.acceptance.check_interaction_gateway",
     "acceptance:e2e": "python -m scripts.acceptance.check_cli_e2e",
     "acceptance:p1-main-agent": "python -m scripts.acceptance.check_p1_main_agent",
     "acceptance:p1": "pnpm check && pnpm build && pnpm run doctor && python -m scripts.doctor --online && pnpm run acceptance:persistence && pnpm run acceptance:model && pnpm run acceptance:capability && pnpm run acceptance:p1-main-agent && pnpm run acceptance:runtime && pnpm run acceptance:security",

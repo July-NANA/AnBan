@@ -11,9 +11,13 @@ other system identity. External normalization assigns the Interaction identity, 
 trusted Adapter source and rejects attempts to supply system-owned fields. Audit projection hashes
 correlation values. D22 adds one durable continuation lookup: Interaction assigns an opaque resume
 key to a waiting projection and routes correlated supplemental input to that eligible Checkpoint.
-Unknown and terminal correlations fail explicitly. Interaction still does not own a general inbox,
-deduplication, expiry records, background delivery, Trigger behavior, domain lifecycle, or
-execution scheduling; unsupported forms still fail instead of becoming new work.
+Unknown and terminal correlations fail explicitly. D25 makes route the first gateway decision:
+validated user-message new work from any logical Adapter source enters the same Runtime entry,
+while eligible resume continues through the existing supplemental-input path. New Runs atomically
+record `interaction.routed` with only system Interaction identity, semantic kind/route, logical
+source, and hashed correlations. Interaction still does not own a general inbox, deduplication,
+expiry records, background delivery, Trigger behavior, domain lifecycle, or execution scheduling;
+unsupported forms still fail instead of becoming new work.
 
 ## Core
 

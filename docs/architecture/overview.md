@@ -39,8 +39,11 @@ resume correlation instead, with an independent deduplication correlation when n
 code assigns the Interaction ID, receipt time, and trusted Adapter source. Malformed, expired,
 conflicting, unknown, and ineligible correlation is fail-closed vocabulary. D22 implements one
 durable lookup for waiting continuations. Every waiting result receives an opaque resume key;
-PostgreSQL stores only its namespace and SHA-256 fingerprint. Supplemental input resolves that key
-through Interaction, persists bounded Task Context, and asks the independent Model Port whether
+PostgreSQL stores only its namespace and SHA-256 fingerprint. D25 routes by the envelope route
+before interpreting the input kind: supported new user work from any validated logical source
+creates a new Task/Run through the same Runtime entry and records `interaction.routed`; supported
+resume input resolves the existing key. Supplemental input then persists bounded Task Context and
+asks the independent Model Port whether
 the change is context-only or structural. Context-only input retains the revision. Structural
 input appends a complete replacement revision while preserving the active action and its input
 ancestry. Runtime compares completed NodeRuns by graph definition and transitive control/input
@@ -48,7 +51,7 @@ equivalence. It reuses valid occurrences, excludes invalidated pure occurrences 
 replay, and rejects any changed Capability-backed result that would execute again. Runtime then
 reconstructs the Checkpoint without replaying its side effect. Audit/Trace records each concrete
 result disposition but never receives the raw key or update. General inbox, deduplication, and other
-envelope kinds remain in their later deliveries.
+envelope kinds remain in their later deliveries and fail before they can become accidental work.
 
 Every Skill follows `SKILL.md -> uniform parser -> SkillPackage -> skill.activate ->
 process.execute`. No production code selects behavior by source, installer, registry, publisher,

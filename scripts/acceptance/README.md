@@ -34,6 +34,11 @@ These commands fail closed and emit only bounded evidence:
   side-effect rejection, and prior invalidation history; two ordinary-Composition reverse tests
   durably reject side-effect reexecution and changed active ancestry without replacing the
   production execution path.
+- `pnpm run acceptance:interaction-gateway`: D25 real Provider/PostgreSQL acceptance. Three
+  changed direct-answer Task objects enter the ordinary Application from distinct logical Adapter
+  sources, create independent durable Runs, and reconstruct one `interaction.routed` Audit fact
+  through new query Applications. Async-result, Webhook, schedule, deduplicated, and unknown-resume
+  reverse inputs fail explicitly without creating a Run; their owned behavior remains D26-D28.
 - `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
   ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three

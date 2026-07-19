@@ -103,6 +103,7 @@ class ContinuationManager:
         active = self._get(checkpoint_id)
         if active.resumed:
             raise self._error("checkpoint_already_resumed")
+        await active.waiting.persistence.synchronize_sequence()
         await active.waiting.persistence.checkpoints.resume(checkpoint_id)
         active.resumed = True
         active.waiting.gate.set()
@@ -119,6 +120,7 @@ class ContinuationManager:
     async def cancel(self, checkpoint_id: CheckpointId) -> ExecutionResult:
         active = self._get(checkpoint_id)
         try:
+            await active.waiting.persistence.synchronize_sequence()
             await active.waiting.persistence.checkpoints.request_cancel(checkpoint_id)
         except Exception:
             raise

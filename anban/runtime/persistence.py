@@ -731,6 +731,18 @@ class RunPersistence:
         except Exception:
             raise persistence_error("load") from None
 
+    async def synchronize_sequence(self) -> None:
+        """Observe Events appended by another governed writer before continuing locally."""
+
+        try:
+            async with self._factory() as unit:
+                events = await unit.executions.list_events(self.run.id)
+        except AnbanError:
+            raise
+        except Exception:
+            raise persistence_error("event_sequence_sync") from None
+        self._sequence = 0 if not events else events[-1].sequence
+
     async def _load_invocation(self, invocation_id: CapabilityInvocationId) -> CapabilityInvocation:
         try:
             async with self._factory() as unit:
@@ -788,8 +800,6 @@ class RunPersistence:
 
     async def _resync_sequence(self) -> None:
         try:
-            async with self._factory() as unit:
-                events = await unit.executions.list_events(self.run.id)
+            await self.synchronize_sequence()
         except Exception:
             return
-        self._sequence = 0 if not events else events[-1].sequence

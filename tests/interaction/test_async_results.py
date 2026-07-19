@@ -253,6 +253,9 @@ async def test_result_signal_releases_the_live_continuation_without_registry_res
     assert sum(event.event_type == "run.recovery_started" for event in aggregate.events) == 0
     assert sum(event.event_type == "interaction.result_received" for event in aggregate.events) == 1
     assert aggregate.checkpoints[0].status is CheckpointStatus.COMPLETED
+    assert [event.sequence for event in aggregate.events] == list(
+        range(1, len(aggregate.events) + 1)
+    )
 
 
 class RecoverableResultHandler:

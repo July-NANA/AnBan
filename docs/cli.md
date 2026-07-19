@@ -1,9 +1,10 @@
 # CLI Reference
 
 The production CLI commands include `workspace init`, `run`, `chat`, `runs`, `inbox`, `trace`,
-`artifacts`, `context task`, `context session`, the v0.5 `capabilities` inspection group, and
-`webhook serve`, and the schedule commands. Query and execution commands support `--json`. Run failures use stable error
-codes; Trace, Artifact, and Context queries work from a new database-only Application.
+`artifacts`, `context task`, `context session`, the v0.5 `capabilities` inspection group,
+`webhook serve`, and the schedule commands. Query and execution commands support `--json`. Run
+failures use stable error codes; Trace, Artifact, and Context queries work from a new database-only
+Application.
 
 ## Webhook service
 

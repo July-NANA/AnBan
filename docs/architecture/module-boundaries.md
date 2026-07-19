@@ -27,14 +27,15 @@ the Checkpoint-owned Invocation, then Capability supplies the authoritative Proc
 terminal result. D31 adds one authenticated HTTP Webhook Adapter. It validates bounded endpoint,
 timestamp, event identity, and HMAC over the exact raw body before envelope construction, then
 routes new work or contextual resume through the same inbox and Runtime. Untrusted failures cannot
-create durable facts; authenticated semantic failures use the durable inbox protocol. Scheduling
-remains later scope.
+create durable facts; authenticated semantic failures use the durable inbox protocol. The Schedule
+worker is another Interaction Adapter: it submits a previously claimed occurrence through this
+gateway and never calls business Runtime or a Capability directly.
 
 ## Core
 
 Owns authoritative Task, ExecutionRun, NodeRun, CapabilityInvocation, Checkpoint, Artifact, Event,
-Interaction inbox lifecycle, bounded Task/Session Context, immutable Schedule definitions, and
-`TaskGraphSpec` identity-free
+Interaction inbox lifecycle, bounded Task/Session Context, immutable Schedule definitions and
+occurrences, and `TaskGraphSpec` identity-free
 structured graph vocabulary. A graph spec
 contains only closed node/edge kinds, explicit dependencies, input/output bindings, entry and
 terminal identities, nested subgraphs, and hard budgets. Its validator rejects hidden cycles,
@@ -44,7 +45,7 @@ provider clients, SQLAlchemy models, transport details, or scheduling.
 
 ## Runtime
 
-Owns v0.1 execution order, state transitions, the fixed LangGraph, bounded Tool Calling, durable
+Owns base execution order, state transitions, the fixed LangGraph, bounded Tool Calling, durable
 coordination, and query projections. The v0.5 sufficiency evaluator uses a closed structured Model
 decision to select only real, ready inventory targets; Runtime constructs and validates the
 authoritative assessment, including general Skill-acquisition justification and explicit
@@ -88,9 +89,10 @@ Delegation creates an independent child Task/Run through this same Runtime rathe
 sub-agent scheduler. Runtime supplies system identities and depth, initializes the child durably
 before acceptance, propagates parent cancellation to an active owned child, and returns only the
 child's terminal aggregate to the shared Capability lifecycle.
-Runtime also validates bounded five-field Cron and elapsed Interval definitions and computes the
-first UTC occurrence from an IANA timezone-aware anchor. D32 performs no occurrence claim or
-dispatch; worker ownership and automation policy remain D33.
+Runtime also validates bounded five-field Cron and elapsed Interval definitions, computes
+timezone-aware occurrences, and owns durable claim, missed-run, overlap, lease-recovery, and
+terminal-occurrence discipline. It does not execute triggered business work; Interaction submits
+the claimed occurrence through the ordinary gateway.
 
 ## Model
 

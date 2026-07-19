@@ -8,6 +8,7 @@ Interaction -> Runtime -> ModelPort
                        -> CapabilityPort -> skill.activate
                                          -> process.execute
                                          -> memory.context
+                                         -> agent.delegate
                                          -> mcp.<server>.<tool>.<digest>
                        -> UnitOfWorkFactory -> PostgreSQL
 ```
@@ -26,7 +27,7 @@ simple work or require a validated graph for materially structured work. It comp
 through one dynamic LangGraph builder and provides generic bounded branch, loop, parallel, join,
 and nested-subgraph execution. Graph actions re-enter the existing real Agent/Capability path as
 durable Nodes; invalid planning or action output cannot fall back to success. Model remains an
-independent Port. Capability owns the Registry, its three fixed Handlers, and shared dynamic MCP
+independent Port. Capability owns the Registry, its four fixed Handlers, and shared dynamic MCP
 Tool Handler instances discovered from configured stdio servers. Runtime also owns Tool-call
 correctness, structured completion evaluation, bounded alternative-path selection, repair without
 side-effect replay, persistence coordination, and Trace projection. Persistence implements the one
@@ -64,6 +65,13 @@ and Sub-agent result-ready signals without accepting their content as execution 
 derives the Invocation from the Checkpoint, validates its inventory kind, and consumes the real
 terminal result and Artifacts through the existing Capability lifecycle. Result routing and inbox
 linkage commit before live continuation release or restart recovery.
+
+Authenticated Webhooks and durable Schedule occurrences enter this same Interaction inbox.
+Webhook authentication validates configured endpoint, time window, and HMAC before persistence.
+The Schedule worker claims a PostgreSQL occurrence lease and submits its stored Interaction
+identity; it never invokes Runtime business execution directly. Unique occurrence and active-claim
+constraints, bounded attempts, overlap `skip`, missed `skip`/`catch_up_once`, and inbox
+reconstruction prevent concurrency or restart from replaying a terminal side effect.
 
 Every Skill follows `SKILL.md -> uniform parser -> SkillPackage -> skill.activate ->
 process.execute`. No production code selects behavior by source, installer, registry, publisher,

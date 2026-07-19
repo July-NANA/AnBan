@@ -1,6 +1,6 @@
-# v0.1 Lifecycle and Error Semantics
+# Lifecycle and Error Semantics
 
-The v0.1 execution records use one deliberately small topology. A Task, ExecutionRun, or
+The base execution records use one deliberately small topology. A Task, ExecutionRun, or
 NodeRun starts as `created`; a CapabilityInvocation starts as `requested`. The only legal next
 state is `running`. From `running`, the record reaches exactly one terminal state. Terminal
 records never return to an active state.

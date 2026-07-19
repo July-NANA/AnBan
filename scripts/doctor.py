@@ -158,13 +158,16 @@ def check_python() -> CheckResult:
     for name in (
         "alembic",
         "asyncpg",
+        "croniter",
         "dotenv",
         "fastapi",
         "httpx",
         "langgraph",
+        "mcp",
         "openai",
         "pydantic",
         "sqlalchemy",
+        "uvicorn",
     ):
         try:
             importlib.import_module(name)
@@ -174,7 +177,7 @@ def check_python() -> CheckResult:
     try:
         import anban
 
-        package_source_valid = package_version("anban") == "0.1.0" and Path(
+        package_source_valid = package_version("anban") == "0.5.0" and Path(
             anban.__file__
         ).resolve().is_relative_to(REPOSITORY.resolve())
     except (ImportError, PackageNotFoundError, OSError):

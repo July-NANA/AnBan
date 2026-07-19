@@ -1,7 +1,7 @@
 [project]
 name = "anban"
-version = "0.1.0"
-description = "Security-governed CLI runtime for Anban"
+version = "0.5.0"
+description = "Security-governed durable CLI Agent Runtime for Anban"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "alembic>=1.15",

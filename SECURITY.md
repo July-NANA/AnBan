@@ -12,7 +12,7 @@ Process output or declared Artifacts fail safely before those bytes are persiste
 When multiple Artifacts are declared, validation and bounded reads complete before snapshots begin;
 snapshot failure removes files created by that collection attempt.
 
-Anban v0.1 deliberately uses the permissions of the OS user that started it. There is no program
+Anban v0.5 deliberately uses the permissions of the OS user that started it. There is no program
 allowlist, process sandbox, command approval, network isolation, or fine-grained file permission
 layer. Absolute cwd and Artifact paths are allowed. Operators must use an appropriate OS account
 and isolated Workspace. These governance controls are deferred; this limitation must never be

@@ -1,10 +1,10 @@
 # Anban / 安伴
 
-Anban v0.1 is an executable Agent Runtime for local development and real functional validation.
-One fixed General Agent uses a real OpenAI-compatible model, activates discovered Skills, executes
-real programs through `process.execute`, uses bounded Task/Session context through
-`memory.context`, and persists Invocation, Artifact, Context, Event, Audit, and Trace facts in
-PostgreSQL.
+Anban v0.5 is a CLI-first, durable Agent Runtime for local development and real functional
+validation. A complete Main Agent evaluates the ready Model, Capabilities, Skills, Process, Memory,
+MCP, and sub-agent paths; simple work stays on the fixed bounded loop, while materially structured
+work produces a validated `TaskGraphSpec` and immutable `GraphRevision`. Real execution,
+Checkpoints, inbox deliveries, Artifacts, Context, Events, Audit, and Trace persist in PostgreSQL.
 
 In the v0.5 Main Agent path, non-empty assistant text is only a proposed final. A separate
 structured completion assessment checks the original goal against the real Tool Result transcript;
@@ -17,20 +17,22 @@ Capability/MCP/sub-agent results, Webhook events, and schedule occurrences throu
 `InteractionEnvelope`. It distinguishes new work from a request to resume an eligible Run using
 bounded external correlation—not caller-supplied Task or Run IDs—and keeps deduplication identity
 separate. System-owned envelope fields cannot be supplied by external payloads; correlation values
-are hashed before Audit/Trace projection. Authenticated Webhooks use the same durable inbox and
-Runtime path; scheduling remains later v0.5 work.
+are hashed before Audit/Trace projection. Authenticated Webhooks and durable Cron/Interval
+occurrences use the same inbox and Runtime path. The Schedule worker only claims and submits
+Interaction envelopes; it cannot call business Runtime or Capabilities directly.
 
 ```text
-User task -> FixedGeneralAgent -> skill.activate -> process.execute
-                              -> memory.context
-          -> PersistedCapabilityPort -> PostgreSQL / managed Artifacts / Event / Audit / Trace
+CLI / Webhook / Schedule -> Interaction inbox -> fixed Agent or dynamic Task Graph
+                                            -> Model + Capability Registry
+                                            -> PostgreSQL / Artifacts / Audit / Trace
 ```
 
-The production Capability surface is `memory.context`, `skill.activate`, and `process.execute`.
-Skill is execution knowledge; Process is the general execution channel; Memory is structured,
-bounded durable context. A Skill never writes Anban business tables. Runtime and Persistence own
-Artifact snapshots and all durable facts. Supporting another concrete tool normally means adding
-a Skill, not adding a Capability Handler.
+The fixed production Capability surface is `memory.context`, `skill.activate`, `process.execute`,
+and `agent.delegate`; configured MCP servers add dynamically discovered Tools through the same
+Registry. Skill is execution knowledge; Process is the general execution channel; Memory is
+structured, bounded durable context. A Skill never writes Anban business tables. Runtime and
+Persistence own Artifact snapshots and all durable facts. Supporting another concrete tool
+normally means adding a Skill, not adding a Capability Handler.
 
 All Skills use the same architecture regardless of whether they ship in the Anban package, were
 installed by ClawHub, were copied, or were created by a user. Production discovers `SKILL.md`,
@@ -45,8 +47,11 @@ the real CLI.
 ```bash
 anban workspace init
 anban run "<task>"
+anban run "<task>" --async --detach
+anban run resume <checkpoint-id>
 anban chat
 anban runs
+anban inbox
 anban trace <run-id>
 anban artifacts <run-id>
 anban context task <task-id>
@@ -55,6 +60,8 @@ anban capabilities list
 anban webhook serve
 anban schedule create-cron <name> <expression> <timezone> <content...>
 anban schedule create-interval <name> <seconds> <timezone> <content...>
+anban schedule occurrences <schedule-id>
+anban scheduler run-once
 anban schedules
 python -m scripts.doctor
 python -m scripts.doctor --online
@@ -70,9 +77,8 @@ Session context. Compression records ordered source Entry IDs and retains the au
 rows. Secret-classified or configured protected values fail closed. CLI context inspection emits
 only identities, classifications, counts, and hashes—not raw content or source references.
 
-## v0.1 execution boundary
+## v0.5 execution boundary
 
-Anban v0.1 is an executable Agent Runtime for local development and real functional validation.
 `process.execute` can run any program available to the operating-system user that started Anban and
 inherits that process environment. This version provides no program allowlist, process sandbox,
 command approval, network isolation, or fine-grained file permissions. Those governance controls

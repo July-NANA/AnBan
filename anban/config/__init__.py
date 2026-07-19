@@ -8,12 +8,16 @@ from anban.config.loader import (
     ProcessConfiguration,
     load_configuration,
 )
+from anban.config.mcp import McpConfiguration, McpServerConfiguration, McpSettings
 
 __all__ = [
     "AgentConfiguration",
     "AnbanConfiguration",
     "DatabaseConfiguration",
     "ModelConfiguration",
+    "McpConfiguration",
+    "McpServerConfiguration",
+    "McpSettings",
     "ProcessConfiguration",
     "load_configuration",
 ]

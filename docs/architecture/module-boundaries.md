@@ -89,17 +89,24 @@ Owns the Model Port and its adapters. Model reasoning is deliberately separate f
 Owns `CapabilityPort`, `CapabilityHandler`, the Registry, uniform `SKILL.md` discovery/activation,
 the general Process Handler, and the read-only `CapabilityInventoryPort` projection. The unified
 inventory describes the independently configured Model, registered Capabilities, ready Skills,
-Process, implemented Memory, and explicitly unavailable future MCP and sub-agent paths without
+Process, implemented Memory, dynamically discovered MCP Tools, and the explicitly unavailable
+future sub-agent path without
 invoking any of them or creating a second Registry. The shared Workspace catalog refreshes through the same
 parser, bounds, protected-value checks, conflict rules, and logical identities for both inventory
 and `skill.activate`; an Application rebuild is not required to observe an installed, changed, or
 removed Skill. Multiple activated Skill instructions remain authoritative native Tool Results in
 the same bounded model exchange, with a shared hard context limit rather than a second prompt or
-execution channel. Production Capability names are `memory.context`, `skill.activate`, and
-`process.execute`. The Memory Handler uses the existing Unit of Work Port and the same Registry;
+execution channel. Fixed production Capability names are `memory.context`, `skill.activate`, and
+`process.execute`; configured MCP Tools add bounded dynamic logical names. The Memory Handler uses
+the existing Unit of Work Port and the same Registry;
 it does not define another backend or discovery path. A concrete tool normally adds a Skill, not a
-Handler. No Skill source or installer receives a special branch. MCP and external Agents remain
-future categories. `process.execute` can launch the same governed process in background mode only
+Handler. No Skill source or installer receives a special branch. Configured MCP stdio servers use
+one shared Adapter/Handler implementation: Application composition performs real `tools/list`,
+registers stable logical `mcp.<server>.<tool-fragment>.<digest>` names in the same Registry, and
+each invocation reconnects, rediscovers, verifies descriptor identity, and performs `tools/call`.
+Server commands, physical cwd, environment values, raw protocol data, and `_meta` never enter
+inventory or durable facts. The sub-agent remains a future category. `process.execute` can launch
+the same governed process in background mode only
 after real spawn succeeds. The Registry retains its authoritative Runtime-supplied Invocation
 context, enforces monotonic progress, supports cancellation and waiting, and correlates the result
 with the system Invocation identity rather than a model argument. Its independent worker retains

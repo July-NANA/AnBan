@@ -24,6 +24,7 @@ from anban.capability.contracts import (
 )
 from anban.capability.inventory import UnifiedCapabilityInventory
 from anban.capability.local import local_capability_components, local_capability_registry
+from anban.capability.mcp import McpToolCapability, discover_mcp_capabilities
 from anban.capability.memory import MemoryContextCapability
 from anban.capability.registry import CapabilityRegistry
 from anban.capability.skill import (
@@ -54,6 +55,7 @@ __all__ = [
     "InventoryKind",
     "InvocationContext",
     "MemoryContextCapability",
+    "McpToolCapability",
     "RiskLevel",
     "SideEffectLevel",
     "SkillActivationCapability",
@@ -63,4 +65,5 @@ __all__ = [
     "UnifiedCapabilityInventory",
     "local_capability_components",
     "local_capability_registry",
+    "discover_mcp_capabilities",
 ]

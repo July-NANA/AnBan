@@ -111,6 +111,7 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
     def _capability_item(descriptor: CapabilityDescriptor) -> CapabilityInventoryItem:
         process = descriptor.inventory_kind is InventoryKind.PROCESS
         memory = descriptor.inventory_kind is InventoryKind.MEMORY
+        mcp = descriptor.inventory_kind is InventoryKind.MCP
         return CapabilityInventoryItem(
             key=descriptor.name,
             kind=descriptor.inventory_kind,
@@ -123,11 +124,11 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
             input_schema=descriptor.input_schema,
             constraints=("Invocation requires an authoritative Runtime context.",),
             boundary=InventoryBoundary(
-                risk=RiskLevel.HIGH if process else RiskLevel.LOW,
+                risk=RiskLevel.HIGH if process or mcp else RiskLevel.LOW,
                 cost=CostLevel.LOW,
                 side_effects=(
                     SideEffectLevel.EXTERNAL
-                    if process
+                    if process or mcp
                     else SideEffectLevel.REVERSIBLE
                     if memory
                     else SideEffectLevel.NONE
@@ -135,6 +136,8 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
                 summary=(
                     "General process execution may create external side effects within its bounds."
                     if process
+                    else "MCP Tool execution may create server-defined external side effects."
+                    if mcp
                     else "Durable Context writes are retained as reversible, inspectable facts."
                     if memory
                     else "Structured invocation remains governed by the registered Capability."
@@ -174,7 +177,7 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
                 InventoryKind.MCP,
                 "MCP tools",
                 "Discover and invoke structured tools through configured MCP servers.",
-                "MCP runtime is not implemented.",
+                "No MCP server is configured.",
                 SideEffectLevel.EXTERNAL,
             ),
             (

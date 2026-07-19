@@ -55,6 +55,14 @@ unexpected execution exceptions, unsafe or missing observations, timeout, cancel
 Persistence/Event failures remain terminal. Completed calls remain in the anti-replay set during
 any later response repair.
 
+MCP follows this same lifecycle. Registry schema validation happens before `tools/call`. Transport
+initialization, malformed protocol, descriptor drift, and unavailable server fail with safe stable
+categories. A server `isError` result, unsupported content, protected output, and output-limit
+failure remain ordinary failed Capability results; none can become a successful Artifact or final
+answer. Timeout produces `timed_out`, and cancellation propagates to the active SDK session and
+stdio process tree. Once `tools/call` begins, the external side-effect outcome may be uncertain, so
+Runtime does not replay the Invocation automatically.
+
 If a Capability has returned but its terminal transaction reports failure, Runtime first reads the
 authoritative Invocation, Event, and Artifact facts. An actually committed transaction is accepted
 without replay. A confirmed uncommitted transaction receives one independent `failed` compensation

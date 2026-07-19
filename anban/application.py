@@ -13,6 +13,7 @@ from anban.capability import (
     CapabilityInventorySnapshot,
     InventoryKind,
     MemoryContextCapability,
+    discover_mcp_capabilities,
     local_capability_components,
 )
 from anban.capability.workspace import WorkspaceBoundary
@@ -98,6 +99,11 @@ async def build_application() -> Application:
     """Compose real Adapters without exposing them to the CLI command handlers."""
 
     configuration = load_configuration()
+    mcp_capabilities = await discover_mcp_capabilities(
+        configuration.mcp,
+        configuration.workspace,
+        protected_values=configuration.protected_values(),
+    )
     model_configuration = configuration.require_model()
     model = OpenAICompatibleAdapter.configured(
         model_configuration, protected_values=configuration.protected_values()
@@ -121,7 +127,7 @@ async def build_application() -> Application:
             artifact_max_bytes=configuration.process.artifact_max_bytes,
             protected_values=configuration.protected_values(),
             model_available=True,
-            additional_handlers=(memory,),
+            additional_handlers=(memory, *mcp_capabilities),
         )
         workspace_boundary = WorkspaceBoundary(configuration.workspace)
         sufficiency = CapabilitySufficiencyEvaluator(inventory)
@@ -163,10 +169,15 @@ async def build_query_application() -> QueryApplication:
     return QueryApplication(InteractionService(None, queries, unit_of_work), engine)
 
 
-def build_inventory_application() -> InventoryApplication:
+async def build_inventory_application() -> InventoryApplication:
     """Compose inventory from current Workspace facts without opening model or database clients."""
 
     configuration = load_configuration()
+    mcp_capabilities = await discover_mcp_capabilities(
+        configuration.mcp,
+        configuration.workspace,
+        protected_values=configuration.protected_values(),
+    )
     engine = create_database_engine(configuration.database.require("development"))
     unit_of_work = SQLAlchemyUnitOfWorkFactory(engine)
     memory = MemoryContextCapability(
@@ -185,6 +196,6 @@ def build_inventory_application() -> InventoryApplication:
         artifact_max_bytes=configuration.process.artifact_max_bytes,
         protected_values=configuration.protected_values(),
         model_available=configuration.model is not None,
-        additional_handlers=(memory,),
+        additional_handlers=(memory, *mcp_capabilities),
     )
     return InventoryApplication(inventory, engine)

@@ -21,6 +21,12 @@ from pydantic import (
 )
 
 from anban.config import policy
+from anban.config.mcp import (
+    McpConfiguration,
+    McpConfigurationResolutionError,
+    McpSettings,
+    resolve_mcp_configuration,
+)
 from anban.core import AnbanError, ErrorCode, ErrorInfo, SafeMetadata
 from scripts.workspace_bootstrap import resolve_workspace
 
@@ -151,6 +157,7 @@ class ProcessConfiguration(ConfigurationValue):
 
 class CapabilitySection(ConfigurationValue):
     process: ProcessConfiguration = Field(default_factory=ProcessConfiguration)
+    mcp: McpSettings = Field(default_factory=McpSettings)
 
 
 class DatabaseSettings(ConfigurationValue):
@@ -211,6 +218,7 @@ class AnbanConfiguration(ConfigurationValue):
     model: ModelConfiguration | None = Field(default=None, repr=False)
     agent: AgentConfiguration
     process: ProcessConfiguration
+    mcp: McpConfiguration
     database: DatabaseConfiguration = Field(repr=False)
 
     def require_model(self) -> ModelConfiguration:
@@ -227,6 +235,7 @@ class AnbanConfiguration(ConfigurationValue):
         for candidate in (self.database.development_url, self.database.test_url):
             if candidate is not None:
                 values.append(candidate.get_secret_value())
+        values.extend(self.mcp.protected_values())
         return tuple(value for value in values if value)
 
 
@@ -291,11 +300,24 @@ def load_configuration(
             else None
         ),
     )
+    try:
+        mcp = resolve_mcp_configuration(
+            settings.capability.mcp,
+            environment=environment,
+            secrets=secrets,
+        )
+    except McpConfigurationResolutionError as exc:
+        raise configuration_failure(
+            ErrorCode.CONFIGURATION_MISSING,
+            "MCP server environment configuration is missing",
+            mcp_server=exc.server_name,
+        ) from None
     return AnbanConfiguration(
         workspace=root,
         workspace_id=settings.workspace_id,
         model=model_configuration,
         agent=settings.agent,
         process=settings.capability.process,
+        mcp=mcp,
         database=database,
     )

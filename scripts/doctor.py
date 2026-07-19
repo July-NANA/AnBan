@@ -23,7 +23,12 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from anban.capability import CapabilityResultStatus, InvocationContext, local_capability_registry
+from anban.capability import (
+    CapabilityResultStatus,
+    InvocationContext,
+    discover_mcp_capabilities,
+    local_capability_registry,
+)
 from anban.capability.skill import WorkspaceSkillCatalog
 from anban.config.loader import AnbanConfiguration, load_configuration
 from anban.core import AnbanError
@@ -485,6 +490,32 @@ def check_process(configuration: AnbanConfiguration) -> CheckResult:
     return pass_result("Process", "production Registry executed the current Python safely")
 
 
+def check_mcp(configuration: AnbanConfiguration) -> CheckResult:
+    if not configuration.mcp.servers:
+        return pass_result("MCP", "configured=0; optional protocol integration is disabled")
+    try:
+        capabilities = asyncio.run(
+            discover_mcp_capabilities(
+                configuration.mcp,
+                configuration.workspace,
+                protected_values=configuration.protected_values(),
+            )
+        )
+    except Exception as exc:
+        return fail_result(
+            "MCP",
+            "mcp_discovery_failed",
+            f"Configured MCP discovery failed ({type(exc).__name__}).",
+            "Verify each configured stdio command, Workspace cwd, secret reference, "
+            "and Tool schema.",
+        )
+    return pass_result(
+        "MCP",
+        f"configured={len(configuration.mcp.servers)}, tools={len(capabilities)}; "
+        "real protocol discovery completed",
+    )
+
+
 def check_online() -> CheckResult:
     try:
         version = command("npx", "--yes", CLAW_CLI, "--cli-version", timeout=120)
@@ -597,6 +628,7 @@ def main(argv: list[str] | None = None) -> int:
         results += run_guarded("PostgreSQL", lambda: check_postgresql(configuration), one)
         results += run_guarded("Skills", lambda: check_skills(workspace, configuration), one)
         results += run_guarded("Process", lambda: check_process(configuration), one)
+        results += run_guarded("MCP", lambda: check_mcp(configuration), one)
     if arguments.online:
         results += run_guarded("Online", check_online, one)
     if arguments.web:

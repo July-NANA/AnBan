@@ -9,6 +9,7 @@ dependencies = [
   "fastapi>=0.115",
   "httpx[socks]>=0.28",
   "langgraph>=0.4",
+  "mcp>=1.27,<2",
   "openai>=1.75",
   "pydantic>=2.11",
   "python-dotenv>=1.1",

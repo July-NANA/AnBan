@@ -44,9 +44,12 @@ or terminal signals fail or deduplicate without executing a result payload.
 `capabilities list` returns a point-in-time snapshot. `capabilities search [TEXT]` accepts repeated
 `--kind`, `--available-only`, and a bounded `--limit`. `capabilities describe KEY` requires an
 exact inventory key and fails explicitly for unknown keys. These commands compose the current
-Workspace Registry, Skill catalog, model configuration, and registered Memory Handler without
-executing a Capability or opening a model client. Memory is ready; MCP and sub-agent paths remain
-visible as unavailable until their owning v0.5 deliveries implement them.
+Workspace Registry, Skill catalog, model configuration, registered Memory Handler, and configured
+MCP servers without executing a Capability or opening a model client. MCP inventory inspection
+performs real protocol discovery and therefore fails when a configured server is unavailable or
+malformed. Each supported Tool appears as a ready dynamic `mcp.<server>.<tool-fragment>.<digest>`
+Capability. With no configured server, MCP remains visible as unavailable; the sub-agent path also
+remains unavailable until its owning delivery.
 
 The Agent sees `memory.context`, `skill.activate`, and `process.execute`. Memory accepts `read`,
 `remember`, `compress`, and `expire` operations over Runtime-owned Task or Session identity.
@@ -72,5 +75,6 @@ Artifacts, and 64 MiB per Artifact.
 
 `python -m scripts.doctor` checks the active Python 3.12 toolchain, Node/pnpm, Workspace,
 configuration, both configured PostgreSQL databases and migration heads, uniform Skill discovery,
-and a harmless real Process through the production Registry. `--online` additionally checks npx
+a harmless real Process through the production Registry, and real discovery for every configured
+MCP server. `--online` additionally checks npx
 and the current ClawHub CLI. `--web` additionally launches the locked Chromium check.

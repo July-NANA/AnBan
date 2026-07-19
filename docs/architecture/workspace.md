@@ -25,3 +25,21 @@ shared live catalog in the current Application and by every newly built Applicat
 Relative Process cwd values resolve from the Workspace root; absolute cwd is allowed. Declared
 Artifact paths resolve from the effective cwd. Multiple declared files are validated before any
 snapshot, stored under `artifacts/<run-id>/`, and persisted only through Runtime/Persistence.
+
+Optional MCP stdio servers are declared in `anban.toml` without credentials:
+
+```toml
+[[capability.mcp.servers]]
+name = "local-tools"
+transport = "stdio"
+command = "/absolute/path/to/server"
+args = ["--stdio"]
+cwd = "."
+environment = { SERVER_TOKEN = "MY_MCP_TOKEN" }
+```
+
+The cwd must remain inside the Workspace. Each environment value is a reference name resolved from
+the current process or Workspace `secrets.env`; `MY_MCP_TOKEN=...` belongs only in that protected
+file. Missing references, invalid schemas, malformed protocol, or an unavailable configured server
+fail Application composition. With no server declaration, MCP remains an optional unavailable
+inventory category and Doctor reports `configured=0`.

@@ -333,7 +333,7 @@ async def show_context(scope: str, identity: TaskId | SessionId, *, json_output:
 
 
 async def inspect_capabilities(arguments: argparse.Namespace, *, json_output: bool) -> int:
-    application = build_inventory_application()
+    application = await build_inventory_application()
     try:
         if arguments.capability_command == "list":
             snapshot = application.snapshot()

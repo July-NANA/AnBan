@@ -39,6 +39,11 @@ Both database values must use the SQLAlchemy `postgresql+asyncpg` driver. Values
 not documentation or fixtures. Apply migrations with `alembic upgrade head`; select the test
 database with `ANBAN_DATABASE_PROFILE=test`.
 
+MCP is optional and uses the official Python SDK locked to stable major v1 (`mcp>=1.27,<2`). Add
+server declarations under `[[capability.mcp.servers]]`; keep any referenced environment values in
+`secrets.env`. Doctor performs real initialization and Tool discovery for configured servers but
+does not invoke a Tool.
+
 The packaged `@anban/clawhub` Skill is always available. Any valid Workspace `SKILL.md` is loaded
 through the same parser without consulting installer metadata. The current Application refreshes
 the catalog on inventory observation and activation; a restart is not required after installation.
@@ -48,7 +53,7 @@ the catalog on inventory observation and activation; a restart is not required a
 - `pnpm check`: Ruff, Pyright strict, pytest, frontend typecheck, and frontend tests.
 - `pnpm build`: deterministic frontend baseline build.
 - `pnpm run doctor`: base toolchain, Workspace/configuration, PostgreSQL migration heads, uniform
-  Skill parsing, and a harmless production Process.
+  Skill parsing, a harmless production Process, and configured MCP discovery.
 - `python -m scripts.doctor --online`: npx and current ClawHub CLI.
 - `python -m scripts.doctor --web`: frontend Chromium.
 - `pnpm run acceptance:model`, `acceptance:capability`, `acceptance:runtime`, and

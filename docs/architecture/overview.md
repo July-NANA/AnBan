@@ -8,6 +8,7 @@ Interaction -> Runtime -> ModelPort
                        -> CapabilityPort -> skill.activate
                                          -> process.execute
                                          -> memory.context
+                                         -> mcp.<server>.<tool>.<digest>
                        -> UnitOfWorkFactory -> PostgreSQL
 ```
 
@@ -25,7 +26,8 @@ simple work or require a validated graph for materially structured work. It comp
 through one dynamic LangGraph builder and provides generic bounded branch, loop, parallel, join,
 and nested-subgraph execution. Graph actions re-enter the existing real Agent/Capability path as
 durable Nodes; invalid planning or action output cannot fall back to success. Model remains an
-independent Port. Capability owns the Registry and its three Handlers. Runtime also owns Tool-call
+independent Port. Capability owns the Registry, its three fixed Handlers, and shared dynamic MCP
+Tool Handler instances discovered from configured stdio servers. Runtime also owns Tool-call
 correctness, structured completion evaluation, bounded alternative-path selection, repair without
 side-effect replay, persistence coordination, and Trace projection. Persistence implements the one
 PostgreSQL backend; Interaction supplies the CLI loop and the transport-neutral v0.5
@@ -84,6 +86,13 @@ Context entries, summaries, and ordered summary coverage. Compression is atomic:
 marks covered entries superseded but never deletes them; any validation or write failure rolls the
 whole operation back. No vector database, second registry, source-specific loader, or Memory
 backend was introduced.
+
+Configured MCP servers are another ordinary Registry input. Composition performs real protocol
+initialization and `tools/list`; one shared Handler class exposes every supported dynamic schema.
+Invocation reopens the protocol, verifies the descriptor digest, and calls the real Tool. The
+original Interaction reaches Runtime and returns the final result through the same path as other
+Capabilities. Invocation/Event persistence, Audit, and Trace remain generic; only safe logical MCP
+metadata is projected. A fresh Application rediscovers instead of trusting process memory.
 
 The Main Agent does not equate a valid final-text shape with goal completion. The existing Model
 Port receives a closed completion schema plus the original bounded transcript, real Tool Results,

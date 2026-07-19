@@ -63,6 +63,16 @@ max_artifacts = {policy.PROCESS_ARTIFACTS_MAX}
 # 单个声明 Artifact 的最大字节数。
 artifact_max_bytes = {policy.PROCESS_ARTIFACT_MAX_BYTES}
 
+[capability.mcp]
+# MCP stdio 初始化、发现和调用的单次协议超时；允许范围 1–300 秒。
+request_timeout_seconds = {policy.MCP_REQUEST_TIMEOUT_DEFAULT_SECONDS}
+# 单次 Tool Result 可交给模型的最大 UTF-8 字节数。
+output_max_bytes = {policy.MCP_OUTPUT_MAX_BYTES}
+# 单个服务器允许动态发现的 Tool 数量上限。
+max_tools_per_server = {policy.MCP_TOOLS_MAX}
+# 服务器使用 [[capability.mcp.servers]] 配置。环境值只能写成 environment
+# 表中的 secrets.env/进程环境变量引用，不得把凭据直接写入本文件。
+
 [database]
 # 开发数据库只允许从该固定环境变量引用，实际 URL 必须放在 secrets.env。
 url_env = "DATABASE_URL"

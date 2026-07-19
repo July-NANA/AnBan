@@ -57,14 +57,16 @@ Runtime can explicitly detach local coroutine ownership while leaving the durabl
 intact. A fresh Application rebuilds the Invocation context and Event sequence from PostgreSQL,
 restores the already-started Capability through its optional recovery contract, and continues from
 the authoritative result. Task Graph recovery reconstructs control state from immutable revision
-data and persisted structured NodeRun outputs: completed actions are reused, the active action
-consumes the recovered result, and only previously unstarted actions may execute.
+data and persisted structured NodeRun outputs: valid completed actions are reused, the active
+action consumes the recovered result, and D23 excludes invalidated concrete occurrences from
+replay. A pure invalidated action may execute as a new NodeRun; an invalidated Capability-backed
+result that would execute again rejects the replacement before recovery.
 For correlated supplemental input, Runtime persists bounded Task Context and a closed Model
 decision before recovery. Context-only input retains the revision. A structural decision carries a
-complete replacement graph and preserves every started action exactly; Runtime atomically appends
-the revision and relinks only the active Run. Recovery shares the configured response-repair budget
-across sufficiency, final-response, and completion decisions and never replays the started
-Capability.
+complete replacement graph and preserves the active action plus its transitive input ancestry;
+Runtime atomically appends the revision, concrete result dispositions, and the active Run link.
+Recovery shares the configured response-repair budget across sufficiency, final-response, and
+completion decisions and never replays a Capability-backed result.
 
 ## Model
 

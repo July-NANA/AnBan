@@ -99,6 +99,12 @@ both the resume and deduplication key. D22 resolves only the opaque key emitted 
 waiting Checkpoint. Unknown, conflicting, and terminal/ineligible bindings fail explicitly rather
 than creating new work. A valid supplemental update is classified before recovery; Context and an
 optional replacement revision commit atomically. Fixed-Agent work accepts context-only updates but
-rejects structural replacement because no safe graph action identity exists. Started graph actions
-must remain identical, so a completed or active side effect is never replayed. General expiry,
+rejects structural replacement because no safe graph action identity exists. D23 preserves the
+active action and its complete input ancestry. Each completed NodeRun is independently reusable
+only while its node definition, incoming control, and transitive inputs remain equivalent. A pure
+invalidated result may execute again as a new NodeRun; an invalidated result with any Capability
+Invocation is rejected if the replacement would execute it again. Removal invalidates the old
+result without replay, and the old Artifact remains historical evidence. These decisions commit
+with the revision as `graph.result_reused` or `graph.result_invalidated`; rejected changes record
+`graph.result_invalidation_rejected` without linking the proposed revision. General expiry,
 deduplication, and inbox lifecycle remain later scope.

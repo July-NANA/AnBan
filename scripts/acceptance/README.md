@@ -27,6 +27,13 @@ These commands fail closed and emit only bounded evidence:
   processes and the ordinary Interaction envelope. It proves opaque correlation, immutable
   revision history, restart recovery, protected action reuse, one real side effect, and explicit
   unknown/terminal correlation failure without persisting raw keys or model responses.
+- `pnpm run acceptance:graph-result-reuse`: D23 real Provider/PostgreSQL/Process acceptance. A
+  randomized sequential graph replans through fresh CLI processes, reuses one unchanged concrete
+  Capability-backed NodeRun, and recovers one active Process without replay. Five deterministic
+  semantic variants separately cover transitive invalidation, pure reexecution, removal,
+  side-effect rejection, and prior invalidation history; two ordinary-Composition reverse tests
+  durably reject side-effect reexecution and changed active ancestry without replacing the
+  production execution path.
 - `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
   ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three

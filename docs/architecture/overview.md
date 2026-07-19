@@ -42,10 +42,13 @@ durable lookup for waiting continuations. Every waiting result receives an opaqu
 PostgreSQL stores only its namespace and SHA-256 fingerprint. Supplemental input resolves that key
 through Interaction, persists bounded Task Context, and asks the independent Model Port whether
 the change is context-only or structural. Context-only input retains the revision. Structural
-input appends a complete replacement revision while requiring every started action to remain
-identical. Runtime then reconstructs the Checkpoint without replaying its side effect. Audit/Trace
-never receives the raw key or update. General inbox, deduplication, and other envelope kinds remain
-in their later deliveries.
+input appends a complete replacement revision while preserving the active action and its input
+ancestry. Runtime compares completed NodeRuns by graph definition and transitive control/input
+equivalence. It reuses valid occurrences, excludes invalidated pure occurrences from recovery
+replay, and rejects any changed Capability-backed result that would execute again. Runtime then
+reconstructs the Checkpoint without replaying its side effect. Audit/Trace records each concrete
+result disposition but never receives the raw key or update. General inbox, deduplication, and other
+envelope kinds remain in their later deliveries.
 
 Every Skill follows `SKILL.md -> uniform parser -> SkillPackage -> skill.activate ->
 process.execute`. No production code selects behavior by source, installer, registry, publisher,

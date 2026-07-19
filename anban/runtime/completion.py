@@ -153,6 +153,9 @@ class CompletionEvaluation:
 class CompletionEvaluator:
     """Use the existing Model Port to judge completion against real execution evidence."""
 
+    def __init__(self, *, preserve_proposed_final: bool = False) -> None:
+        self._preserve_proposed_final = preserve_proposed_final
+
     async def assess(
         self,
         *,
@@ -345,7 +348,9 @@ class CompletionEvaluator:
                     complete=True,
                     rationale=decision.rationale,
                     confidence=decision.confidence,
-                    final_text=decision.final_text,
+                    final_text=(
+                        proposed_final if self._preserve_proposed_final else decision.final_text
+                    ),
                 ),
                 replan=None,
             )

@@ -60,6 +60,7 @@ class RecoveredContinuationAgent:
         prior_artifacts: tuple[ArtifactReference, ...],
         prior_model_turns: int,
         prior_capability_calls: int,
+        preserve_proposed_final: bool = False,
     ) -> AgentOutcome:
         observation = result.observation
         if observation is None:
@@ -154,7 +155,9 @@ class RecoveredContinuationAgent:
             repair_request = False
             while True:
                 try:
-                    evaluated = await CompletionEvaluator().assess(
+                    evaluated = await CompletionEvaluator(
+                        preserve_proposed_final=preserve_proposed_final
+                    ).assess(
                         transcript=tuple(messages),
                         assessment=assessment,
                         observations=(recorded,),

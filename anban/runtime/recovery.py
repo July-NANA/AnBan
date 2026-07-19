@@ -295,6 +295,7 @@ class RuntimeRecovery:
                 prior_artifacts=self._artifact_references(aggregate, persistence.node),
                 prior_model_turns=active_model_turns,
                 prior_capability_calls=active_capability_calls,
+                preserve_proposed_final=True,
             )
 
         spec = aggregate.graph_revision.spec

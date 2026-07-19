@@ -171,7 +171,11 @@ class PersistentGraphTaskRunner:
                     checkpoint_background=self._checkpoint_background,
                 ),
                 sufficiency=self._sufficiency,
-                completion=(CompletionEvaluator() if self._sufficiency is not None else None),
+                completion=(
+                    CompletionEvaluator(preserve_proposed_final=True)
+                    if self._sufficiency is not None
+                    else None
+                ),
                 assessment_observer=self._persistence.agent_sufficiency_assessed,
                 observation_observer=self._persistence.agent_observed,
                 completion_observer=self._persistence.agent_completion_assessed,

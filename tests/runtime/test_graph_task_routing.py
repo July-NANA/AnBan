@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from anban.capability import CapabilityRegistry
+from anban.capability import CapabilityRegistry, UnifiedCapabilityInventory
 from anban.core import TaskGraphSpec
 from anban.runtime import (
     AgentOutcomeStatus,
+    CapabilitySufficiencyEvaluator,
     ExecutionQueryService,
+    ExecutionStrategy,
     PersistentRuntime,
     TaskExecutionRoute,
     TaskRouteEvaluator,
@@ -14,7 +16,13 @@ from anban.runtime import (
 from tests.core.test_graph import action, node_output
 from tests.runtime.memory_uow import MemoryUnitOfWorkFactory
 from tests.runtime.test_graph_routing import route_turn
-from tests.runtime.test_persistent_runtime import TransactionCheckingModel, final_turn, load_run
+from tests.runtime.test_persistent_runtime import (
+    TransactionCheckingModel,
+    assessment_turn,
+    completion_turn,
+    final_turn,
+    load_run,
+)
 
 
 def one_action_graph() -> TaskGraphSpec:
@@ -114,6 +122,38 @@ async def test_complex_route_persists_revision_and_executes_graph_nodes() -> Non
     assert tuple(event.sequence for event in aggregate.events) == tuple(
         range(1, len(aggregate.events) + 1)
     )
+
+
+async def test_graph_action_preserves_structured_candidate_after_completion_assessment() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    spec = one_action_graph()
+    registry = CapabilityRegistry()
+    model = TransactionCheckingModel(
+        factory,
+        [
+            route_turn(TaskExecutionRoute.TASK_GRAPH.value, spec.model_dump(mode="json")),
+            assessment_turn(ExecutionStrategy.DIRECT_ANSWER, target=""),
+            final_turn('{"result":"structured-candidate"}'),
+            completion_turn(final_text="A rewritten ordinary answer."),
+        ],
+    )
+
+    result = await PersistentRuntime(
+        model,
+        registry,
+        factory,
+        sufficiency=CapabilitySufficiencyEvaluator(
+            UnifiedCapabilityInventory(registry, model_available=True)
+        ),
+        route_evaluator=TaskRouteEvaluator(),
+        response_repair_retries=0,
+    ).execute("Complete a previously unseen structured graph request.")
+
+    aggregate = await load_run(factory, result.run_id)
+    graph_node = next(node for node in aggregate.nodes if node.node_name == "work_unit")
+    assert result.outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert result.outcome.final_text == "structured-candidate"
+    assert graph_node.output == {"result": "structured-candidate"}
 
 
 async def test_invalid_graph_action_output_is_durable_failure_not_fallback_success() -> None:

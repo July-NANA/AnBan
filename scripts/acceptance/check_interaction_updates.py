@@ -127,17 +127,37 @@ async def apply_update(identity: WaitingIdentity, update: str) -> dict[str, obje
     return payloads[-1]
 
 
+def increment_process_arguments(count_name: str) -> str:
+    """Build deterministic real-Process input so this Gate isolates update behavior."""
+
+    program = (
+        "import time;from pathlib import Path;time.sleep(4);"
+        f"p=Path({count_name!r});"
+        "value=int(p.read_text())+1 if p.exists() else 1;"
+        "p.write_text(str(value));print(value)"
+    )
+    return json.dumps(
+        {
+            "command": "python",
+            "args": ["-c", program],
+            "cwd": ".",
+            "background": True,
+            "artifacts": [{"path": count_name, "media_type": "text/plain"}],
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+
+
 async def context_case(
     marker: str, label: str, update: str
 ) -> tuple[dict[str, object], WaitingIdentity]:
     count_name = f"d22-{label}-{marker}.txt"
+    arguments = increment_process_arguments(count_name)
     identity = await start_detached(
-        "Complete one bounded background operation and then report its real result. Use exactly "
-        "one process.execute call with command=python and background=true. Pass a Python -c "
-        "program that sleeps for four seconds, reads the relative Workspace file "
-        f"{count_name} if present, increments its integer value once, and writes it back. Use "
-        "cwd=., print the resulting integer, and declare that same file as the single text/plain "
-        "Artifact. Use no environment overrides, stdin, Skill, or additional Capability call. "
+        "Complete one bounded background operation and then report its real result. Make exactly "
+        "one process.execute Tool Call using the following complete arguments object without "
+        f"changing any field or value: {arguments}. Use no Skill or additional Capability call. "
         "Do not report completion before the real result is available."
     )
     await apply_update(identity, update)
@@ -172,15 +192,14 @@ async def context_case(
 
 
 def supplied_structural_graph(marker: str, count_name: str) -> TaskGraphSpec:
+    arguments = increment_process_arguments(count_name)
     transform = TaskGraphNode(
         id=f"transform_{marker}",
         kind=TaskGraphNodeKind.ACTION,
         objective=(
-            "Use exactly one process.execute call with command=python, background=true, cwd=., "
-            "and no stdin, environment override, Skill, or other Capability. Run a Python -c "
-            "program that sleeps four seconds, increments the relative Workspace integer file "
-            f"{count_name} once, prints the integer, and declares that file as the single "
-            "text/plain Artifact. Then return exactly the transformed JSON output."
+            "Make exactly one process.execute Tool Call using this complete arguments object "
+            f"without changing any field or value: {arguments}. Use no Skill or additional "
+            "Capability call. Then return exactly the transformed JSON output."
         ),
         outputs=("transformed",),
     )

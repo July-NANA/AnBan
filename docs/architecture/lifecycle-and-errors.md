@@ -106,5 +106,9 @@ invalidated result may execute again as a new NodeRun; an invalidated result wit
 Invocation is rejected if the replacement would execute it again. Removal invalidates the old
 result without replay, and the old Artifact remains historical evidence. These decisions commit
 with the revision as `graph.result_reused` or `graph.result_invalidated`; rejected changes record
-`graph.result_invalidation_rejected` without linking the proposed revision. General expiry,
-deduplication, and inbox lifecycle remain later scope.
+`graph.result_invalidation_rejected` without linking the proposed revision. D26 persists every
+valid delivery before routing. An envelope that expires after receipt becomes `expired`; a changed
+payload under one deduplication identity is `conflicting`; unsupported input becomes `rejected`.
+Terminal duplicates reconstruct the existing Run. Routed, active, and unknown outcomes remain
+fail-closed and never replay a side effect. Only an expired claim without a Run link can be safely
+reclaimed.

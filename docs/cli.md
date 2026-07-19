@@ -1,9 +1,14 @@
 # CLI Reference
 
-The production CLI commands include `workspace init`, `run`, `chat`, `runs`, `trace`, `artifacts`,
+The production CLI commands include `workspace init`, `run`, `chat`, `runs`, `inbox`, `trace`, `artifacts`,
 `context task`, `context session`, and the v0.5 `capabilities` inspection group. Every command
 supports `--json`. Run failures use stable error codes; Trace, Artifact, and Context queries work
 from a new database-only Application.
+
+`anban inbox [--limit N]` lists bounded durable delivery facts from a new database-only
+Application: Interaction identity, logical source/kind/route, content hash, lifecycle status,
+expiry, correlated Task/Run/Node identities, terminal category, delivery count, and last protocol
+disposition. It never emits raw content or correlation values.
 
 `anban run --async <request>` uses the ordinary Interaction and Runtime Composition Root. It emits
 each durable waiting Checkpoint, resumes it, and emits the eventual terminal result; it does not

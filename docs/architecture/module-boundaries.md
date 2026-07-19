@@ -15,14 +15,20 @@ Unknown and terminal correlations fail explicitly. D25 makes route the first gat
 validated user-message new work from any logical Adapter source enters the same Runtime entry,
 while eligible resume continues through the existing supplemental-input path. New Runs atomically
 record `interaction.routed` with only system Interaction identity, semantic kind/route, logical
-source, and hashed correlations. Interaction still does not own a general inbox, deduplication,
-expiry records, background delivery, Trigger behavior, domain lifecycle, or execution scheduling;
-unsupported forms still fail instead of becoming new work.
+source, and hashed correlations. D26 admits every structurally valid envelope into the durable
+PostgreSQL inbox before routing. A unique namespace/fingerprint pair deduplicates delivery;
+different semantics under that identity conflict, terminal duplicates reconstruct the persisted
+Run without Model or Capability replay, and an already-routed unknown outcome remains pending.
+Only an unrouted claim older than its lease may be reclaimed after restart. Expiry after receipt
+and unsupported input kinds become durable terminal inbox facts without creating a Run. Raw
+correlation values never enter storage or queries. Background delivery, Trigger behavior, domain
+lifecycle, and execution scheduling remain later scope.
 
 ## Core
 
-Owns authoritative Task, ExecutionRun, NodeRun, CapabilityInvocation, Checkpoint, Artifact, Event, bounded
-Task/Session Context, and `TaskGraphSpec` identity-free structured graph vocabulary. A graph spec
+Owns authoritative Task, ExecutionRun, NodeRun, CapabilityInvocation, Checkpoint, Artifact, Event,
+Interaction inbox lifecycle, bounded Task/Session Context, and `TaskGraphSpec` identity-free
+structured graph vocabulary. A graph spec
 contains only closed node/edge kinds, explicit dependencies, input/output bindings, entry and
 terminal identities, nested subgraphs, and hard budgets. Its validator rejects hidden cycles,
 invalid control shapes, unreachable nodes, bindings outside dependency scope, and unbounded loop or
@@ -125,6 +131,11 @@ Continuation correlations are Event facts rather than a new domain table. Partia
 enforce one binding per Checkpoint, one namespace/fingerprint binding, and one received update per
 Interaction identity. Task Context holds the raw supplemental content; Events retain only hashes,
 logical classification, revision identity, and `side_effect_replayed=false`.
+The `interaction_inbox` table stores each normalized delivery before routing, with bounded content,
+safe hashes, expiry, claim, route identities, terminal outcome, attempt count, and last protocol
+disposition. A database unique constraint owns deduplication identity. Runtime initialization links
+the inbox row to Task/Run/root Node in the same transaction and appends
+`interaction.inbox_routed`; queries expose hashes and lifecycle facts rather than raw content.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
 

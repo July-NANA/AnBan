@@ -37,8 +37,13 @@ These commands fail closed and emit only bounded evidence:
 - `pnpm run acceptance:interaction-gateway`: D25 real Provider/PostgreSQL acceptance. Three
   changed direct-answer Task objects enter the ordinary Application from distinct logical Adapter
   sources, create independent durable Runs, and reconstruct one `interaction.routed` Audit fact
-  through new query Applications. Async-result, Webhook, schedule, deduplicated, and unknown-resume
-  reverse inputs fail explicitly without creating a Run; their owned behavior remains D26-D28.
+  through new query Applications. Async-result, Webhook, schedule, and unknown-resume reverse
+  inputs fail explicitly without creating a Run; their owned execution remains D27-D28.
+- `pnpm run acceptance:interaction-inbox`: D26 real Provider/PostgreSQL acceptance. Three changed
+  task objects and logical sources each create one Run; a fresh Application redelivers the same
+  randomized identity and reconstructs that Run without replay. Fresh queries reconcile two
+  deliveries, `interaction.inbox_routed`, complete Trace, conflict, post-receipt expiry, and durable
+  unsupported-input rejection.
 - `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
   ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three

@@ -50,8 +50,13 @@ ancestry. Runtime compares completed NodeRuns by graph definition and transitive
 equivalence. It reuses valid occurrences, excludes invalidated pure occurrences from recovery
 replay, and rejects any changed Capability-backed result that would execute again. Runtime then
 reconstructs the Checkpoint without replaying its side effect. Audit/Trace records each concrete
-result disposition but never receives the raw key or update. General inbox, deduplication, and other
-envelope kinds remain in their later deliveries and fail before they can become accidental work.
+result disposition but never receives the raw key or update. D26 adds the general durable inbox
+ahead of the route. PostgreSQL owns a unique hashed delivery identity and persists receipt, expiry,
+claim, route, terminal outcome, and attempt disposition. Identical terminal retries return the
+original persisted Run; changed semantics conflict; routed or active work is never replayed; only
+a stale claim with no Run link is safe to reclaim. Runtime links accepted input atomically during
+Task/Run/Node creation and records `interaction.inbox_routed`. Unsupported future kinds are
+durably rejected without creating work.
 
 Every Skill follows `SKILL.md -> uniform parser -> SkillPackage -> skill.activate ->
 process.execute`. No production code selects behavior by source, installer, registry, publisher,

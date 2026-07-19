@@ -20,7 +20,7 @@ from anban.capability.contracts import (
     InvocationContext,
 )
 from anban.capability.workspace import WorkspaceBoundary, capability_error
-from anban.core.errors import AnbanError, ErrorCode
+from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.metadata import SafeMetadata
 
 _POLL_SECONDS = 0.05
@@ -112,6 +112,9 @@ class DurableProcessSupervisor:
             terminal = self._read_result(directory)
             if terminal is not None:
                 return terminal
+            failure = self._read_error(directory)
+            if failure is not None:
+                raise AnbanError(failure)
             if self._started_path(directory).is_file():
                 key = str(context.invocation_id)
                 self._progress_sequences[key] = 0
@@ -126,6 +129,15 @@ class DurableProcessSupervisor:
                     ),
                 )
             if worker.poll() is not None:
+                # Process termination orders the worker's atomic state writes.
+                # Re-observe both terminal channels after exit so a fast
+                # pre-readiness failure is not replaced by a generic error.
+                terminal = self._read_result(directory)
+                if terminal is not None:
+                    return terminal
+                failure = self._read_error(directory)
+                if failure is not None:
+                    raise AnbanError(failure)
                 raise self._failure("worker_exited_before_start")
             await asyncio.sleep(_POLL_SECONDS)
         await self.cancel(context)
@@ -133,6 +145,9 @@ class DurableProcessSupervisor:
 
     async def recover(self, context: InvocationContext, progress_sequence: int) -> None:
         directory = self._directory(context)
+        failure = self._read_error(directory)
+        if failure is not None:
+            raise AnbanError(failure)
         if not self._started_path(directory).is_file() and self._read_result(directory) is None:
             raise self._failure("recovery_state_missing")
         self._progress_sequences[str(context.invocation_id)] = progress_sequence
@@ -238,6 +253,10 @@ class DurableProcessSupervisor:
         return directory / "result.json"
 
     @staticmethod
+    def _error_path(directory: Path) -> Path:
+        return directory / "error.json"
+
+    @staticmethod
     def _cancel_path(directory: Path) -> Path:
         return directory / "cancel"
 
@@ -250,6 +269,16 @@ class DurableProcessSupervisor:
             return CapabilityResult.model_validate_json(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, ValidationError):
             raise DurableProcessSupervisor._failure("worker_result_invalid") from None
+
+    @staticmethod
+    def _read_error(directory: Path) -> ErrorInfo | None:
+        path = DurableProcessSupervisor._error_path(directory)
+        if not path.is_file():
+            return None
+        try:
+            return ErrorInfo.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValidationError):
+            raise DurableProcessSupervisor._failure("worker_error_invalid") from None
 
     @staticmethod
     def _read_started(directory: Path) -> BackgroundWorkerState | None:

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from anban.capability.process_background import BackgroundWorkerRequest
 from anban.capability.workspace import WorkspaceBoundary
+from anban.core.errors import AnbanError
 
 _POLL_SECONDS = 0.05
 
@@ -74,6 +75,12 @@ async def _run(directory: Path) -> int:
         await asyncio.sleep(_POLL_SECONDS)
     try:
         result = await execution
+    except AnbanError as exc:
+        _atomic_write(
+            directory / "error.json",
+            exc.info.model_dump_json(exclude_computed_fields=True),
+        )
+        return 0
     except Exception:
         return 3
     _atomic_write(

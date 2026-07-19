@@ -95,6 +95,29 @@ async def test_worker_exit_without_result_fails_without_unbounded_wait(tmp_path:
     assert captured.value.info.details.root["reason"] == "worker_exited_without_result"
 
 
+async def test_background_start_preserves_pre_readiness_capability_error(tmp_path: Path) -> None:
+    invocation = context(seconds=5)
+    gateway = registry(tmp_path)
+
+    with pytest.raises(AnbanError) as captured:
+        await gateway.invoke(
+            "process.execute",
+            {
+                "command": "anban-command-that-does-not-exist",
+                "background": True,
+            },
+            invocation,
+        )
+
+    assert captured.value.info.code.value == "capability_unavailable"
+    assert captured.value.info.details.root == {
+        "capability_name": "process.execute",
+        "reason": "missing_executable",
+    }
+    error_path = tmp_path / ".anban" / "process" / str(invocation.invocation_id) / "error.json"
+    assert error_path.is_file()
+
+
 async def test_wait_rechecks_result_after_observing_worker_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

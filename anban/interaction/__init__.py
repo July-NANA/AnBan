@@ -10,6 +10,12 @@ from anban.interaction.contracts import (
     InteractionRoute,
 )
 from anban.interaction.inbox import InteractionInboxDetail
+from anban.interaction.scheduler import (
+    ScheduleDispatchResult,
+    ScheduleDispatchStatus,
+    ScheduleWorkerAdapter,
+    ScheduleWorkerResult,
+)
 from anban.interaction.service import (
     CorrelatedWaitingExecution,
     InteractionChatSession,
@@ -34,6 +40,10 @@ __all__ = [
     "InteractionInboxDetail",
     "InteractionRoute",
     "InteractionService",
+    "ScheduleDispatchResult",
+    "ScheduleDispatchStatus",
+    "ScheduleWorkerAdapter",
+    "ScheduleWorkerResult",
     "WebhookIngressAdapter",
     "WebhookPayload",
     "create_webhook_http_application",

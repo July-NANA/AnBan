@@ -18,6 +18,7 @@ CheckpointId = NewType("CheckpointId", UUID)
 ContextEntryId = NewType("ContextEntryId", UUID)
 ContextSummaryId = NewType("ContextSummaryId", UUID)
 ScheduleId = NewType("ScheduleId", UUID)
+ScheduleOccurrenceId = NewType("ScheduleOccurrenceId", UUID)
 
 
 def new_interaction_id() -> InteractionId:
@@ -70,3 +71,7 @@ def new_context_summary_id() -> ContextSummaryId:
 
 def new_schedule_id() -> ScheduleId:
     return ScheduleId(uuid4())
+
+
+def new_schedule_occurrence_id() -> ScheduleOccurrenceId:
+    return ScheduleOccurrenceId(uuid4())

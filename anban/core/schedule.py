@@ -8,7 +8,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from anban.core.ids import ScheduleId
+from anban.core.errors import ErrorCode
+from anban.core.ids import (
+    ExecutionRunId,
+    InteractionId,
+    ScheduleId,
+    ScheduleOccurrenceId,
+)
 from anban.core.models import UtcDateTime
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -18,6 +24,22 @@ _TIMEZONE_PATTERN = re.compile(r"^[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+.-]+)*$")
 class ScheduleKind(StrEnum):
     CRON = "cron"
     INTERVAL = "interval"
+
+
+class ScheduleMissedPolicy(StrEnum):
+    SKIP = "skip"
+    CATCH_UP_ONCE = "catch_up_once"
+
+
+class ScheduleOverlapPolicy(StrEnum):
+    SKIP = "skip"
+
+
+class ScheduleOccurrenceStatus(StrEnum):
+    CLAIMED = "claimed"
+    PROCESSED = "processed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
 
 
 class ScheduleDefinition(BaseModel):
@@ -32,6 +54,8 @@ class ScheduleDefinition(BaseModel):
     content: str = Field(min_length=1, max_length=32_768)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=256)
     every_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
+    missed_policy: ScheduleMissedPolicy = ScheduleMissedPolicy.SKIP
+    overlap_policy: ScheduleOverlapPolicy = ScheduleOverlapPolicy.SKIP
     anchor_at: UtcDateTime
     next_occurrence_at: UtcDateTime
     created_at: UtcDateTime
@@ -72,4 +96,36 @@ class ScheduleDefinition(BaseModel):
             raise ValueError("Schedule next occurrence must follow its anchor")
         if self.created_at > self.anchor_at:
             raise ValueError("Schedule creation cannot follow its anchor")
+        return self
+
+
+class ScheduleOccurrence(BaseModel):
+    """One durable, idempotent schedule occurrence and worker lease."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: ScheduleOccurrenceId
+    schedule_id: ScheduleId
+    interaction_id: InteractionId
+    scheduled_for: UtcDateTime
+    status: ScheduleOccurrenceStatus
+    missed_count: int = Field(default=0, ge=0, le=10_000)
+    attempt_count: int = Field(default=1, ge=1, le=100)
+    claimed_at: UtcDateTime
+    lease_until: UtcDateTime
+    finished_at: UtcDateTime | None = None
+    run_id: ExecutionRunId | None = None
+    error_code: ErrorCode | None = None
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> ScheduleOccurrence:
+        terminal = self.status is not ScheduleOccurrenceStatus.CLAIMED
+        if terminal != (self.finished_at is not None):
+            raise ValueError("Terminal Schedule occurrence requires finished_at")
+        if self.status is ScheduleOccurrenceStatus.PROCESSED and self.run_id is None:
+            raise ValueError("Processed Schedule occurrence requires a Run")
+        if self.status is ScheduleOccurrenceStatus.SKIPPED and self.run_id is not None:
+            raise ValueError("Skipped Schedule occurrence cannot own a Run")
+        if self.lease_until <= self.claimed_at:
+            raise ValueError("Schedule occurrence lease must follow its claim")
         return self

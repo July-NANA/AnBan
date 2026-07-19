@@ -20,6 +20,12 @@ _INTERACTION_METADATA = frozenset(
         "resume_correlation_hash",
         "resume_namespace",
         "source",
+        "schedule_attempt_count",
+        "schedule_missed_count",
+        "schedule_missed_policy",
+        "schedule_occurrence_id",
+        "schedule_overlap_policy",
+        "schedule_scheduled_for",
         "webhook_auth_version",
         "webhook_authenticated",
         "webhook_clock_skew_seconds",
@@ -83,6 +89,26 @@ def interaction_delivery_event_facts(
     metadata: SafeMetadata, node_run_id: NodeRunId
 ) -> tuple[EventFact, ...]:
     facts: list[EventFact] = []
+    if metadata.root.get("input_kind") == "schedule_occurrence":
+        schedule_metadata = frozenset(
+            {
+                "schedule_attempt_count",
+                "schedule_missed_count",
+                "schedule_missed_policy",
+                "schedule_occurrence_id",
+                "schedule_overlap_policy",
+                "schedule_scheduled_for",
+            }
+        )
+        if not schedule_metadata.issubset(metadata.root):
+            raise ValueError("Schedule occurrence metadata is incomplete")
+        facts.append(
+            EventFact(
+                "schedule.occurrence_dispatched",
+                metadata_projection(metadata, schedule_metadata),
+                node_run_id=node_run_id,
+            )
+        )
     if metadata.root.get("webhook_authenticated") is True:
         facts.append(
             EventFact(

@@ -20,7 +20,11 @@ from anban.application import (
     build_query_application,
     build_webhook_http_application,
 )
-from anban.cli_schedule import configure_schedule_commands, run_schedule_command
+from anban.cli_schedule import (
+    configure_schedule_commands,
+    run_schedule_command,
+    run_scheduler_command,
+)
 from anban.core.errors import AnbanError, ErrorCategory, ErrorCode, ErrorInfo
 from anban.core.ids import CheckpointId, ExecutionRunId, SessionId, TaskId, new_interaction_id
 from anban.interaction import (
@@ -655,6 +659,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_SUCCESS
         if arguments.command in {"schedule", "schedules"}:
             return asyncio.run(run_schedule_command(arguments, json_output=json_output))
+        if arguments.command == "scheduler":
+            return asyncio.run(run_scheduler_command(json_output=json_output))
         if arguments.command == "run":
             values = list(arguments.values)
             if values[0] == "show":

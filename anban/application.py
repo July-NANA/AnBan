@@ -20,7 +20,11 @@ from anban.capability import (
 )
 from anban.capability.workspace import WorkspaceBoundary
 from anban.config import load_configuration
-from anban.interaction import InteractionService, create_webhook_http_application
+from anban.interaction import (
+    InteractionService,
+    ScheduleWorkerAdapter,
+    create_webhook_http_application,
+)
 from anban.model import OpenAICompatibleAdapter
 from anban.persistence import SQLAlchemyUnitOfWorkFactory, create_database_engine
 from anban.runtime import (
@@ -41,6 +45,7 @@ class Application:
 
     interactions: InteractionService
     schedules: ScheduleService
+    scheduler: ScheduleWorkerAdapter
     inventory: CapabilityInventoryPort
     sufficiency: CapabilitySufficiencyEvaluator
     graph_builder: DynamicTaskGraphBuilder
@@ -158,9 +163,12 @@ async def build_application() -> Application:
         )
         delegate.bind(runtime.start_child)
         queries = ExecutionQueryService(unit_of_work)
+        interactions = InteractionService(runtime, queries, unit_of_work)
+        schedules = ScheduleService(unit_of_work)
         return Application(
-            InteractionService(runtime, queries, unit_of_work),
-            ScheduleService(unit_of_work),
+            interactions,
+            schedules,
+            ScheduleWorkerAdapter(schedules, interactions),
             inventory,
             sufficiency,
             graph_builder,

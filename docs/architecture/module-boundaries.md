@@ -171,8 +171,11 @@ unique constraint permits only one child per parent Invocation, and checks forbi
 self-parent relationships. `subagent.child_created` is the durable recovery and Audit fact; child
 Artifacts stay on the child Run and are never copied into the parent as fabricated provenance.
 The `schedules` table stores immutable Cron/Interval definitions, their IANA timezone, UTC anchor,
-and first occurrence. Database checks mirror the closed Core kind fields and interval bounds.
-Schedule inspection hashes content; no Run/Event is fabricated before a real occurrence fires.
+first occurrence, and closed missed/overlap policies. The `schedule_occurrences` table owns the
+durable cursor, leases, terminal outcome, and Run correlation. Uniqueness serializes occurrence and
+active-claim identity. The Interaction-owned Schedule worker submits claimed content through the
+ordinary inbox; it never invokes Runtime business execution or a Capability directly. Schedule
+inspection hashes content, and skipped occurrences fabricate no Run/Event.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
 

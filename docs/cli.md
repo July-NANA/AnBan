@@ -70,9 +70,12 @@ from one second through one year. `anban schedules [--limit N]` and
 the logical name, kind, timezone, expression/interval, timestamps, and content hash/size, never the
 raw future Interaction content.
 
-D32 defines and persists schedules only. It does not run a worker, claim an occurrence, create a
-Run, deliver an Interaction, or execute business work. Trigger dispatch, overlap/missed-run policy,
-and schedule create/resume behavior belong to D33.
+`--missed-policy skip|catch_up_once` selects delayed-occurrence behavior; overlap defaults to
+`skip`. `anban scheduler run-once` performs one bounded production scan. It claims due occurrence
+facts in PostgreSQL and submits only claimed work through the ordinary Interaction gateway.
+`anban schedule occurrences SCHEDULE_ID` reconstructs safe occurrence status, lease attempts, and
+Run/error correlations without raw Task content. Skipped occurrences have no Run. A retry-pending
+result remains claimed for lease recovery under the same Interaction identity.
 
 `anban inbox [--limit N]` lists bounded durable delivery facts from a new database-only
 Application: Interaction identity, logical source/kind/route, content hash, lifecycle status,

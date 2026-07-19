@@ -20,6 +20,7 @@ from anban.core.ids import (
     InteractionId,
     NodeRunId,
     ScheduleId,
+    ScheduleOccurrenceId,
     SessionId,
     TaskId,
 )
@@ -40,7 +41,11 @@ from anban.core.models import (
     UtcDateTime,
 )
 from anban.core.persistence import ExecutionRunAggregate
-from anban.core.schedule import ScheduleDefinition
+from anban.core.schedule import (
+    ScheduleDefinition,
+    ScheduleOccurrence,
+    ScheduleOccurrenceStatus,
+)
 
 
 @dataclass
@@ -75,6 +80,9 @@ class MemoryStore:
     schedules: dict[ScheduleId, ScheduleDefinition] = field(
         default_factory=lambda: dict[ScheduleId, ScheduleDefinition]()
     )
+    schedule_occurrences: dict[ScheduleOccurrenceId, ScheduleOccurrence] = field(
+        default_factory=lambda: dict[ScheduleOccurrenceId, ScheduleOccurrence]()
+    )
 
     def copy(self) -> MemoryStore:
         return MemoryStore(
@@ -90,6 +98,7 @@ class MemoryStore:
             context_summaries=dict(self.context_summaries),
             inbox=dict(self.inbox),
             schedules=dict(self.schedules),
+            schedule_occurrences=dict(self.schedule_occurrences),
         )
 
 
@@ -116,6 +125,90 @@ class MemoryRepository:
                 reverse=True,
             )[:limit]
         )
+
+    async def add_schedule_occurrence(
+        self, occurrence: ScheduleOccurrence
+    ) -> tuple[ScheduleOccurrence, bool]:
+        existing = next(
+            (
+                item
+                for item in self.store.schedule_occurrences.values()
+                if item.schedule_id == occurrence.schedule_id
+                and item.scheduled_for == occurrence.scheduled_for
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing, False
+        self.store.schedule_occurrences[occurrence.id] = occurrence
+        return occurrence, True
+
+    async def claim_schedule_occurrence(
+        self, occurrence: ScheduleOccurrence
+    ) -> tuple[ScheduleOccurrence, bool]:
+        exact, inserted = await self.add_schedule_occurrence(occurrence)
+        if not inserted:
+            if (
+                exact.status is ScheduleOccurrenceStatus.CLAIMED
+                and exact.lease_until <= occurrence.claimed_at
+            ):
+                recovered = exact.model_copy(
+                    update={
+                        "claimed_at": occurrence.claimed_at,
+                        "lease_until": occurrence.lease_until,
+                        "attempt_count": exact.attempt_count + 1,
+                    }
+                )
+                self.store.schedule_occurrences[exact.id] = recovered
+                return recovered, True
+            return exact, False
+        active = next(
+            (
+                item
+                for item in self.store.schedule_occurrences.values()
+                if item.id != occurrence.id
+                and item.schedule_id == occurrence.schedule_id
+                and item.status is ScheduleOccurrenceStatus.CLAIMED
+            ),
+            None,
+        )
+        if active is not None:
+            self.store.schedule_occurrences.pop(occurrence.id)
+            skipped = occurrence.model_copy(
+                update={
+                    "status": ScheduleOccurrenceStatus.SKIPPED,
+                    "finished_at": occurrence.claimed_at,
+                }
+            )
+            self.store.schedule_occurrences[skipped.id] = skipped
+            return skipped, False
+        return occurrence, True
+
+    async def get_schedule_occurrence(
+        self, occurrence_id: ScheduleOccurrenceId
+    ) -> ScheduleOccurrence | None:
+        return self.store.schedule_occurrences.get(occurrence_id)
+
+    async def list_schedule_occurrences(
+        self, schedule_id: ScheduleId, limit: int
+    ) -> tuple[ScheduleOccurrence, ...]:
+        return tuple(
+            sorted(
+                (
+                    item
+                    for item in self.store.schedule_occurrences.values()
+                    if item.schedule_id == schedule_id
+                ),
+                key=lambda item: (item.scheduled_for, item.id),
+                reverse=True,
+            )[:limit]
+        )
+
+    async def update_schedule_occurrence(self, occurrence: ScheduleOccurrence) -> None:
+        existing = self.store.schedule_occurrences.get(occurrence.id)
+        if existing is None or existing.status is not ScheduleOccurrenceStatus.CLAIMED:
+            raise RuntimeError("test-only invalid Schedule occurrence update")
+        self.store.schedule_occurrences[occurrence.id] = occurrence
 
     async def receive_inbox(
         self, entry: InteractionInboxEntry

@@ -40,6 +40,8 @@ CLI_HELP = (
     ("schedule", "create-cron", "--help"),
     ("schedule", "create-interval", "--help"),
     ("schedule", "show", "--help"),
+    ("schedule", "occurrences", "--help"),
+    ("scheduler", "run-once", "--help"),
 )
 
 

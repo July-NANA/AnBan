@@ -35,7 +35,12 @@ from anban.core.errors import ErrorCode
 from anban.core.graph import GraphRevisionStatus
 from anban.core.inbox import InteractionInboxDisposition, InteractionInboxStatus
 from anban.core.models import CapabilityInvocationStatus, CheckpointStatus, TaskStatus
-from anban.core.schedule import ScheduleKind
+from anban.core.schedule import (
+    ScheduleKind,
+    ScheduleMissedPolicy,
+    ScheduleOccurrenceStatus,
+    ScheduleOverlapPolicy,
+)
 
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
@@ -63,6 +68,9 @@ GRAPH_REVISION_STATUSES = sql_enum_values(GraphRevisionStatus)
 INBOX_STATUSES = sql_enum_values(InteractionInboxStatus)
 INBOX_DISPOSITIONS = sql_enum_values(InteractionInboxDisposition)
 SCHEDULE_KINDS = sql_enum_values(ScheduleKind)
+SCHEDULE_MISSED_POLICIES = sql_enum_values(ScheduleMissedPolicy)
+SCHEDULE_OVERLAP_POLICIES = sql_enum_values(ScheduleOverlapPolicy)
+SCHEDULE_OCCURRENCE_STATUSES = sql_enum_values(ScheduleOccurrenceStatus)
 
 
 class Base(DeclarativeBase):
@@ -93,6 +101,12 @@ class ScheduleRecord(Base):
         ),
         CheckConstraint("next_occurrence_at > anchor_at", name="next_after_anchor"),
         CheckConstraint("created_at <= anchor_at", name="created_before_anchor"),
+        CheckConstraint(
+            f"missed_policy IN ({SCHEDULE_MISSED_POLICIES})", name="missed_policy_allowed"
+        ),
+        CheckConstraint(
+            f"overlap_policy IN ({SCHEDULE_OVERLAP_POLICIES})", name="overlap_policy_allowed"
+        ),
         UniqueConstraint("name", name="uq_schedules_name"),
         Index("ix_schedules_next_occurrence_at", "next_occurrence_at"),
     )
@@ -104,9 +118,59 @@ class ScheduleRecord(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     cron_expression: Mapped[str | None] = mapped_column(String(256))
     every_seconds: Mapped[int | None] = mapped_column(BigInteger)
+    missed_policy: Mapped[str] = mapped_column(String(32), nullable=False)
+    overlap_policy: Mapped[str] = mapped_column(String(32), nullable=False)
     anchor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     next_occurrence_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ScheduleOccurrenceRecord(Base):
+    __tablename__ = "schedule_occurrences"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({SCHEDULE_OCCURRENCE_STATUSES})", name="status_allowed"),
+        CheckConstraint("missed_count BETWEEN 0 AND 10000", name="missed_count_bounded"),
+        CheckConstraint("attempt_count BETWEEN 1 AND 100", name="attempt_count_bounded"),
+        CheckConstraint("lease_until > claimed_at", name="lease_after_claim"),
+        CheckConstraint("(status = 'claimed') = (finished_at IS NULL)", name="terminal_timestamp"),
+        CheckConstraint("status <> 'processed' OR run_id IS NOT NULL", name="processed_run"),
+        CheckConstraint("status <> 'skipped' OR run_id IS NULL", name="skipped_run"),
+        CheckConstraint(
+            f"error_code IS NULL OR error_code IN ({ERROR_CODES})", name="error_code_allowed"
+        ),
+        UniqueConstraint(
+            "schedule_id", "scheduled_for", name="uq_schedule_occurrences_schedule_time"
+        ),
+        UniqueConstraint("interaction_id", name="uq_schedule_occurrences_interaction_id"),
+        Index("ix_schedule_occurrences_schedule_time", "schedule_id", "scheduled_for"),
+        Index("ix_schedule_occurrences_status_lease", "status", "lease_until"),
+        Index("ix_schedule_occurrences_run_id", "run_id"),
+        Index(
+            "uq_schedule_occurrences_active_schedule",
+            "schedule_id",
+            unique=True,
+            postgresql_where=text("status = 'claimed'"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    schedule_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("schedules.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    interaction_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    missed_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lease_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    run_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("execution_runs.id", ondelete="RESTRICT")
+    )
+    error_code: Mapped[str | None] = mapped_column(String(64))
 
 
 class InteractionInboxRecord(Base):

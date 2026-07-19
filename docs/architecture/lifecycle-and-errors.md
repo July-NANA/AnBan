@@ -154,3 +154,12 @@ duration. Invalid calendar/timezone/interval input, duplicate logical name, and 
 remain explicit and cannot create a partial definition. Schedule creation emits no Run, inbox,
 Audit/Trace, or side-effect fact because no occurrence has fired. D33 owns the later worker and
 dispatch lifecycle rather than D32 fabricating successful trigger state.
+
+D33 persists each due occurrence before delivery. The default overlap policy records a skip while
+another claim is active. Missed occurrences either record a bounded skip or coalesce to one claimed
+latest occurrence. Worker loss leaves a lease that later recovers the same occurrence and
+Interaction identities; inbox deduplication prevents terminal Model or Capability replay.
+Persistence/Audit ambiguity stays `claimed` and reports retry pending. A persisted Run makes the
+occurrence `processed`, including truthful failed Run outcomes, while a pre-Run protocol failure is
+`failed`. `schedule.occurrence_dispatched` precedes `interaction.routed`; a skip creates no Run
+Event because no execution occurred.

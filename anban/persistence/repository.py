@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from anban.core.context import ContextEntry, ContextScope, ContextSummary
-from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.graph import GraphRevision
 from anban.core.ids import (
     ArtifactId,
@@ -23,6 +22,7 @@ from anban.core.ids import (
     InteractionId,
     NodeRunId,
     ScheduleId,
+    ScheduleOccurrenceId,
     SessionId,
     TaskId,
 )
@@ -55,7 +55,11 @@ from anban.core.models import (
     UtcDateTime,
 )
 from anban.core.persistence import ExecutionRunAggregate
-from anban.core.schedule import ScheduleDefinition
+from anban.core.schedule import (
+    ScheduleDefinition,
+    ScheduleOccurrence,
+    ScheduleOccurrenceStatus,
+)
 from anban.persistence.inbox_mapper import inbox_domain, inbox_record, replace_inbox_record
 from anban.persistence.mappers import (
     artifact_domain,
@@ -92,39 +96,21 @@ from anban.persistence.models import (
     GraphRevisionRecord,
     InteractionInboxRecord,
     NodeRunRecord,
+    ScheduleOccurrenceRecord,
     ScheduleRecord,
     TaskRecord,
 )
-from anban.persistence.schedule_mapper import schedule_domain, schedule_record
-
-
-def missing_record(entity: str, record_id: UUID) -> AnbanError:
-    return AnbanError(
-        ErrorInfo(
-            code=ErrorCode.PERSISTENCE_WRITE_FAILED,
-            message="persistence update target does not exist",
-            details=SafeMetadata({"entity": entity, "record_id": str(record_id)}),
-        )
-    )
-
-
-def inconsistent_run() -> AnbanError:
-    return AnbanError(
-        ErrorInfo(
-            code=ErrorCode.PERSISTENCE_UNAVAILABLE,
-            message="persisted Run relationships are incomplete",
-        )
-    )
-
-
-def graph_revision_conflict(reason: str) -> AnbanError:
-    return AnbanError(
-        ErrorInfo(
-            code=ErrorCode.PERSISTENCE_WRITE_FAILED,
-            message="Graph revision history rejected an append",
-            details=SafeMetadata({"reason": reason}),
-        )
-    )
+from anban.persistence.repository_errors import (
+    graph_revision_conflict,
+    inconsistent_run,
+    missing_record,
+)
+from anban.persistence.schedule_mapper import (
+    schedule_domain,
+    schedule_occurrence_domain,
+    schedule_occurrence_record,
+    schedule_record,
+)
 
 
 class SQLAlchemyExecutionRepository:
@@ -148,6 +134,136 @@ class SQLAlchemyExecutionRepository:
             .limit(limit)
         )
         return tuple(schedule_domain(record) for record in records.all())
+
+    async def add_schedule_occurrence(
+        self, occurrence: ScheduleOccurrence
+    ) -> tuple[ScheduleOccurrence, bool]:
+        candidate = schedule_occurrence_record(occurrence)
+        values = {
+            column.name: getattr(candidate, column.name)
+            for column in ScheduleOccurrenceRecord.__table__.columns
+        }
+        inserted = await self._session.scalar(
+            postgresql_insert(ScheduleOccurrenceRecord)
+            .values(**values)
+            .on_conflict_do_nothing()
+            .returning(ScheduleOccurrenceRecord.id)
+        )
+        if inserted is not None:
+            return occurrence, True
+        existing = (
+            await self._session.scalars(
+                select(ScheduleOccurrenceRecord)
+                .where(
+                    ScheduleOccurrenceRecord.schedule_id == occurrence.schedule_id,
+                    ScheduleOccurrenceRecord.scheduled_for == occurrence.scheduled_for,
+                )
+                .with_for_update()
+            )
+        ).one_or_none()
+        if existing is None:
+            raise inconsistent_run()
+        return schedule_occurrence_domain(existing), False
+
+    async def claim_schedule_occurrence(
+        self, occurrence: ScheduleOccurrence
+    ) -> tuple[ScheduleOccurrence, bool]:
+        schedule = (
+            await self._session.scalars(
+                select(ScheduleRecord)
+                .where(ScheduleRecord.id == occurrence.schedule_id)
+                .with_for_update()
+            )
+        ).one_or_none()
+        if schedule is None:
+            raise missing_record("Schedule", occurrence.schedule_id)
+        exact = (
+            await self._session.scalars(
+                select(ScheduleOccurrenceRecord)
+                .where(
+                    ScheduleOccurrenceRecord.schedule_id == occurrence.schedule_id,
+                    ScheduleOccurrenceRecord.scheduled_for == occurrence.scheduled_for,
+                )
+                .with_for_update()
+            )
+        ).one_or_none()
+        if exact is not None:
+            if (
+                exact.status == ScheduleOccurrenceStatus.CLAIMED.value
+                and exact.lease_until <= occurrence.claimed_at
+                and exact.attempt_count < 100
+            ):
+                exact.claimed_at = occurrence.claimed_at
+                exact.lease_until = occurrence.lease_until
+                exact.attempt_count += 1
+                await self._session.flush()
+                return schedule_occurrence_domain(exact), True
+            return schedule_occurrence_domain(exact), False
+        active = (
+            await self._session.scalars(
+                select(ScheduleOccurrenceRecord)
+                .where(
+                    ScheduleOccurrenceRecord.schedule_id == occurrence.schedule_id,
+                    ScheduleOccurrenceRecord.status == ScheduleOccurrenceStatus.CLAIMED.value,
+                )
+                .with_for_update()
+            )
+        ).one_or_none()
+        if active is not None:
+            skipped = occurrence.model_copy(
+                update={
+                    "status": ScheduleOccurrenceStatus.SKIPPED,
+                    "finished_at": occurrence.claimed_at,
+                }
+            )
+            stored, _ = await self.add_schedule_occurrence(skipped)
+            return stored, False
+        self._session.add(schedule_occurrence_record(occurrence))
+        await self._session.flush()
+        return occurrence, True
+
+    async def get_schedule_occurrence(
+        self, occurrence_id: ScheduleOccurrenceId
+    ) -> ScheduleOccurrence | None:
+        record = await self._session.get(ScheduleOccurrenceRecord, occurrence_id)
+        return None if record is None else schedule_occurrence_domain(record)
+
+    async def list_schedule_occurrences(
+        self, schedule_id: ScheduleId, limit: int
+    ) -> tuple[ScheduleOccurrence, ...]:
+        records = await self._session.scalars(
+            select(ScheduleOccurrenceRecord)
+            .where(ScheduleOccurrenceRecord.schedule_id == schedule_id)
+            .order_by(
+                ScheduleOccurrenceRecord.scheduled_for.desc(),
+                ScheduleOccurrenceRecord.id.desc(),
+            )
+            .limit(limit)
+        )
+        return tuple(schedule_occurrence_domain(record) for record in records.all())
+
+    async def update_schedule_occurrence(self, occurrence: ScheduleOccurrence) -> None:
+        record = (
+            await self._session.scalars(
+                select(ScheduleOccurrenceRecord)
+                .where(ScheduleOccurrenceRecord.id == occurrence.id)
+                .with_for_update()
+            )
+        ).one_or_none()
+        if record is None:
+            raise missing_record("ScheduleOccurrence", occurrence.id)
+        if (
+            record.status != ScheduleOccurrenceStatus.CLAIMED.value
+            or occurrence.status is ScheduleOccurrenceStatus.CLAIMED
+            or record.schedule_id != occurrence.schedule_id
+            or record.interaction_id != occurrence.interaction_id
+        ):
+            raise inconsistent_run()
+        record.status = occurrence.status.value
+        record.finished_at = occurrence.finished_at
+        record.run_id = occurrence.run_id
+        record.error_code = None if occurrence.error_code is None else occurrence.error_code.value
+        await self._session.flush()
 
     async def receive_inbox(
         self, entry: InteractionInboxEntry

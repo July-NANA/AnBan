@@ -40,6 +40,12 @@ _ADAPTER_ATTESTATION_FIELDS = frozenset(
         "webhook_clock_skew_seconds",
         "webhook_endpoint",
         "webhook_event_hash",
+        "schedule_attempt_count",
+        "schedule_missed_count",
+        "schedule_missed_policy",
+        "schedule_occurrence_id",
+        "schedule_overlap_policy",
+        "schedule_scheduled_for",
     }
 )
 

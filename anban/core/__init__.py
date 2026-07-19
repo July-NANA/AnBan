@@ -47,6 +47,7 @@ from anban.core.ids import (
     GraphRevisionId,
     NodeRunId,
     ScheduleId,
+    ScheduleOccurrenceId,
     SessionId,
     TaskId,
     new_artifact_id,
@@ -59,6 +60,7 @@ from anban.core.ids import (
     new_graph_revision_id,
     new_node_run_id,
     new_schedule_id,
+    new_schedule_occurrence_id,
     new_session_id,
     new_task_id,
 )
@@ -101,7 +103,14 @@ from anban.core.persistence import (
     UnitOfWork,
     UnitOfWorkFactory,
 )
-from anban.core.schedule import ScheduleDefinition, ScheduleKind
+from anban.core.schedule import (
+    ScheduleDefinition,
+    ScheduleKind,
+    ScheduleMissedPolicy,
+    ScheduleOccurrence,
+    ScheduleOccurrenceStatus,
+    ScheduleOverlapPolicy,
+)
 
 __all__ = [
     "AnbanError",
@@ -152,6 +161,11 @@ __all__ = [
     "ScheduleDefinition",
     "ScheduleId",
     "ScheduleKind",
+    "ScheduleMissedPolicy",
+    "ScheduleOccurrence",
+    "ScheduleOccurrenceId",
+    "ScheduleOccurrenceStatus",
+    "ScheduleOverlapPolicy",
     "SessionContext",
     "SessionId",
     "Task",
@@ -187,6 +201,7 @@ __all__ = [
     "new_graph_revision_id",
     "new_node_run_id",
     "new_schedule_id",
+    "new_schedule_occurrence_id",
     "new_session_id",
     "new_task_id",
     "now_utc",

@@ -19,6 +19,7 @@ from anban.core.ids import (
     InteractionId,
     NodeRunId,
     ScheduleId,
+    ScheduleOccurrenceId,
     SessionId,
     TaskId,
 )
@@ -34,7 +35,7 @@ from anban.core.models import (
     Task,
     UtcDateTime,
 )
-from anban.core.schedule import ScheduleDefinition
+from anban.core.schedule import ScheduleDefinition, ScheduleOccurrence
 
 
 @dataclass(frozen=True)
@@ -165,6 +166,24 @@ class ExecutionRepository(Protocol):
     async def get_schedule(self, schedule_id: ScheduleId) -> ScheduleDefinition | None: ...
 
     async def list_schedules(self, limit: int) -> tuple[ScheduleDefinition, ...]: ...
+
+    async def claim_schedule_occurrence(
+        self, occurrence: ScheduleOccurrence
+    ) -> tuple[ScheduleOccurrence, bool]: ...
+
+    async def add_schedule_occurrence(
+        self, occurrence: ScheduleOccurrence
+    ) -> tuple[ScheduleOccurrence, bool]: ...
+
+    async def get_schedule_occurrence(
+        self, occurrence_id: ScheduleOccurrenceId
+    ) -> ScheduleOccurrence | None: ...
+
+    async def list_schedule_occurrences(
+        self, schedule_id: ScheduleId, limit: int
+    ) -> tuple[ScheduleOccurrence, ...]: ...
+
+    async def update_schedule_occurrence(self, occurrence: ScheduleOccurrence) -> None: ...
 
 
 class UnitOfWork(Protocol):

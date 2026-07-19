@@ -24,6 +24,7 @@ EXPECTED_TABLES = {
     "context_summary_entries",
     "interaction_inbox",
     "schedules",
+    "schedule_occurrences",
 }
 
 
@@ -114,9 +115,9 @@ def test_alembic_has_one_reversible_head_revision() -> None:
     configuration = Config(repository / "alembic.ini")
     scripts = ScriptDirectory.from_config(configuration)
     head = scripts.get_current_head()
-    assert head == "0011_schedules"
+    assert head == "0012_schedule_occurrences"
     assert len(head) <= 32
     revision = scripts.get_revision(head)
     assert revision is not None
-    assert revision.down_revision == "0010_subagent_runs"
+    assert revision.down_revision == "0011_schedules"
     assert callable(revision.module.downgrade)

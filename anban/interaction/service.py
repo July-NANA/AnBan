@@ -45,6 +45,16 @@ _RESULT_RESUME_INPUTS = frozenset(
         InteractionInputKind.SUBAGENT_RESULT,
     }
 )
+_SCHEDULE_ATTESTATION_FIELDS = frozenset(
+    {
+        "schedule_attempt_count",
+        "schedule_missed_count",
+        "schedule_missed_policy",
+        "schedule_occurrence_id",
+        "schedule_overlap_policy",
+        "schedule_scheduled_for",
+    }
+)
 
 
 class CorrelatedWaitingExecution(WaitingExecution):
@@ -69,6 +79,12 @@ def interaction_metadata(
         "webhook_auth_version",
         "webhook_event_hash",
         "webhook_clock_skew_seconds",
+        "schedule_occurrence_id",
+        "schedule_scheduled_for",
+        "schedule_missed_count",
+        "schedule_attempt_count",
+        "schedule_missed_policy",
+        "schedule_overlap_policy",
     ):
         if key in envelope.metadata.root:
             values[key] = envelope.metadata.root[key]
@@ -99,8 +115,14 @@ def require_new_work_route(envelope: InteractionEnvelope) -> None:
     if envelope.input_kind not in {
         InteractionInputKind.USER_MESSAGE,
         InteractionInputKind.WEBHOOK_EVENT,
+        InteractionInputKind.SCHEDULE_OCCURRENCE,
     }:
         raise _routing_error("new_work_input_unavailable")
+    if (
+        envelope.input_kind is InteractionInputKind.SCHEDULE_OCCURRENCE
+        and not _SCHEDULE_ATTESTATION_FIELDS.issubset(envelope.metadata.root)
+    ):
+        raise _routing_error("schedule_attestation_incomplete")
 
 
 def _routing_error(reason: str) -> AnbanError:

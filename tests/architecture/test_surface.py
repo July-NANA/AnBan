@@ -41,6 +41,7 @@ APPROVED_ADAPTER_TYPES = {
     "SQLAlchemyExecutionRepository",
     "SQLAlchemyUnitOfWork",
     "SQLAlchemyUnitOfWorkFactory",
+    "ScheduleWorkerAdapter",
     "WebhookIngressAdapter",
 }
 APPROVED_CAPABILITY_HANDLERS = {
@@ -107,7 +108,12 @@ def test_adapter_and_handler_types_are_fixed() -> None:
         and node.name.endswith(("Repository", "UnitOfWork", "UnitOfWorkFactory"))
     }
     assert adapters == APPROVED_ADAPTER_TYPES & adapters
-    assert adapters == {"McpStdioAdapter", "OpenAICompatibleAdapter", "WebhookIngressAdapter"}
+    assert adapters == {
+        "McpStdioAdapter",
+        "OpenAICompatibleAdapter",
+        "ScheduleWorkerAdapter",
+        "WebhookIngressAdapter",
+    }
     assert persistence_types == APPROVED_ADAPTER_TYPES - adapters
     assert handlers == APPROVED_CAPABILITY_HANDLERS
     assert interaction_types == APPROVED_INTERACTION_TYPES

@@ -22,6 +22,7 @@ EXPECTED_TABLES = {
     "context_entries",
     "context_summaries",
     "context_summary_entries",
+    "interaction_inbox",
 }
 
 
@@ -90,9 +91,9 @@ def test_alembic_has_one_reversible_head_revision() -> None:
     configuration = Config(repository / "alembic.ini")
     scripts = ScriptDirectory.from_config(configuration)
     head = scripts.get_current_head()
-    assert head == "0008_interaction_updates"
+    assert head == "0009_interaction_inbox"
     assert len(head) <= 32
     revision = scripts.get_revision(head)
     assert revision is not None
-    assert revision.down_revision == "0007_node_run_outputs"
+    assert revision.down_revision == "0008_interaction_updates"
     assert callable(revision.module.downgrade)

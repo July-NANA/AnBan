@@ -16,10 +16,12 @@ from anban.core.ids import (
     EventId,
     ExecutionRunId,
     GraphRevisionId,
+    InteractionId,
     NodeRunId,
     SessionId,
     TaskId,
 )
+from anban.core.inbox import InteractionInboxEntry
 from anban.core.metadata import SafeMetadata
 from anban.core.models import (
     Artifact,
@@ -29,6 +31,7 @@ from anban.core.models import (
     ExecutionRun,
     NodeRun,
     Task,
+    UtcDateTime,
 )
 
 
@@ -129,6 +132,31 @@ class ExecutionRepository(Protocol):
     async def list_context_summaries(
         self, scope: ContextScope, identity: TaskId | SessionId
     ) -> tuple[ContextSummary, ...]: ...
+
+    async def receive_inbox(
+        self, entry: InteractionInboxEntry
+    ) -> tuple[InteractionInboxEntry, bool]: ...
+
+    async def get_inbox(self, interaction_id: InteractionId) -> InteractionInboxEntry | None: ...
+
+    async def reclaim_inbox(
+        self,
+        interaction_id: InteractionId,
+        claimed_at: UtcDateTime,
+        stale_before: UtcDateTime,
+    ) -> InteractionInboxEntry | None: ...
+
+    async def route_inbox(
+        self,
+        interaction_id: InteractionId,
+        task_id: TaskId,
+        run_id: ExecutionRunId,
+        node_run_id: NodeRunId,
+    ) -> None: ...
+
+    async def update_inbox(self, entry: InteractionInboxEntry) -> None: ...
+
+    async def list_inbox(self, limit: int) -> tuple[InteractionInboxEntry, ...]: ...
 
 
 class UnitOfWork(Protocol):

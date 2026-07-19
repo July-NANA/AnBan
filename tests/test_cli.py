@@ -181,6 +181,18 @@ def test_run_show_and_query_commands_dispatch_stable_ids(
     ]
 
 
+def test_inbox_command_dispatches_bounded_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    received: list[tuple[int, bool]] = []
+
+    async def inbox(limit: int, *, json_output: bool) -> int:
+        received.append((limit, json_output))
+        return cli.EXIT_SUCCESS
+
+    monkeypatch.setattr(cli, "list_inbox", inbox)
+    assert cli.main(["inbox", "--limit", "7", "--json"]) == cli.EXIT_SUCCESS
+    assert received == [(7, True)]
+
+
 def test_context_commands_dispatch_stable_task_and_session_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

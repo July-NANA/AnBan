@@ -26,6 +26,7 @@ from anban.interaction import (
     CorrelationPurpose,
     InteractionCorrelation,
     InteractionEnvelope,
+    InteractionInboxDetail,
     InteractionInputKind,
     InteractionRoute,
 )
@@ -67,6 +68,9 @@ def parser() -> argparse.ArgumentParser:
     runs = commands.add_parser("runs", help="List durable Runs.")
     runs.add_argument("--limit", type=int, default=20)
     add_json_option(runs)
+    inbox = commands.add_parser("inbox", help="List durable Interaction deliveries.")
+    inbox.add_argument("--limit", type=int, default=20)
+    add_json_option(inbox)
     trace = commands.add_parser("trace", help="Show one ordered Run Trace.")
     trace.add_argument("run_id")
     add_json_option(trace)
@@ -249,6 +253,16 @@ async def list_runs(limit: int, *, json_output: bool) -> int:
     return EXIT_SUCCESS
 
 
+async def list_inbox(limit: int, *, json_output: bool) -> int:
+    application = await build_query_application()
+    try:
+        entries = await application.interactions.inbox(limit)
+    finally:
+        await application.close()
+    emit_inbox(entries, json_output=json_output)
+    return EXIT_SUCCESS
+
+
 async def show_run(run_id: ExecutionRunId, *, json_output: bool) -> int:
     application = await build_query_application()
     try:
@@ -413,6 +427,23 @@ def emit_runs(runs: tuple[RunSummary, ...], *, json_output: bool) -> None:
     print("RUN ID                                STATUS      CREATED")
     for run in runs:
         print(f"{run.id}  {run.status.value:<10}  {run.created_at.isoformat()}")
+
+
+def emit_inbox(entries: tuple[InteractionInboxDetail, ...], *, json_output: bool) -> None:
+    if json_output:
+        print(
+            json.dumps(
+                [entry.model_dump(mode="json") for entry in entries],
+                separators=(",", ":"),
+            )
+        )
+        return
+    print("INTERACTION ID                        STATUS      DELIVERIES  RECEIVED")
+    for entry in entries:
+        print(
+            f"{entry.interaction_id}  {entry.status.value:<10}  "
+            f"{entry.delivery_count:<10}  {entry.received_at.isoformat()}"
+        )
 
 
 def emit_run_detail(detail: RunDetail, *, json_output: bool) -> None:
@@ -618,6 +649,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return asyncio.run(execute_chat(json_output=json_output))
         if arguments.command == "runs":
             return asyncio.run(list_runs(arguments.limit, json_output=json_output))
+        if arguments.command == "inbox":
+            return asyncio.run(list_inbox(arguments.limit, json_output=json_output))
         if arguments.command == "trace":
             return asyncio.run(show_trace(parse_run_id(arguments.run_id), json_output=json_output))
         if arguments.command == "capabilities":

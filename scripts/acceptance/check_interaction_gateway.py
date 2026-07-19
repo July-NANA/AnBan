@@ -92,20 +92,6 @@ async def reject_later_routes(marker: str) -> dict[str, object]:
         ),
         (
             {
-                "content": "Bounded deduplicated message.",
-                "correlation": {
-                    "deduplication_key": {
-                        "purpose": "deduplication",
-                        "namespace": "acceptance.delivery",
-                        "value": f"delivery-{marker}",
-                    }
-                },
-            },
-            "message.adapter",
-            "deduplication_unavailable",
-        ),
-        (
-            {
                 "input_kind": "supplemental_input",
                 "content": "Bounded unknown resume input.",
                 "correlation": {

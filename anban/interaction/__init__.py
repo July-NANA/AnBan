@@ -9,6 +9,7 @@ from anban.interaction.contracts import (
     InteractionInputKind,
     InteractionRoute,
 )
+from anban.interaction.inbox import InteractionInboxDetail
 from anban.interaction.service import (
     CorrelatedWaitingExecution,
     InteractionChatSession,
@@ -24,6 +25,7 @@ __all__ = [
     "InteractionCorrelation",
     "InteractionEnvelope",
     "InteractionInputKind",
+    "InteractionInboxDetail",
     "InteractionRoute",
     "InteractionService",
 ]

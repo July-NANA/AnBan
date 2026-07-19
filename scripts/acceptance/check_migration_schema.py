@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from alembic.config import Config
@@ -21,6 +21,7 @@ from anban.persistence.models import (
     ContextEntryRecord,
     EventRecord,
     ExecutionRunRecord,
+    InteractionInboxRecord,
     NodeRunRecord,
     TaskRecord,
 )
@@ -37,6 +38,7 @@ EXPECTED_TABLES = {
     "context_entries",
     "context_summaries",
     "context_summary_entries",
+    "interaction_inbox",
 }
 
 
@@ -193,6 +195,26 @@ async def accept_schema() -> None:
                         safe_metadata={},
                     )
                 )
+                await connection.execute(
+                    insert(InteractionInboxRecord).values(
+                        interaction_id=uuid4(),
+                        source="migration.adapter",
+                        input_kind="user_message",
+                        route="new_task",
+                        content="durable migration inbox",
+                        content_hash="c" * 64,
+                        semantic_hash="d" * 64,
+                        deduplication_namespace="migration.delivery",
+                        deduplication_correlation_hash="e" * 64,
+                        received_at=now,
+                        expires_at=now + timedelta(minutes=1),
+                        status="processing",
+                        claimed_at=now,
+                        delivery_count=1,
+                        last_received_at=now,
+                        last_disposition="accepted",
+                    )
+                )
 
                 await expect_integrity_failure(
                     connection,
@@ -278,6 +300,26 @@ async def accept_schema() -> None:
                 )
                 await expect_integrity_failure(
                     connection,
+                    insert(InteractionInboxRecord).values(
+                        interaction_id=uuid4(),
+                        source="migration.adapter",
+                        input_kind="user_message",
+                        route="new_task",
+                        content="duplicate delivery identity",
+                        content_hash="f" * 64,
+                        semantic_hash="1" * 64,
+                        deduplication_namespace="migration.delivery",
+                        deduplication_correlation_hash="e" * 64,
+                        received_at=now,
+                        status="processing",
+                        claimed_at=now,
+                        delivery_count=1,
+                        last_received_at=now,
+                        last_disposition="accepted",
+                    ),
+                )
+                await expect_integrity_failure(
+                    connection,
                     insert(EventRecord).values(
                         id=uuid4(),
                         run_id=run_one,
@@ -304,7 +346,8 @@ def main() -> int:
         return 1
     print(
         "migration schema acceptance: PASS - head, tables, statuses, relationships, event order, "
-        "Checkpoint correlation, Node output shape, Context scope and Secret constraints"
+        "Checkpoint correlation, inbox deduplication, Node output shape, Context scope and "
+        "Secret constraints"
     )
     return 0
 

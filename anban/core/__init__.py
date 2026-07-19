@@ -60,6 +60,11 @@ from anban.core.ids import (
     new_session_id,
     new_task_id,
 )
+from anban.core.inbox import (
+    InteractionInboxDisposition,
+    InteractionInboxEntry,
+    InteractionInboxStatus,
+)
 from anban.core.lifecycle import (
     CAPABILITY_INVOCATION_TRANSITIONS,
     CHECKPOINT_TRANSITIONS,
@@ -133,6 +138,9 @@ __all__ = [
     "GraphRevision",
     "GraphRevisionStatus",
     "InvalidTransitionError",
+    "InteractionInboxDisposition",
+    "InteractionInboxEntry",
+    "InteractionInboxStatus",
     "NodeRun",
     "NodeRunId",
     "NodeRunStatus",

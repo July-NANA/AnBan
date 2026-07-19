@@ -5,8 +5,9 @@ from __future__ import annotations
 from uuid import uuid4
 
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
-from anban.core.ids import CheckpointId, ExecutionRunId, SessionId, TaskId
+from anban.core.ids import CheckpointId, ExecutionRunId, InteractionId, SessionId, TaskId
 from anban.core.metadata import SafeMetadata, SafeScalar
+from anban.core.persistence import UnitOfWorkFactory
 from anban.interaction.contracts import (
     CorrelationKey,
     CorrelationPurpose,
@@ -14,6 +15,7 @@ from anban.interaction.contracts import (
     InteractionInputKind,
     InteractionRoute,
 )
+from anban.interaction.inbox import InteractionInboxCoordinator, InteractionInboxDetail
 from anban.runtime import (
     ArtifactDetail,
     ContextDetail,
@@ -36,12 +38,15 @@ class CorrelatedWaitingExecution(WaitingExecution):
     resume_key: CorrelationKey
 
 
-def interaction_metadata(envelope: InteractionEnvelope) -> SafeMetadata:
+def interaction_metadata(
+    envelope: InteractionEnvelope, *, inbox_managed: bool = False
+) -> SafeMetadata:
     values: dict[str, SafeScalar] = {
         "interaction_id": str(envelope.id),
         "source": envelope.source,
         "input_kind": envelope.input_kind.value,
         "interaction_route": envelope.correlation.route.value,
+        "inbox_managed": inbox_managed,
     }
     resume = envelope.correlation.resume_key
     if resume is not None:
@@ -67,8 +72,6 @@ def require_new_work_route(envelope: InteractionEnvelope) -> None:
 
     if envelope.correlation.route is not InteractionRoute.NEW_TASK:
         raise _routing_error("route_mismatch")
-    if envelope.correlation.deduplication_key is not None:
-        raise _routing_error("deduplication_unavailable")
     if envelope.input_kind is not InteractionInputKind.USER_MESSAGE:
         raise _routing_error("new_work_input_unavailable")
 
@@ -86,8 +89,13 @@ def _routing_error(reason: str) -> AnbanError:
 class InteractionChatSession:
     """Map bounded CLI envelopes into one Runtime chat session."""
 
-    def __init__(self, session: PersistentChatSession) -> None:
+    def __init__(
+        self,
+        session: PersistentChatSession,
+        inbox: InteractionInboxCoordinator | None = None,
+    ) -> None:
         self._session = session
+        self._inbox = inbox
 
     @property
     def can_continue(self) -> bool:
@@ -102,11 +110,23 @@ class InteractionChatSession:
         return self._session.remaining_seconds
 
     async def submit(self, envelope: InteractionEnvelope) -> ExecutionResult:
-        require_new_work_route(envelope)
-        return await self._session.submit(
-            envelope.content,
-            metadata=interaction_metadata(envelope),
-        )
+        if self._inbox is not None:
+            duplicate = await self._inbox.admit(envelope)
+            if duplicate is not None:
+                return duplicate
+        try:
+            require_new_work_route(envelope)
+            result = await self._session.submit(
+                envelope.content,
+                metadata=interaction_metadata(envelope, inbox_managed=self._inbox is not None),
+            )
+        except AnbanError as exc:
+            if self._inbox is not None:
+                await self._inbox.reject(envelope.id, _error_reason(exc), error_code=exc.info.code)
+            raise
+        if self._inbox is not None:
+            await _finish_delivery(self._inbox, envelope.id, result)
+        return result
 
     async def close(self) -> ExecutionResult | None:
         return await self._session.close()
@@ -125,27 +145,49 @@ class InteractionService:
         self,
         runtime: PersistentRuntime | None,
         queries: ExecutionQueryService | None = None,
+        unit_of_work: UnitOfWorkFactory | None = None,
     ) -> None:
         self._runtime = runtime
         self._queries = queries
+        self._inbox = None if unit_of_work is None else InteractionInboxCoordinator(unit_of_work)
 
     async def submit(self, envelope: InteractionEnvelope) -> ExecutionResult:
-        if envelope.correlation.route is InteractionRoute.NEW_TASK:
-            require_new_work_route(envelope)
-            return await self._runtime_service().execute(
-                envelope.content,
-                metadata=interaction_metadata(envelope),
-            )
-        return await self._submit_resume(envelope)
+        duplicate = await self._admit(envelope)
+        if duplicate is not None:
+            return duplicate
+        try:
+            if envelope.correlation.route is InteractionRoute.NEW_TASK:
+                require_new_work_route(envelope)
+                result = await self._runtime_service().execute(
+                    envelope.content,
+                    metadata=interaction_metadata(envelope, inbox_managed=self._inbox is not None),
+                )
+            else:
+                result = await self._submit_resume(envelope)
+        except AnbanError as exc:
+            await self._reject(envelope.id, exc)
+            raise
+        if self._inbox is not None:
+            await _finish_delivery(self._inbox, envelope.id, result)
+        return result
 
     async def start_async(
         self, envelope: InteractionEnvelope
     ) -> CorrelatedWaitingExecution | ExecutionResult:
-        require_new_work_route(envelope)
-        result = await self._runtime_service().start_async(
-            envelope.content,
-            metadata=interaction_metadata(envelope),
-        )
+        duplicate = await self._admit(envelope)
+        if duplicate is not None:
+            return duplicate
+        try:
+            require_new_work_route(envelope)
+            result = await self._runtime_service().start_async(
+                envelope.content,
+                metadata=interaction_metadata(envelope, inbox_managed=self._inbox is not None),
+            )
+        except AnbanError as exc:
+            await self._reject(envelope.id, exc)
+            raise
+        if isinstance(result, ExecutionResult) and self._inbox is not None:
+            await _finish_delivery(self._inbox, envelope.id, result)
         return await self._correlate_waiting(result)
 
     async def resume_async(
@@ -197,6 +239,8 @@ class InteractionService:
             key.namespace,
             key.fingerprint,
         )
+        if self._inbox is not None:
+            await self._inbox.route_checkpoint(envelope.id, checkpoint_id)
         return await self._runtime_service().apply_interaction_update(
             checkpoint_id,
             envelope.content,
@@ -206,7 +250,12 @@ class InteractionService:
         )
 
     def chat(self) -> InteractionChatSession:
-        return InteractionChatSession(self._runtime_service().chat())
+        return InteractionChatSession(self._runtime_service().chat(), self._inbox)
+
+    async def inbox(self, limit: int = 20) -> tuple[InteractionInboxDetail, ...]:
+        if self._inbox is None:
+            raise RuntimeError("Interaction inbox is not configured")
+        return await self._inbox.list(limit)
 
     async def runs(self, limit: int = 20) -> tuple[RunSummary, ...]:
         return await self._query_service().list_runs(limit)
@@ -235,3 +284,40 @@ class InteractionService:
         if self._runtime is None:
             raise RuntimeError("Runtime execution service is not configured")
         return self._runtime
+
+    async def _admit(self, envelope: InteractionEnvelope) -> ExecutionResult | None:
+        if self._inbox is None:
+            return None
+        return await self._inbox.admit(envelope)
+
+    async def _reject(self, interaction_id: InteractionId, error: AnbanError) -> None:
+        if self._inbox is not None:
+            await self._inbox.reject(
+                interaction_id,
+                _error_reason(error),
+                error_code=error.info.code,
+            )
+
+
+def _error_reason(error: AnbanError) -> str:
+    reason = error.info.details.root.get("reason")
+    return reason if isinstance(reason, str) else error.info.code.value
+
+
+async def _finish_delivery(
+    inbox: InteractionInboxCoordinator,
+    interaction_id: InteractionId,
+    result: ExecutionResult,
+) -> None:
+    if result.persisted:
+        await inbox.complete(interaction_id, result)
+        return
+    await inbox.reject(
+        interaction_id,
+        "execution_not_persisted",
+        error_code=(
+            ErrorCode.PERSISTENCE_WRITE_FAILED
+            if result.outcome.error is None
+            else result.outcome.error.code
+        ),
+    )

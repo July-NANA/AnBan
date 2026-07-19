@@ -54,7 +54,11 @@ from anban.runtime.contracts import (
     CompletionAssessment,
     ReplanDecision,
 )
-from anban.runtime.initialization_events import initialization_event_facts
+from anban.runtime.initialization_events import (
+    initialization_event_facts,
+    node_creation_event_facts,
+    route_managed_inbox,
+)
 from anban.runtime.interaction_update_persistence import InteractionUpdatePersistence
 from anban.runtime.persistence_errors import audit_trace_error, persistence_error
 from anban.runtime.persistence_events import EventFact, task_route_transition
@@ -132,6 +136,9 @@ class RunPersistence:
             await repository.add_task(self.task)
             await repository.add_run(self.run)
             await repository.add_node_run(self.node)
+            await route_managed_inbox(
+                repository, self.task.metadata, self.task.id, self.run.id, self.node.id
+            )
 
         await self._write(
             "initialize",
@@ -171,11 +178,12 @@ class RunPersistence:
 
         async def operation(repository: ExecutionRepository) -> None:
             await repository.add_node_run(node)
+            await route_managed_inbox(repository, node.metadata, self.task.id, self.run.id, node.id)
 
         await self._write(
             "node_created",
             operation,
-            (EventFact("node.created", node_run_id=node.id),),
+            node_creation_event_facts(node.metadata, node.id),
         )
         self.node = node
 

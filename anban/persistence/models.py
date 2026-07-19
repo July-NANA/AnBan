@@ -33,6 +33,7 @@ from anban.core.context import (
 )
 from anban.core.errors import ErrorCode
 from anban.core.graph import GraphRevisionStatus
+from anban.core.inbox import InteractionInboxDisposition, InteractionInboxStatus
 from anban.core.models import CapabilityInvocationStatus, CheckpointStatus, TaskStatus
 
 NAMING_CONVENTION = {
@@ -58,6 +59,8 @@ CONTEXT_SOURCES = sql_enum_values(ContextSourceKind)
 CONTEXT_SENSITIVITIES = sql_enum_values(ContextSensitivity)
 CONTEXT_STATES = sql_enum_values(ContextConflictState)
 GRAPH_REVISION_STATUSES = sql_enum_values(GraphRevisionStatus)
+INBOX_STATUSES = sql_enum_values(InteractionInboxStatus)
+INBOX_DISPOSITIONS = sql_enum_values(InteractionInboxDisposition)
 
 
 class Base(DeclarativeBase):
@@ -68,6 +71,86 @@ class SafeMetadataMixin:
     safe_metadata: Mapped[dict[str, object]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
+
+
+class InteractionInboxRecord(Base):
+    __tablename__ = "interaction_inbox"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({INBOX_STATUSES})", name="status_allowed"),
+        CheckConstraint(
+            f"last_disposition IN ({INBOX_DISPOSITIONS})",
+            name="last_disposition_allowed",
+        ),
+        CheckConstraint("content_hash ~ '^[0-9a-f]{64}$'", name="content_hash_format"),
+        CheckConstraint("semantic_hash ~ '^[0-9a-f]{64}$'", name="semantic_hash_format"),
+        CheckConstraint(
+            "(resume_namespace IS NULL) = (resume_correlation_hash IS NULL)",
+            name="resume_correlation_complete",
+        ),
+        CheckConstraint(
+            "(deduplication_namespace IS NULL) = (deduplication_correlation_hash IS NULL)",
+            name="deduplication_correlation_complete",
+        ),
+        CheckConstraint(
+            "(task_id IS NULL AND run_id IS NULL AND node_run_id IS NULL) OR "
+            "(task_id IS NOT NULL AND run_id IS NOT NULL AND node_run_id IS NOT NULL)",
+            name="route_identity_complete",
+        ),
+        CheckConstraint(
+            "status NOT IN ('routed', 'processed') OR run_id IS NOT NULL",
+            name="routed_identity",
+        ),
+        CheckConstraint(
+            "(status IN ('processed', 'rejected', 'expired')) = (finished_at IS NOT NULL)",
+            name="terminal_timestamp",
+        ),
+        CheckConstraint("delivery_count >= 1", name="delivery_count_positive"),
+        CheckConstraint("last_received_at >= received_at", name="receipt_order"),
+        CheckConstraint("expires_at IS NULL OR expires_at > received_at", name="expiry_order"),
+        CheckConstraint(
+            f"error_code IS NULL OR error_code IN ({ERROR_CODES})",
+            name="error_code_allowed",
+        ),
+        UniqueConstraint(
+            "deduplication_namespace",
+            "deduplication_correlation_hash",
+            name="uq_interaction_inbox_deduplication",
+        ),
+        Index("ix_interaction_inbox_status_received_at", "status", "received_at"),
+        Index("ix_interaction_inbox_run_id", "run_id"),
+    )
+
+    interaction_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    route: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    semantic_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    resume_namespace: Mapped[str | None] = mapped_column(String(64))
+    resume_correlation_hash: Mapped[str | None] = mapped_column(String(64))
+    deduplication_namespace: Mapped[str | None] = mapped_column(String(64))
+    deduplication_correlation_hash: Mapped[str | None] = mapped_column(String(64))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    task_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("tasks.id", ondelete="RESTRICT")
+    )
+    run_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("execution_runs.id", ondelete="RESTRICT")
+    )
+    node_run_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("node_runs.id", ondelete="RESTRICT")
+    )
+    outcome_status: Mapped[str | None] = mapped_column(String(32))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    failure_reason: Mapped[str | None] = mapped_column(String(64))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivery_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    last_received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_disposition: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
 class TaskRecord(SafeMetadataMixin, Base):

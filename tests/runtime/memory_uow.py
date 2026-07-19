@@ -17,9 +17,15 @@ from anban.core.ids import (
     EventId,
     ExecutionRunId,
     GraphRevisionId,
+    InteractionId,
     NodeRunId,
     SessionId,
     TaskId,
+)
+from anban.core.inbox import (
+    InteractionInboxDisposition,
+    InteractionInboxEntry,
+    InteractionInboxStatus,
 )
 from anban.core.metadata import SafeMetadata
 from anban.core.models import (
@@ -30,6 +36,7 @@ from anban.core.models import (
     ExecutionRun,
     NodeRun,
     Task,
+    UtcDateTime,
 )
 from anban.core.persistence import ExecutionRunAggregate
 
@@ -60,6 +67,9 @@ class MemoryStore:
     context_summaries: dict[ContextSummaryId, ContextSummary] = field(
         default_factory=lambda: dict[ContextSummaryId, ContextSummary]()
     )
+    inbox: dict[InteractionId, InteractionInboxEntry] = field(
+        default_factory=lambda: dict[InteractionId, InteractionInboxEntry]()
+    )
 
     def copy(self) -> MemoryStore:
         return MemoryStore(
@@ -73,6 +83,7 @@ class MemoryStore:
             events=dict(self.events),
             context_entries=dict(self.context_entries),
             context_summaries=dict(self.context_summaries),
+            inbox=dict(self.inbox),
         )
 
 
@@ -80,6 +91,105 @@ class MemoryRepository:
     def __init__(self, store: MemoryStore, factory: MemoryUnitOfWorkFactory) -> None:
         self.store = store
         self.factory = factory
+
+    async def receive_inbox(
+        self, entry: InteractionInboxEntry
+    ) -> tuple[InteractionInboxEntry, bool]:
+        existing = self.store.inbox.get(entry.interaction_id)
+        if existing is None and entry.deduplication_correlation_hash is not None:
+            matches = tuple(
+                candidate
+                for candidate in self.store.inbox.values()
+                if candidate.deduplication_namespace == entry.deduplication_namespace
+                and candidate.deduplication_correlation_hash == entry.deduplication_correlation_hash
+            )
+            if len(matches) > 1:
+                raise RuntimeError("test-only ambiguous inbox deduplication")
+            existing = None if not matches else matches[0]
+        if existing is None:
+            self.store.inbox[entry.interaction_id] = entry
+            return entry, True
+        same_semantics = existing.semantic_hash == entry.semantic_hash
+        updated = existing.model_copy(
+            update={
+                "delivery_count": existing.delivery_count + 1,
+                "last_received_at": max(existing.last_received_at, entry.received_at),
+                "last_disposition": (
+                    InteractionInboxDisposition.DEDUPLICATED
+                    if same_semantics
+                    else InteractionInboxDisposition.CONFLICTING
+                ),
+            }
+        )
+        self.store.inbox[existing.interaction_id] = updated
+        return updated, False
+
+    async def get_inbox(self, interaction_id: InteractionId) -> InteractionInboxEntry | None:
+        return self.store.inbox.get(interaction_id)
+
+    async def reclaim_inbox(
+        self,
+        interaction_id: InteractionId,
+        claimed_at: UtcDateTime,
+        stale_before: UtcDateTime,
+    ) -> InteractionInboxEntry | None:
+        existing = self.store.inbox.get(interaction_id)
+        if (
+            existing is None
+            or existing.status is not InteractionInboxStatus.PROCESSING
+            or existing.claimed_at > stale_before
+            or existing.run_id is not None
+        ):
+            return None
+        updated = existing.model_copy(
+            update={
+                "claimed_at": claimed_at,
+                "last_disposition": InteractionInboxDisposition.ACCEPTED,
+            }
+        )
+        self.store.inbox[interaction_id] = updated
+        return updated
+
+    async def route_inbox(
+        self,
+        interaction_id: InteractionId,
+        task_id: TaskId,
+        run_id: ExecutionRunId,
+        node_run_id: NodeRunId,
+    ) -> None:
+        existing = self.store.inbox.get(interaction_id)
+        if existing is None:
+            raise RuntimeError("test-only missing inbox entry")
+        identities = (existing.task_id, existing.run_id, existing.node_run_id)
+        requested = (task_id, run_id, node_run_id)
+        if existing.status is InteractionInboxStatus.ROUTED and identities == requested:
+            return
+        if existing.status is not InteractionInboxStatus.PROCESSING or any(
+            identity is not None for identity in identities
+        ):
+            raise RuntimeError("test-only invalid inbox route")
+        self.store.inbox[interaction_id] = existing.model_copy(
+            update={
+                "status": InteractionInboxStatus.ROUTED,
+                "task_id": task_id,
+                "run_id": run_id,
+                "node_run_id": node_run_id,
+            }
+        )
+
+    async def update_inbox(self, entry: InteractionInboxEntry) -> None:
+        if entry.interaction_id not in self.store.inbox:
+            raise RuntimeError("test-only missing inbox entry")
+        self.store.inbox[entry.interaction_id] = entry
+
+    async def list_inbox(self, limit: int) -> tuple[InteractionInboxEntry, ...]:
+        return tuple(
+            sorted(
+                self.store.inbox.values(),
+                key=lambda entry: (entry.received_at, entry.interaction_id),
+                reverse=True,
+            )[:limit]
+        )
 
     async def add_task(self, task: Task) -> None:
         if self.factory.fail_add_task:

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -19,9 +20,15 @@ from anban.core.ids import (
     EventId,
     ExecutionRunId,
     GraphRevisionId,
+    InteractionId,
     NodeRunId,
     SessionId,
     TaskId,
+)
+from anban.core.inbox import (
+    InteractionInboxDisposition,
+    InteractionInboxEntry,
+    InteractionInboxStatus,
 )
 from anban.core.lifecycle import (
     ensure_capability_invocation_transition,
@@ -44,8 +51,10 @@ from anban.core.models import (
     NodeRunStatus,
     Task,
     TaskStatus,
+    UtcDateTime,
 )
 from anban.core.persistence import ExecutionRunAggregate
+from anban.persistence.inbox_mapper import inbox_domain, inbox_record, replace_inbox_record
 from anban.persistence.mappers import (
     artifact_domain,
     artifact_record,
@@ -79,6 +88,7 @@ from anban.persistence.models import (
     EventRecord,
     ExecutionRunRecord,
     GraphRevisionRecord,
+    InteractionInboxRecord,
     NodeRunRecord,
     TaskRecord,
 )
@@ -118,6 +128,159 @@ class SQLAlchemyExecutionRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def receive_inbox(
+        self, entry: InteractionInboxEntry
+    ) -> tuple[InteractionInboxEntry, bool]:
+        candidate = inbox_record(entry)
+        values = {
+            column.name: getattr(candidate, column.name)
+            for column in InteractionInboxRecord.__table__.columns
+        }
+        inserted = await self._session.scalar(
+            postgresql_insert(InteractionInboxRecord)
+            .values(**values)
+            .on_conflict_do_nothing()
+            .returning(InteractionInboxRecord.interaction_id)
+        )
+        if inserted is not None:
+            return entry, True
+        conditions = [InteractionInboxRecord.interaction_id == entry.interaction_id]
+        if entry.deduplication_correlation_hash is not None:
+            conditions.append(
+                and_(
+                    InteractionInboxRecord.deduplication_namespace == entry.deduplication_namespace,
+                    InteractionInboxRecord.deduplication_correlation_hash
+                    == entry.deduplication_correlation_hash,
+                )
+            )
+        records = tuple(
+            (
+                await self._session.scalars(
+                    select(InteractionInboxRecord).where(or_(*conditions)).with_for_update()
+                )
+            ).all()
+        )
+        if len(records) != 1:
+            raise inconsistent_run()
+        record = records[0]
+        same_semantics = record.semantic_hash == entry.semantic_hash
+        record.delivery_count += 1
+        record.last_received_at = max(record.last_received_at, entry.received_at)
+        record.last_disposition = (
+            InteractionInboxDisposition.DEDUPLICATED.value
+            if same_semantics
+            else InteractionInboxDisposition.CONFLICTING.value
+        )
+        await self._session.flush()
+        return inbox_domain(record), False
+
+    async def get_inbox(self, interaction_id: InteractionId) -> InteractionInboxEntry | None:
+        record = await self._session.get(InteractionInboxRecord, interaction_id)
+        return None if record is None else inbox_domain(record)
+
+    async def reclaim_inbox(
+        self,
+        interaction_id: InteractionId,
+        claimed_at: UtcDateTime,
+        stale_before: UtcDateTime,
+    ) -> InteractionInboxEntry | None:
+        record = (
+            await self._session.scalars(
+                select(InteractionInboxRecord)
+                .where(InteractionInboxRecord.interaction_id == interaction_id)
+                .with_for_update()
+            )
+        ).one_or_none()
+        if (
+            record is None
+            or record.status != InteractionInboxStatus.PROCESSING.value
+            or record.claimed_at > stale_before
+            or record.run_id is not None
+        ):
+            return None
+        record.claimed_at = claimed_at
+        record.last_disposition = InteractionInboxDisposition.ACCEPTED.value
+        await self._session.flush()
+        return inbox_domain(record)
+
+    async def route_inbox(
+        self,
+        interaction_id: InteractionId,
+        task_id: TaskId,
+        run_id: ExecutionRunId,
+        node_run_id: NodeRunId,
+    ) -> None:
+        record = (
+            await self._session.scalars(
+                select(InteractionInboxRecord)
+                .where(InteractionInboxRecord.interaction_id == interaction_id)
+                .with_for_update()
+            )
+        ).one_or_none()
+        if record is None:
+            raise missing_record("interaction_inbox", interaction_id)
+        existing = (record.task_id, record.run_id, record.node_run_id)
+        requested = (task_id, run_id, node_run_id)
+        if record.status == InteractionInboxStatus.ROUTED.value and existing == requested:
+            return
+        if record.status != InteractionInboxStatus.PROCESSING.value or any(
+            identity is not None for identity in existing
+        ):
+            raise missing_record("interaction_inbox_route", interaction_id)
+        updated = inbox_domain(record).model_copy(
+            update={
+                "status": InteractionInboxStatus.ROUTED,
+                "task_id": task_id,
+                "run_id": run_id,
+                "node_run_id": node_run_id,
+            }
+        )
+        replace_inbox_record(record, updated)
+        await self._session.flush()
+
+    async def update_inbox(self, entry: InteractionInboxEntry) -> None:
+        record = (
+            await self._session.scalars(
+                select(InteractionInboxRecord)
+                .where(InteractionInboxRecord.interaction_id == entry.interaction_id)
+                .with_for_update()
+            )
+        ).one_or_none()
+        if record is None:
+            raise missing_record("interaction_inbox", entry.interaction_id)
+        current = InteractionInboxStatus(record.status)
+        allowed = {
+            InteractionInboxStatus.PROCESSING: {
+                InteractionInboxStatus.PROCESSING,
+                InteractionInboxStatus.ROUTED,
+                InteractionInboxStatus.REJECTED,
+                InteractionInboxStatus.EXPIRED,
+            },
+            InteractionInboxStatus.ROUTED: {
+                InteractionInboxStatus.ROUTED,
+                InteractionInboxStatus.PROCESSED,
+                InteractionInboxStatus.REJECTED,
+            },
+            InteractionInboxStatus.PROCESSED: {InteractionInboxStatus.PROCESSED},
+            InteractionInboxStatus.REJECTED: {InteractionInboxStatus.REJECTED},
+            InteractionInboxStatus.EXPIRED: {InteractionInboxStatus.EXPIRED},
+        }[current]
+        if entry.status not in allowed:
+            raise missing_record("interaction_inbox_transition", entry.interaction_id)
+        replace_inbox_record(record, entry)
+        await self._session.flush()
+
+    async def list_inbox(self, limit: int) -> tuple[InteractionInboxEntry, ...]:
+        records = await self._session.scalars(
+            select(InteractionInboxRecord)
+            .order_by(
+                InteractionInboxRecord.received_at.desc(),
+                InteractionInboxRecord.interaction_id.desc(),
+            )
+            .limit(limit)
+        )
+        return tuple(inbox_domain(record) for record in records.all())
 
     async def add_task(self, task: Task) -> None:
         self._session.add(task_record(task))

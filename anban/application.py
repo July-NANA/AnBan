@@ -141,7 +141,7 @@ async def build_application() -> Application:
         )
         queries = ExecutionQueryService(unit_of_work)
         return Application(
-            InteractionService(runtime, queries),
+            InteractionService(runtime, queries, unit_of_work),
             inventory,
             sufficiency,
             graph_builder,
@@ -158,8 +158,9 @@ async def build_application() -> Application:
 async def build_query_application() -> QueryApplication:
     configuration = load_configuration()
     engine = create_database_engine(configuration.database.require("development"))
-    queries = ExecutionQueryService(SQLAlchemyUnitOfWorkFactory(engine))
-    return QueryApplication(InteractionService(None, queries), engine)
+    unit_of_work = SQLAlchemyUnitOfWorkFactory(engine)
+    queries = ExecutionQueryService(unit_of_work)
+    return QueryApplication(InteractionService(None, queries, unit_of_work), engine)
 
 
 def build_inventory_application() -> InventoryApplication:

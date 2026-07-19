@@ -88,6 +88,7 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "input_kind",
         "interaction_id",
         "interaction_route",
+        "inbox_status",
         "invocation_compensation_failed",
         "method",
         "media_type",

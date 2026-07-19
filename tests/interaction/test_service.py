@@ -33,7 +33,7 @@ async def test_interaction_envelope_maps_to_durable_runtime_metadata() -> None:
         factory,
     )
     interaction_id = new_interaction_id()
-    result = await InteractionService(runtime).submit(
+    result = await InteractionService(runtime, unit_of_work=factory).submit(
         InteractionEnvelope(id=interaction_id, content="Execute through Interaction.")
     )
 
@@ -43,6 +43,7 @@ async def test_interaction_envelope_maps_to_durable_runtime_metadata() -> None:
         "source": "cli",
         "input_kind": "user_message",
         "interaction_route": "new_task",
+        "inbox_managed": True,
     }
     assert aggregate.task.metadata.root == expected
     assert aggregate.run.metadata.root == expected
@@ -50,14 +51,18 @@ async def test_interaction_envelope_maps_to_durable_runtime_metadata() -> None:
     observation = await ExecutionQueryService(factory).trace(result.run_id)
     routed = next(event for event in observation.audit if event.event_type == "interaction.routed")
     assert routed.node_run_id == result.node_run_id
-    assert routed.metadata.root == expected
+    assert routed.metadata.root == {
+        key: value for key, value in expected.items() if key != "inbox_managed"
+    }
 
 
 @pytest.mark.parametrize("source", ["message.adapter", "terminal.bridge", "mobile.input"])
 async def test_new_user_work_routes_through_one_gateway_for_any_adapter(source: str) -> None:
     factory = MemoryUnitOfWorkFactory()
     model = TransactionCheckingModel(factory, [final_turn()])
-    service = InteractionService(PersistentRuntime(model, CapabilityRegistry(), factory))
+    service = InteractionService(
+        PersistentRuntime(model, CapabilityRegistry(), factory), unit_of_work=factory
+    )
 
     result = await service.submit(
         InteractionEnvelope(
@@ -80,7 +85,8 @@ async def test_interaction_chat_maps_each_envelope_to_one_run_node() -> None:
             TransactionCheckingModel(factory, [final_turn(), final_turn()]),
             CapabilityRegistry(),
             factory,
-        )
+        ),
+        unit_of_work=factory,
     )
     chat = service.chat()
     first_id, second_id = new_interaction_id(), new_interaction_id()
@@ -109,7 +115,8 @@ async def test_external_new_work_uses_the_same_async_entry() -> None:
             TransactionCheckingModel(factory, [final_turn()]),
             CapabilityRegistry(),
             factory,
-        )
+        ),
+        unit_of_work=factory,
     )
 
     result = await service.start_async(
@@ -159,20 +166,6 @@ async def test_external_new_work_uses_the_same_async_entry() -> None:
             ),
             "resume_input_unavailable",
         ),
-        (
-            InteractionEnvelope(
-                id=new_interaction_id(),
-                content="Deduplicated new work.",
-                correlation=InteractionCorrelation(
-                    deduplication_key=CorrelationKey(
-                        purpose=CorrelationPurpose.DEDUPLICATION,
-                        namespace="external.delivery",
-                        value="delivery-8219",
-                    )
-                ),
-            ),
-            "deduplication_unavailable",
-        ),
     ],
 )
 async def test_gateway_rejects_routes_owned_by_later_deliveries(
@@ -181,10 +174,15 @@ async def test_gateway_rejects_routes_owned_by_later_deliveries(
 ) -> None:
     factory = MemoryUnitOfWorkFactory()
     model = TransactionCheckingModel(factory, [final_turn()])
-    service = InteractionService(PersistentRuntime(model, CapabilityRegistry(), factory))
+    service = InteractionService(
+        PersistentRuntime(model, CapabilityRegistry(), factory), unit_of_work=factory
+    )
 
     with pytest.raises(AnbanError) as captured:
         await service.submit(envelope)
 
     assert captured.value.info.details.root["reason"] == reason
     assert model.calls == 0
+    inbox = await service.inbox()
+    assert inbox[0].status.value == "rejected"
+    assert inbox[0].failure_reason == reason

@@ -20,6 +20,11 @@ _INTERACTION_METADATA = frozenset(
         "resume_correlation_hash",
         "resume_namespace",
         "source",
+        "webhook_auth_version",
+        "webhook_authenticated",
+        "webhook_clock_skew_seconds",
+        "webhook_endpoint",
+        "webhook_event_hash",
     }
 )
 _REQUIRED_INTERACTION_METADATA = frozenset(
@@ -47,7 +52,7 @@ def initialization_event_facts(
         EventFact("node.created", node_run_id=node_run_id),
     ]
     if _REQUIRED_INTERACTION_METADATA.issubset(metadata.root):
-        facts.append(interaction_routed_event_fact(metadata, node_run_id))
+        facts.extend(interaction_delivery_event_facts(metadata, node_run_id))
         inbox = inbox_routed_event_fact(metadata, node_run_id)
         if inbox is not None:
             facts.append(inbox)
@@ -72,6 +77,33 @@ def interaction_routed_event_fact(metadata: SafeMetadata, node_run_id: NodeRunId
         metadata_projection(metadata, _INTERACTION_METADATA),
         node_run_id=node_run_id,
     )
+
+
+def interaction_delivery_event_facts(
+    metadata: SafeMetadata, node_run_id: NodeRunId
+) -> tuple[EventFact, ...]:
+    facts: list[EventFact] = []
+    if metadata.root.get("webhook_authenticated") is True:
+        facts.append(
+            EventFact(
+                "webhook.authenticated",
+                metadata_projection(
+                    metadata,
+                    frozenset(
+                        {
+                            "webhook_auth_version",
+                            "webhook_authenticated",
+                            "webhook_clock_skew_seconds",
+                            "webhook_endpoint",
+                            "webhook_event_hash",
+                        }
+                    ),
+                ),
+                node_run_id=node_run_id,
+            )
+        )
+    facts.append(interaction_routed_event_fact(metadata, node_run_id))
+    return tuple(facts)
 
 
 def managed_inbox_interaction(metadata: SafeMetadata) -> InteractionId | None:

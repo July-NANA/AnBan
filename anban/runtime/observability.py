@@ -23,6 +23,7 @@ _AUDIT_EVENT_PREFIXES = (
     "model.",
     "skill.",
     "subagent.",
+    "webhook.",
     "capability.",
     "checkpoint.",
     "context.",
@@ -184,6 +185,11 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "turn_number",
         "unmet_condition_count",
         "will_reexecute",
+        "webhook_auth_version",
+        "webhook_authenticated",
+        "webhook_clock_skew_seconds",
+        "webhook_endpoint",
+        "webhook_event_hash",
     }
 )
 

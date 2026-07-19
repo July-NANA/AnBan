@@ -73,6 +73,14 @@ max_tools_per_server = {policy.MCP_TOOLS_MAX}
 # 服务器使用 [[capability.mcp.servers]] 配置。环境值只能写成 environment
 # 表中的 secrets.env/进程环境变量引用，不得把凭据直接写入本文件。
 
+[interaction.webhook]
+# 单个原始请求体上限，在 JSON 解析和 Interaction admission 之前执行。
+body_max_bytes = {policy.WEBHOOK_BODY_MAX_BYTES}
+# HMAC 时间戳允许的最大时钟偏差，单位为秒。
+clock_skew_seconds = {policy.WEBHOOK_CLOCK_SKEW_DEFAULT_SECONDS}
+# Endpoint 使用 [[interaction.webhook.endpoints]] 配置；每个条目只保存逻辑 name 与
+# secret_env 引用，真实 HMAC Secret 必须来自 secrets.env 或进程环境。
+
 [database]
 # 开发数据库只允许从该固定环境变量引用，实际 URL 必须放在 secrets.env。
 url_env = "DATABASE_URL"

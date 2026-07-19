@@ -15,6 +15,12 @@ from anban.interaction.service import (
     InteractionChatSession,
     InteractionService,
 )
+from anban.interaction.webhook import (
+    WebhookIngressAdapter,
+    WebhookPayload,
+    create_webhook_http_application,
+    webhook_signature,
+)
 
 __all__ = [
     "CorrelationFailureReason",
@@ -28,4 +34,8 @@ __all__ = [
     "InteractionInboxDetail",
     "InteractionRoute",
     "InteractionService",
+    "WebhookIngressAdapter",
+    "WebhookPayload",
+    "create_webhook_http_application",
+    "webhook_signature",
 ]

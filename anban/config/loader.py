@@ -27,6 +27,12 @@ from anban.config.mcp import (
     McpSettings,
     resolve_mcp_configuration,
 )
+from anban.config.webhook import (
+    WebhookConfiguration,
+    WebhookConfigurationResolutionError,
+    WebhookSettings,
+    resolve_webhook_configuration,
+)
 from anban.core import AnbanError, ErrorCode, ErrorInfo, SafeMetadata
 from scripts.workspace_bootstrap import resolve_workspace
 
@@ -160,6 +166,10 @@ class CapabilitySection(ConfigurationValue):
     mcp: McpSettings = Field(default_factory=McpSettings)
 
 
+class InteractionSection(ConfigurationValue):
+    webhook: WebhookSettings = Field(default_factory=WebhookSettings)
+
+
 class DatabaseSettings(ConfigurationValue):
     url_env: Literal["DATABASE_URL"]
     test_url_env: Literal["ANBAN_TEST_DATABASE_URL"]
@@ -171,6 +181,7 @@ class WorkspaceSettings(ConfigurationValue):
     model: ModelSection
     agent: AgentConfiguration = Field(default_factory=AgentConfiguration)
     capability: CapabilitySection = Field(default_factory=CapabilitySection)
+    interaction: InteractionSection = Field(default_factory=InteractionSection)
     database: DatabaseSettings
 
 
@@ -219,6 +230,7 @@ class AnbanConfiguration(ConfigurationValue):
     agent: AgentConfiguration
     process: ProcessConfiguration
     mcp: McpConfiguration
+    webhook: WebhookConfiguration
     database: DatabaseConfiguration = Field(repr=False)
 
     def require_model(self) -> ModelConfiguration:
@@ -228,6 +240,15 @@ class AnbanConfiguration(ConfigurationValue):
             )
         return self.model
 
+    def require_webhook(self) -> WebhookConfiguration:
+        if not self.webhook.endpoints:
+            raise configuration_failure(
+                ErrorCode.CONFIGURATION_MISSING,
+                "Webhook endpoint configuration is missing",
+                reason="webhook_not_configured",
+            )
+        return self.webhook
+
     def protected_values(self) -> tuple[str, ...]:
         values: list[str] = []
         if self.model is not None:
@@ -236,6 +257,7 @@ class AnbanConfiguration(ConfigurationValue):
             if candidate is not None:
                 values.append(candidate.get_secret_value())
         values.extend(self.mcp.protected_values())
+        values.extend(self.webhook.protected_values())
         return tuple(value for value in values if value)
 
 
@@ -312,6 +334,18 @@ def load_configuration(
             "MCP server environment configuration is missing",
             mcp_server=exc.server_name,
         ) from None
+    try:
+        webhook = resolve_webhook_configuration(
+            settings.interaction.webhook,
+            environment=environment,
+            secrets=secrets,
+        )
+    except WebhookConfigurationResolutionError as exc:
+        raise configuration_failure(
+            ErrorCode.CONFIGURATION_MISSING,
+            "Webhook endpoint Secret is missing",
+            webhook_endpoint=exc.endpoint_name,
+        ) from None
     return AnbanConfiguration(
         workspace=root,
         workspace_id=settings.workspace_id,
@@ -319,5 +353,6 @@ def load_configuration(
         agent=settings.agent,
         process=settings.capability.process,
         mcp=mcp,
+        webhook=webhook,
         database=database,
     )

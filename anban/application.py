@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from anban.capability import (
@@ -19,7 +20,7 @@ from anban.capability import (
 )
 from anban.capability.workspace import WorkspaceBoundary
 from anban.config import load_configuration
-from anban.interaction import InteractionService
+from anban.interaction import InteractionService, create_webhook_http_application
 from anban.model import OpenAICompatibleAdapter
 from anban.persistence import SQLAlchemyUnitOfWorkFactory, create_database_engine
 from anban.runtime import (
@@ -213,3 +214,16 @@ async def build_inventory_application() -> InventoryApplication:
         additional_handlers=(memory, delegate, *mcp_capabilities),
     )
     return InventoryApplication(inventory, engine)
+
+
+def build_webhook_http_application() -> FastAPI:
+    """Compose the authenticated HTTP Adapter over the ordinary production Application."""
+
+    configuration = load_configuration()
+    webhook = configuration.require_webhook()
+
+    async def service_builder():
+        application = await build_application()
+        return application.interactions, application.close
+
+    return create_webhook_http_application(webhook, service_builder)

@@ -9,6 +9,12 @@ from anban.config.loader import (
     load_configuration,
 )
 from anban.config.mcp import McpConfiguration, McpServerConfiguration, McpSettings
+from anban.config.webhook import (
+    WebhookConfiguration,
+    WebhookEndpointConfiguration,
+    WebhookEndpointSettings,
+    WebhookSettings,
+)
 
 __all__ = [
     "AgentConfiguration",
@@ -19,5 +25,9 @@ __all__ = [
     "McpServerConfiguration",
     "McpSettings",
     "ProcessConfiguration",
+    "WebhookConfiguration",
+    "WebhookEndpointConfiguration",
+    "WebhookEndpointSettings",
+    "WebhookSettings",
     "load_configuration",
 ]

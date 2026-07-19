@@ -138,3 +138,12 @@ the Invocation identity; Runtime requires a running Invocation and matching inve
 the live continuation or invokes restart recovery. Capability `progress` and `wait` remain the only
 source of terminal observation, failure, and Artifact facts. Wrong-kind, unknown, terminal, and
 conflicting signals fail explicitly, while identical terminal redelivery reconstructs the Run.
+
+D31 admits Webhook input only after the Interaction Adapter validates a configured logical
+endpoint, bounded event identity, Unix timestamp window, and versioned HMAC-SHA256 over the exact
+raw body. Endpoint, header, timestamp, signature, media-type, and body-bound failures occur before
+inbox admission because the request is not authenticated. After authentication, new and resume
+routes follow the existing durable inbox lifecycle: identical delivery reconstructs its terminal
+Run, changed semantics conflicts, and authenticated unknown or ineligible resume becomes a durable
+rejection. `webhook.authenticated` records only bounded attestation metadata and hashes. Neither
+HTTP replay nor restart automatically retries a Model or Capability side effect.

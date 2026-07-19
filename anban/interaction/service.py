@@ -35,6 +35,7 @@ _HUMAN_RESUME_INPUTS = frozenset(
         InteractionInputKind.USER_MESSAGE,
         InteractionInputKind.SUPPLEMENTAL_INPUT,
         InteractionInputKind.HUMAN_INPUT,
+        InteractionInputKind.WEBHOOK_EVENT,
     }
 )
 _RESULT_RESUME_INPUTS = frozenset(
@@ -62,6 +63,15 @@ def interaction_metadata(
         "interaction_route": envelope.correlation.route.value,
         "inbox_managed": inbox_managed,
     }
+    for key in (
+        "webhook_endpoint",
+        "webhook_authenticated",
+        "webhook_auth_version",
+        "webhook_event_hash",
+        "webhook_clock_skew_seconds",
+    ):
+        if key in envelope.metadata.root:
+            values[key] = envelope.metadata.root[key]
     resume = envelope.correlation.resume_key
     if resume is not None:
         values.update(
@@ -86,7 +96,10 @@ def require_new_work_route(envelope: InteractionEnvelope) -> None:
 
     if envelope.correlation.route is not InteractionRoute.NEW_TASK:
         raise _routing_error("route_mismatch")
-    if envelope.input_kind is not InteractionInputKind.USER_MESSAGE:
+    if envelope.input_kind not in {
+        InteractionInputKind.USER_MESSAGE,
+        InteractionInputKind.WEBHOOK_EVENT,
+    }:
         raise _routing_error("new_work_input_unavailable")
 
 

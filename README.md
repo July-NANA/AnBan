@@ -17,7 +17,8 @@ Capability/MCP/sub-agent results, Webhook events, and schedule occurrences throu
 `InteractionEnvelope`. It distinguishes new work from a request to resume an eligible Run using
 bounded external correlation—not caller-supplied Task or Run IDs—and keeps deduplication identity
 separate. System-owned envelope fields cannot be supplied by external payloads; correlation values
-are hashed before Audit/Trace projection. Durable routing and delivery remain later v0.5 work.
+are hashed before Audit/Trace projection. Authenticated Webhooks use the same durable inbox and
+Runtime path; scheduling remains later v0.5 work.
 
 ```text
 User task -> FixedGeneralAgent -> skill.activate -> process.execute
@@ -51,6 +52,7 @@ anban artifacts <run-id>
 anban context task <task-id>
 anban context session <session-id>
 anban capabilities list
+anban webhook serve
 python -m scripts.doctor
 python -m scripts.doctor --online
 python -m scripts.doctor --web

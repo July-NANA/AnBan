@@ -43,7 +43,9 @@ from anban.runtime.model_persistence import PersistedModelPort
 from anban.runtime.persistence import RunPersistence
 from anban.runtime.persistence_errors import persistence_error
 
-_HUMAN_INPUT_KINDS = frozenset({"user_message", "supplemental_input", "human_input"})
+_HUMAN_INPUT_KINDS = frozenset(
+    {"user_message", "supplemental_input", "human_input", "webhook_event"}
+)
 RESULT_INPUT_KINDS = frozenset({"async_capability_result", "mcp_result", "subagent_result"})
 _RESULT_INVENTORY_KINDS = {
     "async_capability_result": InventoryKind.PROCESS,

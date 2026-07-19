@@ -6,7 +6,7 @@ import hashlib
 import re
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Self
+from typing import Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -33,6 +33,15 @@ _SYSTEM_IDENTITY_FIELDS = frozenset(
     }
 )
 _SYSTEM_ENVELOPE_FIELDS = _SYSTEM_IDENTITY_FIELDS | {"id", "received_at", "source"}
+_ADAPTER_ATTESTATION_FIELDS = frozenset(
+    {
+        "webhook_auth_version",
+        "webhook_authenticated",
+        "webhook_clock_skew_seconds",
+        "webhook_endpoint",
+        "webhook_event_hash",
+    }
+)
 
 
 class InteractionValue(BaseModel):
@@ -183,6 +192,14 @@ class InteractionEnvelope(InteractionValue):
         forged = _SYSTEM_ENVELOPE_FIELDS.intersection(payload)
         if forged:
             raise ValueError("External input cannot supply system-owned envelope fields")
+        metadata = payload.get("metadata")
+        if isinstance(metadata, Mapping):
+            supplied_metadata = cast(Mapping[object, object], metadata)
+            if any(
+                isinstance(key, str) and key in _ADAPTER_ATTESTATION_FIELDS
+                for key in supplied_metadata
+            ):
+                raise ValueError("External input cannot supply Adapter attestations")
         return cls.model_validate(
             {
                 **dict(payload),

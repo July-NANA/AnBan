@@ -31,6 +31,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -53,6 +54,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11" },
     { name = "python-dotenv", specifier = ">=1.1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
+    { name = "uvicorn", specifier = ">=0.34" },
 ]
 
 [package.metadata.requires-dev]

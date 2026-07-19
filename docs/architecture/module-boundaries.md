@@ -24,7 +24,11 @@ and unsupported input kinds become durable terminal inbox facts without creating
 correlation values never enter storage or queries. D27 human-origin input shares the governed
 update path. D28 asynchronous result input is only a readiness signal: Runtime resolves and checks
 the Checkpoint-owned Invocation, then Capability supplies the authoritative Process/MCP/Sub-agent
-terminal result. Trigger behavior and scheduling remain later scope.
+terminal result. D31 adds one authenticated HTTP Webhook Adapter. It validates bounded endpoint,
+timestamp, event identity, and HMAC over the exact raw body before envelope construction, then
+routes new work or contextual resume through the same inbox and Runtime. Untrusted failures cannot
+create durable facts; authenticated semantic failures use the durable inbox protocol. Scheduling
+remains later scope.
 
 ## Core
 
@@ -153,6 +157,10 @@ safe hashes, expiry, claim, route identities, terminal outcome, attempt count, a
 disposition. A database unique constraint owns deduplication identity. Runtime initialization links
 the inbox row to Task/Run/root Node in the same transaction and appends
 `interaction.inbox_routed`; queries expose hashes and lifecycle facts rather than raw content.
+Authenticated Webhooks reuse this table and unique deduplication constraint. Raw event identity,
+signature, and Secret are excluded; bounded authenticated content remains ordinary Task or Context
+business input. A terminal duplicate after service restart reconstructs its existing Run without
+Model or Capability replay.
 Delegated Runs add nullable parent Run/Invocation identities and a bounded depth to
 `execution_runs`. Composite foreign keys require the Invocation to belong to the parent Run, a
 unique constraint permits only one child per parent Invocation, and checks forbid partial or
@@ -161,7 +169,10 @@ Artifacts stay on the child Run and are never copied into the parent as fabricat
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
 
-`config` is authorized cross-module infrastructure and is not a seventh product module. New Ports,
+`config` is authorized cross-module infrastructure and is not a seventh product module. Webhook
+endpoint configuration stores only logical names and environment-key references; resolved HMAC
+Secrets join the protected-value set and never enter configuration files or durable projections.
+New Ports,
 Adapters, Handler/Tool names, persistence backends, interaction adapters, or top-level product
 packages require explicit architecture authorization; an ADR alone does not grant it.
 

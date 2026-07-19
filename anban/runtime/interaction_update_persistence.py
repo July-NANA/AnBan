@@ -19,7 +19,7 @@ from anban.runtime.graph_result_reuse import (
 )
 from anban.runtime.initialization_events import (
     inbox_routed_event_fact,
-    interaction_routed_event_fact,
+    interaction_delivery_event_facts,
     route_managed_inbox,
 )
 from anban.runtime.interaction_updates import InteractionUpdateDecision
@@ -101,7 +101,7 @@ class InteractionUpdatePersistence:
                 "side_effect_replayed": False,
             }
         )
-        facts = [interaction_routed_event_fact(interaction_metadata, checkpoint.node_run_id)]
+        facts = list(interaction_delivery_event_facts(interaction_metadata, checkpoint.node_run_id))
         inbox_fact = inbox_routed_event_fact(interaction_metadata, root_node_run_id)
         if inbox_fact is not None:
             facts.append(inbox_fact)
@@ -180,7 +180,7 @@ class InteractionUpdatePersistence:
                 "side_effect_replayed": False,
             }
         )
-        facts = [interaction_routed_event_fact(interaction_metadata, checkpoint.node_run_id)]
+        facts = list(interaction_delivery_event_facts(interaction_metadata, checkpoint.node_run_id))
         inbox_fact = inbox_routed_event_fact(interaction_metadata, root_node_run_id)
         if inbox_fact is not None:
             facts.append(inbox_fact)
@@ -295,7 +295,7 @@ class InteractionUpdatePersistence:
             interaction_metadata,
             proposed_spec_hash=revision.spec_hash,
         )
-        facts = [interaction_routed_event_fact(interaction_metadata, checkpoint.node_run_id)]
+        facts = list(interaction_delivery_event_facts(interaction_metadata, checkpoint.node_run_id))
         inbox_fact = inbox_routed_event_fact(interaction_metadata, root_node_run_id)
         if inbox_fact is not None:
             facts.append(inbox_fact)

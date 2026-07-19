@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
+import uvicorn
 from pydantic import ValidationError
 
 from anban.application import (
@@ -17,6 +18,7 @@ from anban.application import (
     build_application,
     build_inventory_application,
     build_query_application,
+    build_webhook_http_application,
 )
 from anban.core.errors import AnbanError, ErrorCategory, ErrorCode, ErrorInfo
 from anban.core.ids import CheckpointId, ExecutionRunId, SessionId, TaskId, new_interaction_id
@@ -108,6 +110,11 @@ def parser() -> argparse.ArgumentParser:
     )
     capability_describe.add_argument("key")
     add_json_option(capability_describe)
+    webhook = commands.add_parser("webhook", help="Run authenticated Webhook ingress.")
+    webhook_commands = webhook.add_subparsers(dest="webhook_command", required=True)
+    webhook_serve = webhook_commands.add_parser("serve", help="Serve configured endpoints.")
+    webhook_serve.add_argument("--host", default="127.0.0.1")
+    webhook_serve.add_argument("--port", type=int, default=8080)
     return root
 
 
@@ -631,6 +638,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.command == "workspace":
             result = initialize_workspace()
             emit_workspace(result, json_output=json_output)
+            return EXIT_SUCCESS
+        if arguments.command == "webhook":
+            if not 1 <= arguments.port <= 65_535:
+                raise ValueError("Webhook port is invalid")
+            uvicorn.run(
+                build_webhook_http_application(),
+                host=arguments.host,
+                port=arguments.port,
+                access_log=False,
+                server_header=False,
+                date_header=False,
+            )
             return EXIT_SUCCESS
         if arguments.command == "run":
             values = list(arguments.values)

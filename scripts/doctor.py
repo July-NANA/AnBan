@@ -516,6 +516,16 @@ def check_mcp(configuration: AnbanConfiguration) -> CheckResult:
     )
 
 
+def check_webhook(configuration: AnbanConfiguration) -> CheckResult:
+    endpoints = len(configuration.webhook.endpoints)
+    detail = (
+        "configured=0; authenticated HTTP ingress is disabled"
+        if endpoints == 0
+        else f"configured={endpoints}; HMAC Secrets and bounded ingress settings resolved"
+    )
+    return pass_result("Webhook", detail)
+
+
 def check_online() -> CheckResult:
     try:
         version = command("npx", "--yes", CLAW_CLI, "--cli-version", timeout=120)
@@ -629,6 +639,7 @@ def main(argv: list[str] | None = None) -> int:
         results += run_guarded("Skills", lambda: check_skills(workspace, configuration), one)
         results += run_guarded("Process", lambda: check_process(configuration), one)
         results += run_guarded("MCP", lambda: check_mcp(configuration), one)
+        results += run_guarded("Webhook", lambda: check_webhook(configuration), one)
     if arguments.online:
         results += run_guarded("Online", check_online, one)
     if arguments.web:

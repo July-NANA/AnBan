@@ -1,9 +1,60 @@
 # CLI Reference
 
-The production CLI commands include `workspace init`, `run`, `chat`, `runs`, `inbox`, `trace`, `artifacts`,
-`context task`, `context session`, and the v0.5 `capabilities` inspection group. Every command
-supports `--json`. Run failures use stable error codes; Trace, Artifact, and Context queries work
-from a new database-only Application.
+The production CLI commands include `workspace init`, `run`, `chat`, `runs`, `inbox`, `trace`,
+`artifacts`, `context task`, `context session`, the v0.5 `capabilities` inspection group, and
+`webhook serve`. Query and execution commands support `--json`. Run failures use stable error
+codes; Trace, Artifact, and Context queries work from a new database-only Application.
+
+## Webhook service
+
+`anban webhook serve [--host HOST] [--port PORT]` starts the real ASGI Interaction Adapter and
+owns an ordinary production Application for the server lifespan. It serves `GET /health` and
+`POST /webhooks/{endpoint}`. Access logs, API documentation, OpenAPI, server banners, and date
+headers are disabled. The default listener is `127.0.0.1:8080`; production deployments must
+terminate TLS through a trusted reverse proxy or equivalent protected listener.
+
+Configure only logical endpoint names and Secret references in `anban.toml`:
+
+```toml
+[interaction.webhook]
+body_max_bytes = 65536
+clock_skew_seconds = 300
+
+[[interaction.webhook.endpoints]]
+name = "tasks"
+secret_env = "ANBAN_WEBHOOK_TASKS_SECRET"
+```
+
+`ANBAN_WEBHOOK_TASKS_SECRET` must be at least 32 bytes and exists only in the process environment
+or Workspace `secrets.env`. The sender signs the exact request bytes with HMAC-SHA256. Required
+headers are:
+
+- `Content-Type: application/json`
+- `X-Anban-Event-Id`: bounded sender event identity
+- `X-Anban-Timestamp`: Unix seconds inside the configured clock-skew window
+- `X-Anban-Signature`: lower-case `v1=<sha256-hex>` over
+  `v1\n{endpoint}\n{event-id}\n{timestamp}\n{raw-body}`
+
+The JSON payload creates new work by default:
+
+```json
+{"content":"classify the received event","route":"new_task"}
+```
+
+An eligible waiting Run can instead receive governed contextual input:
+
+```json
+{
+  "content": "continue with the approved value",
+  "route": "resume_eligible_run",
+  "resume_key": {"namespace": "opaque-namespace", "value": "opaque-value"}
+}
+```
+
+Authentication completes before inbox admission. Authenticated deliveries then use the same
+durable deduplication, routing, Context, Checkpoint, Runtime, Model, Capability, Audit, and Trace
+paths as other Interaction input. Identical event delivery reconstructs its terminal Run across
+server restart without replay; changed semantics under the same identity conflict.
 
 `anban inbox [--limit N]` lists bounded durable delivery facts from a new database-only
 Application: Interaction identity, logical source/kind/route, content hash, lifecycle status,

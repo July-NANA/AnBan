@@ -289,7 +289,11 @@ def test_capability_inventory_cli_lists_searches_and_describes(
     application = InventoryApplication(
         UnifiedCapabilityInventory(CapabilityRegistry(), model_available=True)
     )
-    monkeypatch.setattr(cli, "build_inventory_application", lambda: application)
+
+    async def build_inventory() -> InventoryApplication:
+        return application
+
+    monkeypatch.setattr(cli, "build_inventory_application", build_inventory)
 
     assert cli.main(["capabilities", "list", "--json"]) == cli.EXIT_SUCCESS
     snapshot = json.loads(capsys.readouterr().out)

@@ -36,12 +36,14 @@ APPROVED_PROTOCOLS = {
     "UnitOfWorkFactory",
 }
 APPROVED_ADAPTER_TYPES = {
+    "McpStdioAdapter",
     "OpenAICompatibleAdapter",
     "SQLAlchemyExecutionRepository",
     "SQLAlchemyUnitOfWork",
     "SQLAlchemyUnitOfWorkFactory",
 }
 APPROVED_CAPABILITY_HANDLERS = {
+    "McpToolCapability",
     "MemoryContextCapability",
     "ProcessCapability",
     "SkillActivationCapability",
@@ -103,7 +105,7 @@ def test_adapter_and_handler_types_are_fixed() -> None:
         and node.name.endswith(("Repository", "UnitOfWork", "UnitOfWorkFactory"))
     }
     assert adapters == APPROVED_ADAPTER_TYPES & adapters
-    assert adapters == {"OpenAICompatibleAdapter"}
+    assert adapters == {"McpStdioAdapter", "OpenAICompatibleAdapter"}
     assert persistence_types == APPROVED_ADAPTER_TYPES - adapters
     assert handlers == APPROVED_CAPABILITY_HANDLERS
     assert interaction_types == APPROVED_INTERACTION_TYPES

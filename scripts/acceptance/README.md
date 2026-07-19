@@ -57,6 +57,13 @@ These commands fail closed and emit only bounded evidence:
   inbox, ordered Audit/Trace, original delivery, and exactly-once side effect. Deterministic MCP
   and Sub-agent lifecycle variants cover the same generic path until D29/D30 provide their real
   integrations.
+- `pnpm run acceptance:mcp`: D29 real Provider/PostgreSQL/MCP acceptance. An isolated Workspace
+  launches a real official-SDK stdio server with a randomized Tool name and structured schema.
+  Three changed tasks enter through the ordinary Interaction/Runtime Composition Root, invoke the
+  Tool once, and reconcile Invocation, external state, safe MCP Audit metadata, and complete Trace
+  through fresh Applications. Reconnect preserves logical identity; malformed protocol and an
+  unavailable command fail closed. Deterministic MCP tests additionally cover schema rejection,
+  timeout, cancellation, Tool error, output bounds, and protected-value boundaries.
 - `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
   ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three

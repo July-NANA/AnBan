@@ -99,6 +99,19 @@ def test_process_classification_uses_descriptor_semantics_not_its_name() -> None
     assert inventory.describe("model:default").availability is AvailabilityStatus.UNAVAILABLE
 
 
+def test_mcp_classification_reports_external_side_effect_boundary() -> None:
+    dynamic_name = f"fixture.{uuid4().hex}"
+    handler = NeverInvokedHandler(dynamic_name, inventory_kind=InventoryKind.MCP)
+    inventory = UnifiedCapabilityInventory(CapabilityRegistry((handler,)), model_available=True)
+
+    mcp = inventory.describe(dynamic_name)
+
+    assert mcp.kind is InventoryKind.MCP
+    assert mcp.boundary.risk.value == "high"
+    assert mcp.boundary.side_effects.value == "external"
+    assert "server-defined" in mcp.boundary.summary
+
+
 def test_search_is_bounded_filtered_and_deterministic() -> None:
     names = tuple(f"fixture.{uuid4().hex}" for _ in range(4))
     handlers = tuple(NeverInvokedHandler(name) for name in reversed(names))

@@ -45,6 +45,62 @@ def test_configuration_uses_allowlisted_environment_references(tmp_path: Path) -
         configuration.process.default_timeout_seconds
         == policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS
     )
+    assert configuration.mcp.servers == ()
+
+
+def test_mcp_configuration_resolves_secret_references_without_exposing_values(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "anban.toml").write_text(
+        CONFIG
+        + """
+[capability.mcp]
+request_timeout_seconds = 12
+output_max_bytes = 4096
+max_tools_per_server = 7
+
+[[capability.mcp.servers]]
+name = "dynamic"
+transport = "stdio"
+command = "python"
+args = ["server.py"]
+cwd = "."
+environment = { MCP_FIXTURE_KEY = "TEST_MCP_FIXTURE_KEY" }
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "secrets.env").write_text(
+        "TEST_MCP_FIXTURE_KEY=synthetic-mcp-secret\n",
+        encoding="utf-8",
+    )
+
+    configuration = load_configuration(workspace=tmp_path, environ={})
+
+    assert configuration.mcp.request_timeout_seconds == 12
+    assert configuration.mcp.max_tools_per_server == 7
+    assert configuration.mcp.servers[0].name == "dynamic"
+    assert "synthetic-mcp-secret" not in repr(configuration)
+    assert "synthetic-mcp-secret" in configuration.protected_values()
+
+
+def test_missing_mcp_environment_reference_fails_explicitly(tmp_path: Path) -> None:
+    (tmp_path / "anban.toml").write_text(
+        CONFIG
+        + """
+[[capability.mcp.servers]]
+name = "missing"
+command = "python"
+environment = { MCP_FIXTURE_KEY = "MISSING_MCP_FIXTURE_KEY" }
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "secrets.env").write_text("", encoding="utf-8")
+
+    with pytest.raises(AnbanError) as raised:
+        load_configuration(workspace=tmp_path, environ={})
+
+    assert raised.value.info.code is ErrorCode.CONFIGURATION_MISSING
+    assert raised.value.info.details.root["mcp_server"] == "missing"
 
 
 def test_missing_configuration_fails_explicitly(tmp_path: Path) -> None:

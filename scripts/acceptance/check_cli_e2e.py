@@ -318,18 +318,79 @@ def sufficient_process_path_issues(
     return tuple(sorted(issues))
 
 
+_GATE_A_WORKLOAD = """\
+import json
+import os
+import sys
+from pathlib import Path
+from urllib.request import urlopen
+
+root = Path(".")
+listing = sorted(path.name for path in root.iterdir())
+temporary = Path("gate-a-temporary.txt")
+temporary.write_text("created", encoding="utf-8")
+temporary.write_text(temporary.read_text(encoding="utf-8") + "-modified", encoding="utf-8")
+temporary.unlink()
+with urlopen(sys.argv[1], timeout=5) as response:
+    body = response.read().decode("utf-8")
+if body != "gate-http-ok":
+    raise RuntimeError("deterministic HTTP response did not match")
+if os.environ.get("ANBAN_GATE_A_MARKER") != "gate-a-env-ok":
+    raise RuntimeError("environment override was not applied")
+Path("gate-a-result.txt").write_text(body + "\\n", encoding="utf-8")
+Path("gate-a-summary.json").write_text(
+    json.dumps(
+        {
+            "python_version": sys.version.split()[0],
+            "workspace_listing": listing,
+            "temporary_deleted": not temporary.exists(),
+            "http_response": body,
+            "environment_override": True,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ),
+    encoding="utf-8",
+)
+print("gate-a-workload-ok")
+"""
+
+
+def gate_a_process_arguments(endpoint: str) -> str:
+    workspace = load_configuration().workspace
+    fixture = workspace / "gate-a-workload.py"
+    fixture.write_text(_GATE_A_WORKLOAD, encoding="utf-8")
+    fixture.chmod(0o600)
+    return json.dumps(
+        {
+            "command": "python",
+            "args": [fixture.name, endpoint],
+            "cwd": ".",
+            "env": [{"name": "ANBAN_GATE_A_MARKER", "value": "gate-a-env-ok"}],
+            "background": True,
+            "artifacts": [
+                {"path": "gate-a-result.txt", "media_type": "text/plain"},
+                {"path": "gate-a-summary.json", "media_type": "application/json"},
+            ],
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+
+
 async def gate_a() -> dict[str, object]:
     with local_http_endpoint() as endpoint:
+        arguments = gate_a_process_arguments(endpoint)
         result = await submit(
             "In this isolated Anban Workspace, perform a real general-runtime validation. Run the "
             "current Python, inspect a Workspace file listing, create then modify and delete a "
             "temporary text file, make one real HTTP GET to the provided deterministic validation "
-            f"endpoint {endpoint} using an available command-line or Python program and verify its "
-            "gate-http-ok response, demonstrate stdin or an environment override, and generate "
-            "gate-a-result.txt and gate-a-summary.json, collecting both together as declared "
-            "Artifacts. Perform all listed operations and produce both Artifacts with exactly one "
-            "process.execute invocation using background=true; do not make exploratory or "
-            "additional process calls. Its real accepted, progress, and "
+            "endpoint and verify its gate-http-ok response, demonstrate an environment override, "
+            "and generate gate-a-result.txt and gate-a-summary.json as declared Artifacts. The "
+            "controlled Workspace fixture performs these operations. Make exactly one "
+            "process.execute Tool Call using the following complete arguments object without "
+            f"changing any field or value: {arguments}. Do not make exploratory or additional "
+            "Capability calls. Its real accepted, progress, and "
             "terminal lifecycle can be verified. Do not claim completion unless every operation "
             "really ran. Once those operations and Artifact collection have succeeded, stop "
             "executing commands and summarize; do not add redundant verification commands.",

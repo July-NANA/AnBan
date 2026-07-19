@@ -22,6 +22,7 @@
     "acceptance:subagent": "python -m scripts.acceptance.check_subagent_lifecycle",
     "acceptance:webhook": "python -m scripts.acceptance.check_webhook_ingress",
     "acceptance:schedule": "python -m scripts.acceptance.check_schedules",
+    "acceptance:automation": "python -m scripts.acceptance.check_schedule_dispatch",
     "acceptance:e2e": "python -m scripts.acceptance.check_cli_e2e",
     "acceptance:p1-main-agent": "python -m scripts.acceptance.check_p1_main_agent",
     "acceptance:p1": "pnpm check && pnpm build && pnpm run doctor && python -m scripts.doctor --online && pnpm run acceptance:persistence && pnpm run acceptance:model && pnpm run acceptance:capability && pnpm run acceptance:p1-main-agent && pnpm run acceptance:runtime && pnpm run acceptance:security",

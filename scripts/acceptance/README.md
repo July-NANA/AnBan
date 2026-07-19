@@ -37,8 +37,8 @@ These commands fail closed and emit only bounded evidence:
 - `pnpm run acceptance:interaction-gateway`: D25 real Provider/PostgreSQL acceptance. Three
   changed direct-answer Task objects enter the ordinary Application from distinct logical Adapter
   sources, create independent durable Runs, and reconstruct one `interaction.routed` Audit fact
-  through new query Applications. Async-result, schedule, and unknown-resume reverse
-  inputs fail explicitly without creating a Run; their owned execution remains D27-D28.
+  through new query Applications. Async-result, unattested schedule, and unknown-resume reverse
+  inputs fail explicitly without creating a Run; their owned execution remains Adapter-governed.
 - `pnpm run acceptance:interaction-inbox`: D26 real Provider/PostgreSQL acceptance. Three changed
   task objects and logical sources each create one Run; a fresh Application redelivers the same
   randomized identity and reconstructs that Run without replay. Fresh queries reconcile two
@@ -83,6 +83,12 @@ These commands fail closed and emit only bounded evidence:
   Application and CLI queries reconcile identity, civil time, and safe content hashes. Invalid
   Cron, timezone, interval, and duplicate name fail without a partial row. The Gate proves D32
   creates no Run or inbox delivery; worker dispatch remains D33.
+- `pnpm run acceptance:automation`: D33 real CLI/Provider/PostgreSQL Schedule acceptance. Three
+  randomized timezone-aware daily definitions become due together and three fresh worker processes
+  contend for them. Exactly one occurrence, inbox delivery, and successful Run per definition is
+  reconstructed through a fresh Application with ordered `schedule.occurrence_dispatched` Audit
+  evidence. A delayed Interval proves missed-run `skip` creates no Run; deterministic tests cover
+  lease recovery, restart redelivery, overlap, catch-up-once, and forged-attestation rejection.
 - `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
   ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three

@@ -177,7 +177,7 @@ async def reverse_cases(first: InboxVariant, first_interaction_id: InteractionId
         unsupported = InteractionEnvelope.from_external(
             {
                 "input_kind": "schedule_occurrence",
-                "content": "A valid but not-yet-routable schedule delivery.",
+                "content": "An untrusted schedule delivery without Adapter attestation.",
                 "correlation": {
                     "deduplication_key": {
                         "purpose": "deduplication",
@@ -191,7 +191,7 @@ async def reverse_cases(first: InboxVariant, first_interaction_id: InteractionId
         try:
             await application.interactions.submit(unsupported)
         except AnbanError as exc:
-            if exc.info.details.root.get("reason") != "new_work_input_unavailable":
+            if exc.info.details.root.get("reason") != "schedule_attestation_incomplete":
                 raise InteractionInboxAcceptanceError(
                     "unsupported input used an unexpected failure category"
                 ) from None

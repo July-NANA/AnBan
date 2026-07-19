@@ -83,7 +83,7 @@ async def reject_later_routes(marker: str) -> dict[str, object]:
         (
             {"input_kind": "schedule_occurrence", "content": "Bounded schedule occurrence."},
             "schedule.adapter",
-            "new_work_input_unavailable",
+            "schedule_attestation_incomplete",
         ),
         (
             {

@@ -23,6 +23,8 @@ from anban.persistence.models import (
     ExecutionRunRecord,
     InteractionInboxRecord,
     NodeRunRecord,
+    ScheduleOccurrenceRecord,
+    ScheduleRecord,
     TaskRecord,
 )
 
@@ -39,6 +41,8 @@ EXPECTED_TABLES = {
     "context_summaries",
     "context_summary_entries",
     "interaction_inbox",
+    "schedules",
+    "schedule_occurrences",
 }
 
 
@@ -228,6 +232,63 @@ async def accept_schema() -> None:
                         last_disposition="accepted",
                     )
                 )
+                schedule_id = uuid4()
+                await connection.execute(
+                    insert(ScheduleRecord).values(
+                        id=schedule_id,
+                        name=f"migration-{schedule_id.hex[:12]}",
+                        kind="interval",
+                        timezone="UTC",
+                        content="durable migration schedule",
+                        every_seconds=60,
+                        missed_policy="skip",
+                        overlap_policy="skip",
+                        anchor_at=now,
+                        next_occurrence_at=now + timedelta(minutes=1),
+                        created_at=now,
+                    )
+                )
+                await connection.execute(
+                    insert(ScheduleOccurrenceRecord).values(
+                        id=uuid4(),
+                        schedule_id=schedule_id,
+                        interaction_id=uuid4(),
+                        scheduled_for=now + timedelta(minutes=1),
+                        status="skipped",
+                        missed_count=2,
+                        attempt_count=1,
+                        claimed_at=now + timedelta(minutes=2),
+                        lease_until=now + timedelta(minutes=7),
+                        finished_at=now + timedelta(minutes=2),
+                    )
+                )
+                await connection.execute(
+                    insert(ScheduleOccurrenceRecord).values(
+                        id=uuid4(),
+                        schedule_id=schedule_id,
+                        interaction_id=uuid4(),
+                        scheduled_for=now + timedelta(minutes=3),
+                        status="claimed",
+                        missed_count=0,
+                        attempt_count=1,
+                        claimed_at=now + timedelta(minutes=3),
+                        lease_until=now + timedelta(minutes=8),
+                    )
+                )
+                await expect_integrity_failure(
+                    connection,
+                    insert(ScheduleOccurrenceRecord).values(
+                        id=uuid4(),
+                        schedule_id=schedule_id,
+                        interaction_id=uuid4(),
+                        scheduled_for=now + timedelta(minutes=4),
+                        status="claimed",
+                        missed_count=0,
+                        attempt_count=1,
+                        claimed_at=now + timedelta(minutes=4),
+                        lease_until=now + timedelta(minutes=9),
+                    ),
+                )
 
                 await expect_integrity_failure(
                     connection,
@@ -386,7 +447,7 @@ def main() -> int:
     print(
         "migration schema acceptance: PASS - head, tables, statuses, relationships, event order, "
         "Checkpoint correlation, parent/child delegation, inbox deduplication, Node output shape, "
-        "Context scope and Secret constraints"
+        "Context scope, Secret constraints, and Schedule occurrence claim uniqueness"
     )
     return 0
 

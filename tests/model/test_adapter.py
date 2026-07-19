@@ -359,12 +359,6 @@ def tool_request(*, repair_attempt: int = 0) -> ModelRequest:
             False,
         ),
         (
-            {"role": "assistant", "content": None, "tool_calls": [native_call()]},
-            "stop",
-            "invalid_finish_reason",
-            True,
-        ),
-        (
             {
                 "role": "assistant",
                 "content": None,
@@ -422,6 +416,41 @@ async def test_whitespace_content_with_calls_is_safe_provider_normalization() ->
     assert turn.tool_calls[0].arguments == {"path": "a.txt"}
     assert turn.metadata.root["response_variant"] == "whitespace_content_and_decoded_arguments"
     assert turn.metadata.root["content_present"] is True
+
+
+@pytest.mark.parametrize("finish_reason", ["stop", "length", "content_filter"])
+async def test_valid_native_calls_are_authoritative_over_companion_finish_reason(
+    finish_reason: str,
+) -> None:
+    turn = await adapter(
+        lambda request: response(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [native_call(arguments={"path": "a.txt"})],
+            },
+            finish_reason=finish_reason,
+        )
+    ).complete(tool_request())
+
+    assert turn.finish_reason == "tool_calls"
+    assert turn.tool_calls[0].arguments == {"path": "a.txt"}
+
+
+async def test_length_finished_tool_call_with_truncated_arguments_fails_closed() -> None:
+    with pytest.raises(AnbanError) as failure:
+        await adapter(
+            lambda request: response(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [native_call(arguments='{"path":')],
+                },
+                finish_reason="length",
+            )
+        ).complete(tool_request())
+
+    assert failure.value.info.details.root["diagnostic_reason"] == "invalid_arguments_json"
 
 
 async def test_nonempty_content_with_valid_calls_is_ignored_without_raw_retention() -> None:

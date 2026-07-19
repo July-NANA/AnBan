@@ -272,8 +272,6 @@ def normalize_response(
             raise _invalid("missing_tool_call_id", diagnostic, request, transport_retry_count)
         if not diagnostic.function_name_present:
             raise _invalid("missing_function_name", diagnostic, request, transport_retry_count)
-        if finish_reason != "tool_calls":
-            raise _invalid("invalid_finish_reason", diagnostic, request, transport_retry_count)
         identifiers = [str(_call_values(call)[1]) for call in calls]
         if len(identifiers) != len(set(identifiers)):
             raise _invalid("duplicate_tool_call_id", diagnostic, request, transport_retry_count)

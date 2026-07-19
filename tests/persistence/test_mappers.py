@@ -120,6 +120,18 @@ def test_every_domain_record_round_trips_through_storage_model() -> None:
     assert event_domain(event_record(event)) == event
 
 
+def test_delegated_run_relationship_round_trips_through_storage_model() -> None:
+    run = ExecutionRun(
+        id=new_execution_run_id(),
+        task_id=new_task_id(),
+        parent_run_id=new_execution_run_id(),
+        parent_invocation_id=new_capability_invocation_id(),
+        delegation_depth=2,
+    )
+
+    assert run_domain(run_record(run)) == run
+
+
 def test_context_records_round_trip_with_ordered_summary_coverage() -> None:
     task_id = new_task_id()
     entries = tuple(

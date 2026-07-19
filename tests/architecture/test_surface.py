@@ -43,6 +43,7 @@ APPROVED_ADAPTER_TYPES = {
     "SQLAlchemyUnitOfWorkFactory",
 }
 APPROVED_CAPABILITY_HANDLERS = {
+    "AgentDelegateCapability",
     "McpToolCapability",
     "MemoryContextCapability",
     "ProcessCapability",

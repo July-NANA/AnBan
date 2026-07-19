@@ -64,6 +64,13 @@ These commands fail closed and emit only bounded evidence:
   through fresh Applications. Reconnect preserves logical identity; malformed protocol and an
   unavailable command fail closed. Deterministic MCP tests additionally cover schema rejection,
   timeout, cancellation, Tool error, output bounds, and protected-value boundaries.
+- `pnpm run acceptance:subagent`: D30 real Provider/PostgreSQL/Process/Sub-agent acceptance. Three
+  randomized parent Runs delegate one independently durable child Run through the ordinary
+  production Runtime. Each child performs a real Process side effect and owns its Artifact. A
+  fresh Application consumes a correlated `SUBAGENT_RESULT` and aggregates the child outcome
+  without replay; fresh queries reconcile parent linkage, depth, Checkpoint, inbox, Audit, Trace,
+  and provenance. Wrong-kind, duplicate, unknown, and terminal deliveries fail closed or
+  deduplicate. Deterministic tests additionally cover child failure and parent cancellation.
 - `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
   ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three

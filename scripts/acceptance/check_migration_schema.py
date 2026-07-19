@@ -86,6 +86,7 @@ async def accept_schema() -> None:
                 run_one, run_two = uuid4(), uuid4()
                 node_one = uuid4()
                 invocation_one = uuid4()
+                child_run = uuid4()
                 checkpoint_one = uuid4()
                 await connection.execute(
                     insert(TaskRecord),
@@ -143,6 +144,18 @@ async def accept_schema() -> None:
                         capability_name="process.execute",
                         status="requested",
                         requested_at=now,
+                        safe_metadata={},
+                    )
+                )
+                await connection.execute(
+                    insert(ExecutionRunRecord).values(
+                        id=child_run,
+                        task_id=task_two,
+                        parent_run_id=run_one,
+                        parent_invocation_id=invocation_one,
+                        delegation_depth=1,
+                        status="created",
+                        created_at=now,
                         safe_metadata={},
                     )
                 )
@@ -263,6 +276,32 @@ async def accept_schema() -> None:
                 )
                 await expect_integrity_failure(
                     connection,
+                    insert(ExecutionRunRecord).values(
+                        id=uuid4(),
+                        task_id=task_two,
+                        parent_run_id=run_two,
+                        parent_invocation_id=invocation_one,
+                        delegation_depth=1,
+                        status="created",
+                        created_at=now,
+                        safe_metadata={},
+                    ),
+                )
+                await expect_integrity_failure(
+                    connection,
+                    insert(ExecutionRunRecord).values(
+                        id=uuid4(),
+                        task_id=task_two,
+                        parent_run_id=run_one,
+                        parent_invocation_id=invocation_one,
+                        delegation_depth=0,
+                        status="created",
+                        created_at=now,
+                        safe_metadata={},
+                    ),
+                )
+                await expect_integrity_failure(
+                    connection,
                     insert(CapabilityInvocationRecord).values(
                         id=uuid4(),
                         run_id=run_two,
@@ -346,8 +385,8 @@ def main() -> int:
         return 1
     print(
         "migration schema acceptance: PASS - head, tables, statuses, relationships, event order, "
-        "Checkpoint correlation, inbox deduplication, Node output shape, Context scope and "
-        "Secret constraints"
+        "Checkpoint correlation, parent/child delegation, inbox deduplication, Node output shape, "
+        "Context scope and Secret constraints"
     )
     return 0
 

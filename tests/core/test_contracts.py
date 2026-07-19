@@ -102,6 +102,42 @@ def test_domain_graph_serializes_and_restores_relationships() -> None:
     assert event.artifact_id == artifact.id
 
 
+def test_delegated_run_requires_complete_parent_identity_and_bounded_depth() -> None:
+    parent_run_id = new_execution_run_id()
+    parent_invocation_id = new_capability_invocation_id()
+    child = ExecutionRun(
+        id=new_execution_run_id(),
+        task_id=new_task_id(),
+        parent_run_id=parent_run_id,
+        parent_invocation_id=parent_invocation_id,
+        delegation_depth=1,
+    )
+
+    assert ExecutionRun.model_validate_json(child.model_dump_json()) == child
+    with pytest.raises(ValidationError, match="identity must be complete"):
+        ExecutionRun(
+            id=new_execution_run_id(),
+            task_id=new_task_id(),
+            parent_run_id=parent_run_id,
+            delegation_depth=1,
+        )
+    with pytest.raises(ValidationError, match="disagrees with depth"):
+        ExecutionRun(
+            id=new_execution_run_id(),
+            task_id=new_task_id(),
+            parent_run_id=parent_run_id,
+            parent_invocation_id=parent_invocation_id,
+        )
+    with pytest.raises(ValidationError, match="parent itself"):
+        ExecutionRun(
+            id=parent_run_id,
+            task_id=new_task_id(),
+            parent_run_id=parent_run_id,
+            parent_invocation_id=parent_invocation_id,
+            delegation_depth=1,
+        )
+
+
 def test_checkpoint_requires_correlated_waiting_and_terminal_state() -> None:
     _, run, node, invocation, _, _ = domain_records()
     checkpoint = Checkpoint(

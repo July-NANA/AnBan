@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 from pydantic import JsonValue
 
 from anban.capability import (
+    AgentDelegateCapability,
     CapabilityDescriptor,
     CapabilityProgress,
     CapabilityProgressStatus,
@@ -16,6 +18,7 @@ from anban.capability import (
     CapabilityResultStatus,
     InventoryKind,
     InvocationContext,
+    UnifiedCapabilityInventory,
 )
 from anban.core import AnbanError, CheckpointStatus, ContextScope, SafeMetadata
 from anban.core.ids import new_interaction_id
@@ -32,6 +35,7 @@ from anban.interaction import (
 from anban.model import ModelTurn, ToolCall
 from anban.runtime import (
     AgentOutcomeStatus,
+    CapabilitySufficiencyEvaluator,
     ExecutionQueryService,
     ExecutionStrategy,
     PersistentRuntime,
@@ -408,3 +412,134 @@ async def test_protocol_and_subagent_signals_share_one_result_delivery_path(
     trace = await ExecutionQueryService(factory).trace(waiting.run_id)
     assert trace.complete is True
     assert trace.inconsistencies == ()
+
+
+async def test_subagent_result_recovers_real_delegated_child_run() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    objective = "Independently complete one bounded changed child objective."
+    child_final = "The independently durable child completed its bounded objective."
+    parent_final = "The parent consumed the authoritative child result after restart."
+    initial_delegate = AgentDelegateCapability(factory)
+    initial_registry = CapabilityRegistry((initial_delegate,))
+    initial_runtime = PersistentRuntime(
+        TransactionCheckingModel(
+            factory,
+            [
+                assessment_turn(ExecutionStrategy.DELEGATE, "agent.delegate"),
+                ModelTurn(
+                    tool_calls=(
+                        ToolCall(
+                            id="delegate-real-child",
+                            name="agent.delegate",
+                            arguments={"objective": objective},
+                        ),
+                    ),
+                    finish_reason="tool_calls",
+                ),
+                assessment_turn(ExecutionStrategy.DIRECT_ANSWER, ""),
+                final_turn(child_final),
+                completion_turn(final_text=child_final),
+            ],
+        ),
+        initial_registry,
+        factory,
+        inventory=UnifiedCapabilityInventory(initial_registry, model_available=True),
+        sufficiency=CapabilitySufficiencyEvaluator(
+            UnifiedCapabilityInventory(initial_registry, model_available=True)
+        ),
+        response_repair_retries=0,
+    )
+    initial_delegate.bind(initial_runtime.start_child)
+    initial = InteractionService(initial_runtime, unit_of_work=factory)
+
+    waiting = await initial.start_async(
+        InteractionEnvelope(
+            id=new_interaction_id(),
+            content="Coordinate one independently durable child and await its result.",
+        )
+    )
+    assert isinstance(waiting, CorrelatedWaitingExecution)
+    child = None
+    for _ in range(500):
+        children = tuple(
+            run for run in factory.store.runs.values() if run.parent_run_id == waiting.run_id
+        )
+        if children and children[0].status.value not in {"created", "running"}:
+            child = children[0]
+            break
+        await asyncio.sleep(0)
+    assert child is not None
+    await initial.detach_async(waiting.checkpoint_id)
+    await initial_delegate.aclose()
+
+    restarted_delegate = AgentDelegateCapability(factory)
+    restarted_registry = CapabilityRegistry((restarted_delegate,))
+    restarted_model = TransactionCheckingModel(
+        factory,
+        [
+            assessment_turn(ExecutionStrategy.DIRECT_ANSWER, ""),
+            final_turn(parent_final),
+            completion_turn(final_text=parent_final),
+        ],
+    )
+    restarted_runtime = PersistentRuntime(
+        restarted_model,
+        restarted_registry,
+        factory,
+        inventory=UnifiedCapabilityInventory(restarted_registry, model_available=True),
+        sufficiency=CapabilitySufficiencyEvaluator(
+            UnifiedCapabilityInventory(restarted_registry, model_available=True)
+        ),
+        response_repair_retries=0,
+    )
+    restarted_delegate.bind(restarted_runtime.start_child)
+    restarted = InteractionService(restarted_runtime, unit_of_work=factory)
+    signal = result_signal(
+        waiting,
+        InteractionInputKind.SUBAGENT_RESULT,
+        "The independently durable child result is ready for retrieval.",
+        "real-child-ready",
+        source="subagent.adapter",
+    )
+
+    result = await restarted.submit(signal)
+    calls = restarted_model.calls
+    duplicate = await restarted.submit(
+        result_signal(
+            waiting,
+            InteractionInputKind.SUBAGENT_RESULT,
+            signal.content,
+            "real-child-ready",
+            source="subagent.adapter",
+        )
+    )
+
+    assert result.outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert result.outcome.final_text == parent_final
+    assert duplicate.run_id == result.run_id
+    assert restarted_model.calls == calls
+    async with factory() as unit:
+        parent = await unit.executions.load_run(waiting.run_id)
+        persisted_child = await unit.executions.load_run(child.id)
+    assert parent is not None
+    assert persisted_child is not None
+    assert persisted_child.run.parent_run_id == parent.run.id
+    assert persisted_child.run.parent_invocation_id == waiting.invocation_id
+    assert persisted_child.run.delegation_depth == 1
+    assert parent.invocations[0].status.value == "succeeded"
+    assert parent.checkpoints[0].status is CheckpointStatus.COMPLETED
+    received = tuple(
+        event for event in parent.events if event.event_type == "interaction.result_received"
+    )
+    assert len(received) == 1
+    assert received[0].metadata.root["inventory_kind"] == "sub_agent"
+    assert received[0].metadata.root["capability_name"] == "agent.delegate"
+    assert received[0].metadata.root["side_effect_replayed"] is False
+    parent_trace = await ExecutionQueryService(factory).trace(waiting.run_id)
+    projected = next(
+        event for event in parent_trace.audit if event.event_type == "interaction.result_received"
+    )
+    assert projected.metadata.root["inventory_kind"] == "sub_agent"
+    assert parent_trace.complete is True
+    assert (await ExecutionQueryService(factory).trace(child.id)).complete is True
+    await restarted_delegate.aclose()

@@ -63,6 +63,11 @@ from anban.runtime.observability import (
     RunObservability,
     TraceEntry,
 )
+from anban.runtime.schedules import (
+    ScheduleService,
+    next_cron_occurrence,
+    next_interval_occurrence,
+)
 from anban.runtime.service import PersistentChatSession, PersistentRuntime
 from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
 
@@ -100,6 +105,7 @@ __all__ = [
     "RunObservability",
     "RunDetail",
     "RunSummary",
+    "ScheduleService",
     "ReplanDecision",
     "SkillAcquisitionJustification",
     "SufficiencyCandidate",
@@ -121,4 +127,6 @@ __all__ = [
     "TaskRouteEvaluator",
     "TraceEntry",
     "WaitingExecution",
+    "next_cron_occurrence",
+    "next_interval_occurrence",
 ]

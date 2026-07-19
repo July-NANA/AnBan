@@ -53,6 +53,9 @@ anban context task <task-id>
 anban context session <session-id>
 anban capabilities list
 anban webhook serve
+anban schedule create-cron <name> <expression> <timezone> <content...>
+anban schedule create-interval <name> <seconds> <timezone> <content...>
+anban schedules
 python -m scripts.doctor
 python -m scripts.doctor --online
 python -m scripts.doctor --web

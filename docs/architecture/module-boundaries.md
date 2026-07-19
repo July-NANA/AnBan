@@ -33,7 +33,8 @@ remains later scope.
 ## Core
 
 Owns authoritative Task, ExecutionRun, NodeRun, CapabilityInvocation, Checkpoint, Artifact, Event,
-Interaction inbox lifecycle, bounded Task/Session Context, and `TaskGraphSpec` identity-free
+Interaction inbox lifecycle, bounded Task/Session Context, immutable Schedule definitions, and
+`TaskGraphSpec` identity-free
 structured graph vocabulary. A graph spec
 contains only closed node/edge kinds, explicit dependencies, input/output bindings, entry and
 terminal identities, nested subgraphs, and hard budgets. Its validator rejects hidden cycles,
@@ -87,6 +88,9 @@ Delegation creates an independent child Task/Run through this same Runtime rathe
 sub-agent scheduler. Runtime supplies system identities and depth, initializes the child durably
 before acceptance, propagates parent cancellation to an active owned child, and returns only the
 child's terminal aggregate to the shared Capability lifecycle.
+Runtime also validates bounded five-field Cron and elapsed Interval definitions and computes the
+first UTC occurrence from an IANA timezone-aware anchor. D32 performs no occurrence claim or
+dispatch; worker ownership and automation policy remain D33.
 
 ## Model
 
@@ -166,6 +170,9 @@ Delegated Runs add nullable parent Run/Invocation identities and a bounded depth
 unique constraint permits only one child per parent Invocation, and checks forbid partial or
 self-parent relationships. `subagent.child_created` is the durable recovery and Audit fact; child
 Artifacts stay on the child Run and are never copied into the parent as fabricated provenance.
+The `schedules` table stores immutable Cron/Interval definitions, their IANA timezone, UTC anchor,
+and first occurrence. Database checks mirror the closed Core kind fields and interval bounds.
+Schedule inspection hashes content; no Run/Event is fabricated before a real occurrence fires.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
 

@@ -147,3 +147,10 @@ routes follow the existing durable inbox lifecycle: identical delivery reconstru
 Run, changed semantics conflicts, and authenticated unknown or ineligible resume becomes a durable
 rejection. `webhook.authenticated` records only bounded attestation metadata and hashes. Neither
 HTTP replay nor restart automatically retries a Model or Capability side effect.
+
+D32 validates schedule definitions before persistence. Cron accepts only a bounded strict
+five-field POSIX expression and an available IANA timezone; Interval accepts a bounded elapsed
+duration. Invalid calendar/timezone/interval input, duplicate logical name, and persistence failure
+remain explicit and cannot create a partial definition. Schedule creation emits no Run, inbox,
+Audit/Trace, or side-effect fact because no occurrence has fired. D33 owns the later worker and
+dispatch lifecycle rather than D32 fabricating successful trigger state.

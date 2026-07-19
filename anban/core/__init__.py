@@ -46,6 +46,7 @@ from anban.core.ids import (
     ExecutionRunId,
     GraphRevisionId,
     NodeRunId,
+    ScheduleId,
     SessionId,
     TaskId,
     new_artifact_id,
@@ -57,6 +58,7 @@ from anban.core.ids import (
     new_execution_run_id,
     new_graph_revision_id,
     new_node_run_id,
+    new_schedule_id,
     new_session_id,
     new_task_id,
 )
@@ -99,6 +101,7 @@ from anban.core.persistence import (
     UnitOfWork,
     UnitOfWorkFactory,
 )
+from anban.core.schedule import ScheduleDefinition, ScheduleKind
 
 __all__ = [
     "AnbanError",
@@ -146,6 +149,9 @@ __all__ = [
     "NodeRunStatus",
     "NODE_RUN_TRANSITIONS",
     "SafeMetadata",
+    "ScheduleDefinition",
+    "ScheduleId",
+    "ScheduleKind",
     "SessionContext",
     "SessionId",
     "Task",
@@ -180,6 +186,7 @@ __all__ = [
     "new_execution_run_id",
     "new_graph_revision_id",
     "new_node_run_id",
+    "new_schedule_id",
     "new_session_id",
     "new_task_id",
     "now_utc",

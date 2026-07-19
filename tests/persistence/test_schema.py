@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "context_summaries",
     "context_summary_entries",
     "interaction_inbox",
+    "schedules",
 }
 
 
@@ -39,7 +40,7 @@ def test_schema_has_only_the_authorized_authoritative_tables() -> None:
 
 
 def test_run_relationships_use_foreign_keys() -> None:
-    for table_name in EXPECTED_TABLES - {"tasks", "context_summary_entries"}:
+    for table_name in EXPECTED_TABLES - {"tasks", "context_summary_entries", "schedules"}:
         table = Base.metadata.tables[table_name]
         assert any(isinstance(item, ForeignKeyConstraint) for item in table.constraints)
 
@@ -113,9 +114,9 @@ def test_alembic_has_one_reversible_head_revision() -> None:
     configuration = Config(repository / "alembic.ini")
     scripts = ScriptDirectory.from_config(configuration)
     head = scripts.get_current_head()
-    assert head == "0010_subagent_runs"
+    assert head == "0011_schedules"
     assert len(head) <= 32
     revision = scripts.get_revision(head)
     assert revision is not None
-    assert revision.down_revision == "0009_interaction_inbox"
+    assert revision.down_revision == "0010_subagent_runs"
     assert callable(revision.module.downgrade)

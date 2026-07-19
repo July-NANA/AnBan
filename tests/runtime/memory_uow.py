@@ -19,6 +19,7 @@ from anban.core.ids import (
     GraphRevisionId,
     InteractionId,
     NodeRunId,
+    ScheduleId,
     SessionId,
     TaskId,
 )
@@ -39,6 +40,7 @@ from anban.core.models import (
     UtcDateTime,
 )
 from anban.core.persistence import ExecutionRunAggregate
+from anban.core.schedule import ScheduleDefinition
 
 
 @dataclass
@@ -70,6 +72,9 @@ class MemoryStore:
     inbox: dict[InteractionId, InteractionInboxEntry] = field(
         default_factory=lambda: dict[InteractionId, InteractionInboxEntry]()
     )
+    schedules: dict[ScheduleId, ScheduleDefinition] = field(
+        default_factory=lambda: dict[ScheduleId, ScheduleDefinition]()
+    )
 
     def copy(self) -> MemoryStore:
         return MemoryStore(
@@ -84,6 +89,7 @@ class MemoryStore:
             context_entries=dict(self.context_entries),
             context_summaries=dict(self.context_summaries),
             inbox=dict(self.inbox),
+            schedules=dict(self.schedules),
         )
 
 
@@ -91,6 +97,25 @@ class MemoryRepository:
     def __init__(self, store: MemoryStore, factory: MemoryUnitOfWorkFactory) -> None:
         self.store = store
         self.factory = factory
+
+    async def add_schedule(self, schedule: ScheduleDefinition) -> None:
+        if schedule.id in self.store.schedules or any(
+            item.name == schedule.name for item in self.store.schedules.values()
+        ):
+            raise RuntimeError("test-only duplicate schedule")
+        self.store.schedules[schedule.id] = schedule
+
+    async def get_schedule(self, schedule_id: ScheduleId) -> ScheduleDefinition | None:
+        return self.store.schedules.get(schedule_id)
+
+    async def list_schedules(self, limit: int) -> tuple[ScheduleDefinition, ...]:
+        return tuple(
+            sorted(
+                self.store.schedules.values(),
+                key=lambda schedule: (schedule.created_at, schedule.id),
+                reverse=True,
+            )[:limit]
+        )
 
     async def receive_inbox(
         self, entry: InteractionInboxEntry

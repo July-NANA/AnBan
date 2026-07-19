@@ -35,6 +35,7 @@ from anban.core.errors import ErrorCode
 from anban.core.graph import GraphRevisionStatus
 from anban.core.inbox import InteractionInboxDisposition, InteractionInboxStatus
 from anban.core.models import CapabilityInvocationStatus, CheckpointStatus, TaskStatus
+from anban.core.schedule import ScheduleKind
 
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
@@ -61,6 +62,7 @@ CONTEXT_STATES = sql_enum_values(ContextConflictState)
 GRAPH_REVISION_STATUSES = sql_enum_values(GraphRevisionStatus)
 INBOX_STATUSES = sql_enum_values(InteractionInboxStatus)
 INBOX_DISPOSITIONS = sql_enum_values(InteractionInboxDisposition)
+SCHEDULE_KINDS = sql_enum_values(ScheduleKind)
 
 
 class Base(DeclarativeBase):
@@ -71,6 +73,40 @@ class SafeMetadataMixin:
     safe_metadata: Mapped[dict[str, object]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
+
+
+class ScheduleRecord(Base):
+    __tablename__ = "schedules"
+    __table_args__ = (
+        CheckConstraint(f"kind IN ({SCHEDULE_KINDS})", name="kind_allowed"),
+        CheckConstraint("char_length(name) BETWEEN 1 AND 64", name="name_bounded"),
+        CheckConstraint("char_length(timezone) BETWEEN 1 AND 128", name="timezone_bounded"),
+        CheckConstraint("char_length(content) BETWEEN 1 AND 32768", name="content_bounded"),
+        CheckConstraint(
+            "(kind = 'cron' AND cron_expression IS NOT NULL AND every_seconds IS NULL) OR "
+            "(kind = 'interval' AND cron_expression IS NULL AND every_seconds IS NOT NULL)",
+            name="kind_fields",
+        ),
+        CheckConstraint(
+            "every_seconds IS NULL OR every_seconds BETWEEN 1 AND 31536000",
+            name="interval_bounded",
+        ),
+        CheckConstraint("next_occurrence_at > anchor_at", name="next_after_anchor"),
+        CheckConstraint("created_at <= anchor_at", name="created_before_anchor"),
+        UniqueConstraint("name", name="uq_schedules_name"),
+        Index("ix_schedules_next_occurrence_at", "next_occurrence_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(128), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    cron_expression: Mapped[str | None] = mapped_column(String(256))
+    every_seconds: Mapped[int | None] = mapped_column(BigInteger)
+    anchor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    next_occurrence_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class InteractionInboxRecord(Base):

@@ -17,6 +17,7 @@ GraphRevisionId = NewType("GraphRevisionId", UUID)
 CheckpointId = NewType("CheckpointId", UUID)
 ContextEntryId = NewType("ContextEntryId", UUID)
 ContextSummaryId = NewType("ContextSummaryId", UUID)
+ScheduleId = NewType("ScheduleId", UUID)
 
 
 def new_interaction_id() -> InteractionId:
@@ -65,3 +66,7 @@ def new_context_entry_id() -> ContextEntryId:
 
 def new_context_summary_id() -> ContextSummaryId:
     return ContextSummaryId(uuid4())
+
+
+def new_schedule_id() -> ScheduleId:
+    return ScheduleId(uuid4())

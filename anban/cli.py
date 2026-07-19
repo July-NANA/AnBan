@@ -20,6 +20,7 @@ from anban.application import (
     build_query_application,
     build_webhook_http_application,
 )
+from anban.cli_schedule import configure_schedule_commands, run_schedule_command
 from anban.core.errors import AnbanError, ErrorCategory, ErrorCode, ErrorInfo
 from anban.core.ids import CheckpointId, ExecutionRunId, SessionId, TaskId, new_interaction_id
 from anban.interaction import (
@@ -110,6 +111,7 @@ def parser() -> argparse.ArgumentParser:
     )
     capability_describe.add_argument("key")
     add_json_option(capability_describe)
+    configure_schedule_commands(commands, add_json_option)
     webhook = commands.add_parser("webhook", help="Run authenticated Webhook ingress.")
     webhook_commands = webhook.add_subparsers(dest="webhook_command", required=True)
     webhook_serve = webhook_commands.add_parser("serve", help="Serve configured endpoints.")
@@ -651,6 +653,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 date_header=False,
             )
             return EXIT_SUCCESS
+        if arguments.command in {"schedule", "schedules"}:
+            return asyncio.run(run_schedule_command(arguments, json_output=json_output))
         if arguments.command == "run":
             values = list(arguments.values)
             if values[0] == "show":

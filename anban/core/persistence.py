@@ -18,6 +18,7 @@ from anban.core.ids import (
     GraphRevisionId,
     InteractionId,
     NodeRunId,
+    ScheduleId,
     SessionId,
     TaskId,
 )
@@ -33,6 +34,7 @@ from anban.core.models import (
     Task,
     UtcDateTime,
 )
+from anban.core.schedule import ScheduleDefinition
 
 
 @dataclass(frozen=True)
@@ -157,6 +159,12 @@ class ExecutionRepository(Protocol):
     async def update_inbox(self, entry: InteractionInboxEntry) -> None: ...
 
     async def list_inbox(self, limit: int) -> tuple[InteractionInboxEntry, ...]: ...
+
+    async def add_schedule(self, schedule: ScheduleDefinition) -> None: ...
+
+    async def get_schedule(self, schedule_id: ScheduleId) -> ScheduleDefinition | None: ...
+
+    async def list_schedules(self, limit: int) -> tuple[ScheduleDefinition, ...]: ...
 
 
 class UnitOfWork(Protocol):

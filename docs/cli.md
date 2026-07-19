@@ -2,7 +2,7 @@
 
 The production CLI commands include `workspace init`, `run`, `chat`, `runs`, `inbox`, `trace`,
 `artifacts`, `context task`, `context session`, the v0.5 `capabilities` inspection group, and
-`webhook serve`. Query and execution commands support `--json`. Run failures use stable error
+`webhook serve`, and the schedule commands. Query and execution commands support `--json`. Run failures use stable error
 codes; Trace, Artifact, and Context queries work from a new database-only Application.
 
 ## Webhook service
@@ -55,6 +55,24 @@ Authentication completes before inbox admission. Authenticated deliveries then u
 durable deduplication, routing, Context, Checkpoint, Runtime, Model, Capability, Audit, and Trace
 paths as other Interaction input. Identical event delivery reconstructs its terminal Run across
 server restart without replay; changed semantics under the same identity conflict.
+
+## Schedule definitions
+
+`anban schedule create-cron NAME EXPRESSION TIMEZONE CONTENT...` creates an immutable durable
+five-field POSIX Cron definition. The expression should be quoted so the shell passes it as one
+argument. `TIMEZONE` must be an available IANA name such as `Asia/Shanghai` or
+`America/New_York`; the first civil-time occurrence after creation is normalized to UTC while the
+timezone name is retained for daylight-saving reconstruction.
+
+`anban schedule create-interval NAME SECONDS TIMEZONE CONTENT...` creates an elapsed-time interval
+from one second through one year. `anban schedules [--limit N]` and
+`anban schedule show SCHEDULE_ID` reconstruct definitions from PostgreSQL. Their projection emits
+the logical name, kind, timezone, expression/interval, timestamps, and content hash/size, never the
+raw future Interaction content.
+
+D32 defines and persists schedules only. It does not run a worker, claim an occurrence, create a
+Run, deliver an Interaction, or execute business work. Trigger dispatch, overlap/missed-run policy,
+and schedule create/resume behavior belong to D33.
 
 `anban inbox [--limit N]` lists bounded durable delivery facts from a new database-only
 Application: Interaction identity, logical source/kind/route, content hash, lifecycle status,

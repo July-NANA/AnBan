@@ -22,6 +22,7 @@ from anban.core.ids import (
     GraphRevisionId,
     InteractionId,
     NodeRunId,
+    ScheduleId,
     SessionId,
     TaskId,
 )
@@ -54,6 +55,7 @@ from anban.core.models import (
     UtcDateTime,
 )
 from anban.core.persistence import ExecutionRunAggregate
+from anban.core.schedule import ScheduleDefinition
 from anban.persistence.inbox_mapper import inbox_domain, inbox_record, replace_inbox_record
 from anban.persistence.mappers import (
     artifact_domain,
@@ -90,8 +92,10 @@ from anban.persistence.models import (
     GraphRevisionRecord,
     InteractionInboxRecord,
     NodeRunRecord,
+    ScheduleRecord,
     TaskRecord,
 )
+from anban.persistence.schedule_mapper import schedule_domain, schedule_record
 
 
 def missing_record(entity: str, record_id: UUID) -> AnbanError:
@@ -128,6 +132,22 @@ class SQLAlchemyExecutionRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def add_schedule(self, schedule: ScheduleDefinition) -> None:
+        self._session.add(schedule_record(schedule))
+        await self._session.flush()
+
+    async def get_schedule(self, schedule_id: ScheduleId) -> ScheduleDefinition | None:
+        record = await self._session.get(ScheduleRecord, schedule_id)
+        return None if record is None else schedule_domain(record)
+
+    async def list_schedules(self, limit: int) -> tuple[ScheduleDefinition, ...]:
+        records = await self._session.scalars(
+            select(ScheduleRecord)
+            .order_by(ScheduleRecord.created_at.desc(), ScheduleRecord.id.desc())
+            .limit(limit)
+        )
+        return tuple(schedule_domain(record) for record in records.all())
 
     async def receive_inbox(
         self, entry: InteractionInboxEntry

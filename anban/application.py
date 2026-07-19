@@ -29,6 +29,7 @@ from anban.runtime import (
     DynamicTaskGraphBuilder,
     ExecutionQueryService,
     PersistentRuntime,
+    ScheduleService,
     TaskGraphExecutor,
     TaskRouteEvaluator,
 )
@@ -39,6 +40,7 @@ class Application:
     """Owned production resources and the Interaction entry point."""
 
     interactions: InteractionService
+    schedules: ScheduleService
     inventory: CapabilityInventoryPort
     sufficiency: CapabilitySufficiencyEvaluator
     graph_builder: DynamicTaskGraphBuilder
@@ -58,6 +60,7 @@ class QueryApplication:
     """Database-only resources for restart-safe inspection commands."""
 
     interactions: InteractionService
+    schedules: ScheduleService
     _engine: AsyncEngine
 
     async def close(self) -> None:
@@ -157,6 +160,7 @@ async def build_application() -> Application:
         queries = ExecutionQueryService(unit_of_work)
         return Application(
             InteractionService(runtime, queries, unit_of_work),
+            ScheduleService(unit_of_work),
             inventory,
             sufficiency,
             graph_builder,
@@ -176,7 +180,11 @@ async def build_query_application() -> QueryApplication:
     engine = create_database_engine(configuration.database.require("development"))
     unit_of_work = SQLAlchemyUnitOfWorkFactory(engine)
     queries = ExecutionQueryService(unit_of_work)
-    return QueryApplication(InteractionService(None, queries, unit_of_work), engine)
+    return QueryApplication(
+        InteractionService(None, queries, unit_of_work),
+        ScheduleService(unit_of_work),
+        engine,
+    )
 
 
 async def build_inventory_application() -> InventoryApplication:

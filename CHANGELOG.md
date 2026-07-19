@@ -8,6 +8,8 @@ All notable changes are documented here.
 
 - Authenticated HMAC-SHA256 Webhook ingress for new and eligible-resume work through the durable
   Interaction inbox, with restart-safe deduplication and a real HTTP acceptance Gate.
+- Immutable PostgreSQL Cron/Interval schedule definitions with strict five-field validation, IANA
+  timezone/DST calculation, safe CLI inspection, and fresh-process acceptance.
 - Uniform package/Workspace `SKILL.md` discovery and ordinary packaged `@anban/clawhub` Skill;
   installation metadata is intentionally ignored by production.
 - General PATH/absolute executable Process with inherited environment, env overlays, cwd, stdin,
@@ -58,5 +60,5 @@ All notable changes are documented here.
   restart.
 - Process uses the launching OS user's permissions; program allowlists, sandboxing, approvals,
   network isolation, and fine-grained file permissions are deferred.
-- Browser, schedules, policy/approval systems, strong sandboxing, general replay, and
+- Browser, schedule dispatch, policy/approval systems, strong sandboxing, general replay, and
   routing/fallback are not implemented.

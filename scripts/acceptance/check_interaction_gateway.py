@@ -81,11 +81,6 @@ async def reject_later_routes(marker: str) -> dict[str, object]:
             "new_work_input_unavailable",
         ),
         (
-            {"input_kind": "webhook_event", "content": "Bounded webhook event."},
-            "webhook.adapter",
-            "new_work_input_unavailable",
-        ),
-        (
             {"input_kind": "schedule_occurrence", "content": "Bounded schedule occurrence."},
             "schedule.adapter",
             "new_work_input_unavailable",

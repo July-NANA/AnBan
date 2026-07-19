@@ -37,7 +37,7 @@ These commands fail closed and emit only bounded evidence:
 - `pnpm run acceptance:interaction-gateway`: D25 real Provider/PostgreSQL acceptance. Three
   changed direct-answer Task objects enter the ordinary Application from distinct logical Adapter
   sources, create independent durable Runs, and reconstruct one `interaction.routed` Audit fact
-  through new query Applications. Async-result, Webhook, schedule, and unknown-resume reverse
+  through new query Applications. Async-result, schedule, and unknown-resume reverse
   inputs fail explicitly without creating a Run; their owned execution remains D27-D28.
 - `pnpm run acceptance:interaction-inbox`: D26 real Provider/PostgreSQL acceptance. Three changed
   task objects and logical sources each create one Run; a fresh Application redelivers the same
@@ -71,6 +71,13 @@ These commands fail closed and emit only bounded evidence:
   without replay; fresh queries reconcile parent linkage, depth, Checkpoint, inbox, Audit, Trace,
   and provenance. Wrong-kind, duplicate, unknown, and terminal deliveries fail closed or
   deduplicate. Deterministic tests additionally cover child failure and parent cancellation.
+- `pnpm run acceptance:webhook`: D31 real HTTP/Provider/PostgreSQL/Process acceptance. A randomized
+  endpoint receives signed new-work events through a real Uvicorn CLI process, then identical
+  delivery after full server restart reconstructs the terminal Run without replay. A signed event
+  resumes a detached background Process through the ordinary correlation, Context, Checkpoint,
+  and Runtime recovery path and reconciles one Artifact. Bad signature, stale timestamp, unknown
+  endpoint, conflicting replay, and authenticated unknown resume fail closed; fresh inbox,
+  Audit/Trace, and database queries verify the authentication and persistence boundary.
 - `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
   ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three

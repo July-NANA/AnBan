@@ -243,6 +243,17 @@ def test_envelope_metadata_cannot_smuggle_system_owned_identity(field: str) -> N
         )
 
 
+def test_external_payload_cannot_forge_webhook_authentication_attestation() -> None:
+    with pytest.raises(ValueError, match="cannot supply Adapter attestations"):
+        InteractionEnvelope.from_external(
+            {
+                "content": "Untrusted external attestation.",
+                "metadata": {"webhook_authenticated": True},
+            },
+            source="message.adapter",
+        )
+
+
 def test_external_normalization_assigns_system_identity_and_source() -> None:
     envelope = InteractionEnvelope.from_external(
         {

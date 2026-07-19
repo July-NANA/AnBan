@@ -176,17 +176,17 @@ async def reverse_cases(first: InboxVariant, first_interaction_id: InteractionId
 
         unsupported = InteractionEnvelope.from_external(
             {
-                "input_kind": "webhook_event",
-                "content": "A valid but not-yet-routable webhook delivery.",
+                "input_kind": "schedule_occurrence",
+                "content": "A valid but not-yet-routable schedule delivery.",
                 "correlation": {
                     "deduplication_key": {
                         "purpose": "deduplication",
-                        "namespace": "acceptance.webhook",
-                        "value": first.delivery + "-webhook",
+                        "namespace": "acceptance.schedule",
+                        "value": first.delivery + "-schedule",
                     }
                 },
             },
-            source="webhook.adapter",
+            source="schedule.adapter",
         )
         try:
             await application.interactions.submit(unsupported)

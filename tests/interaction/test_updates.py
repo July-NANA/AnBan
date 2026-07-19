@@ -175,6 +175,11 @@ def parallel_update_graph() -> TaskGraphSpec:
             "operator.adapter",
             "Use the supplied human direction and report the result concisely.",
         ),
+        (
+            InteractionInputKind.WEBHOOK_EVENT,
+            "webhook.events",
+            "Apply the authenticated event update and report the result concisely.",
+        ),
     ],
 )
 async def test_human_origin_input_survives_restart_and_completes_without_replay(

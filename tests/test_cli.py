@@ -43,6 +43,31 @@ def test_workspace_init_command_is_machine_readable_without_physical_path(
     assert str(workspace) not in str(payload)
 
 
+def test_webhook_serve_dispatches_the_production_http_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application = object()
+    calls: list[tuple[object, str, int, bool]] = []
+    monkeypatch.setattr(cli, "build_webhook_http_application", lambda: application)
+
+    def run(
+        app: object,
+        *,
+        host: str,
+        port: int,
+        access_log: bool,
+        **_: object,
+    ) -> None:
+        calls.append((app, host, port, access_log))
+
+    monkeypatch.setattr(cli.uvicorn, "run", run)
+
+    assert (
+        cli.main(["webhook", "serve", "--host", "127.0.0.1", "--port", "9123"]) == cli.EXIT_SUCCESS
+    )
+    assert calls == [(application, "127.0.0.1", 9123, False)]
+
+
 def test_run_command_dispatch_and_global_json_option(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

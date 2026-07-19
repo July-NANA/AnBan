@@ -35,6 +35,7 @@ CLI_HELP = (
     ("runs", "--help"),
     ("trace", "--help"),
     ("artifacts", "--help"),
+    ("webhook", "serve", "--help"),
 )
 
 

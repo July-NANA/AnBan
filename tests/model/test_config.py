@@ -46,6 +46,66 @@ def test_configuration_uses_allowlisted_environment_references(tmp_path: Path) -
         == policy.PROCESS_DEFAULT_TIMEOUT_DEFAULT_SECONDS
     )
     assert configuration.mcp.servers == ()
+    assert configuration.webhook.endpoints == ()
+
+
+def test_webhook_configuration_resolves_secret_reference_without_exposure(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "anban.toml").write_text(
+        CONFIG
+        + """
+[interaction.webhook]
+body_max_bytes = 8192
+clock_skew_seconds = 120
+
+[[interaction.webhook.endpoints]]
+name = "events"
+secret_env = "TEST_WEBHOOK_SECRET"
+""",
+        encoding="utf-8",
+    )
+    secret = "synthetic-webhook-secret-material-123456"
+    (tmp_path / "secrets.env").write_text(f"TEST_WEBHOOK_SECRET={secret}\n", encoding="utf-8")
+
+    configuration = load_configuration(workspace=tmp_path, environ={})
+
+    assert configuration.webhook.body_max_bytes == 8192
+    assert configuration.webhook.clock_skew_seconds == 120
+    assert configuration.webhook.endpoints[0].name == "events"
+    assert secret not in repr(configuration)
+    assert secret in configuration.protected_values()
+
+
+def test_missing_webhook_secret_reference_fails_explicitly(tmp_path: Path) -> None:
+    (tmp_path / "anban.toml").write_text(
+        CONFIG
+        + """
+[[interaction.webhook.endpoints]]
+name = "missing"
+secret_env = "MISSING_WEBHOOK_SECRET"
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "secrets.env").write_text("", encoding="utf-8")
+
+    with pytest.raises(AnbanError) as raised:
+        load_configuration(workspace=tmp_path, environ={})
+
+    assert raised.value.info.code is ErrorCode.CONFIGURATION_MISSING
+    assert raised.value.info.details.root["webhook_endpoint"] == "missing"
+
+
+def test_missing_webhook_endpoint_fails_only_when_ingress_is_required(tmp_path: Path) -> None:
+    (tmp_path / "anban.toml").write_text(CONFIG, encoding="utf-8")
+    (tmp_path / "secrets.env").write_text("", encoding="utf-8")
+    configuration = load_configuration(workspace=tmp_path, environ={})
+
+    with pytest.raises(AnbanError) as raised:
+        configuration.require_webhook()
+
+    assert raised.value.info.code is ErrorCode.CONFIGURATION_MISSING
+    assert raised.value.info.details.root["reason"] == "webhook_not_configured"
 
 
 def test_mcp_configuration_resolves_secret_references_without_exposing_values(

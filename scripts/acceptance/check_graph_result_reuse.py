@@ -66,6 +66,28 @@ def output(node_id: str, key: str) -> TaskGraphValueBinding:
     )
 
 
+def publication_objective(value: str) -> str:
+    """Build a controlled real-Process publication action for this graph Gate."""
+
+    program = f"import json;print(json.dumps({{'result': {value!r}}},separators=(',',':')))"
+    arguments = json.dumps(
+        {
+            "command": "python",
+            "args": ["-c", program],
+            "cwd": ".",
+            "background": False,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return (
+        "Make exactly one process.execute Tool Call using the following complete arguments "
+        f"object without changing any field or value: {arguments}. Use no Skill or additional "
+        "Capability call. After the real result, return exactly one JSON object with result "
+        f'equal to "{value}".'
+    )
+
+
 def supplied_graph(
     marker: str,
     count_name: str,
@@ -107,10 +129,7 @@ def supplied_graph(
         TaskGraphNode(
             id=publish_id,
             kind=TaskGraphNodeKind.ACTION,
-            objective=(
-                "Do not call a Capability. Return exactly one JSON object with result equal to "
-                f'"{variant.original_value}".'
-            ),
+            objective=publication_objective(variant.original_value),
             dependencies=(active_id,),
             inputs={"effect": output(active_id, "effect")},
             outputs=("result",),
@@ -177,10 +196,7 @@ def replacement_graph(
 ) -> TaskGraphSpec:
     values = current.model_dump(mode="json")
     node = next(item for item in values["nodes"] if item["id"] == publish_id)
-    node["objective"] = (
-        "Do not call a Capability. Publish under the supplemental requirement and return exactly "
-        f'one JSON object with result equal to "{revised_value}".'
-    )
+    node["objective"] = publication_objective(revised_value)
     return TaskGraphSpec.model_validate(values)
 
 

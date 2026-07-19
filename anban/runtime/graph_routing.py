@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from enum import StrEnum
 from typing import Self
 
@@ -40,11 +39,15 @@ _ROUTE_SCHEMA: dict[str, JsonValue] = {
     "required": ["route", "rationale", "graph_spec"],
     "additionalProperties": False,
 }
-_GRAPH_SCHEMA = json.dumps(
-    TaskGraphSpec.model_json_schema(),
-    ensure_ascii=False,
-    separators=(",", ":"),
-    sort_keys=True,
+_GRAPH_RESPONSE_GUIDANCE = (
+    "TaskGraphSpec is one closed JSON object with version, input_keys, nodes, edges, entry_node, "
+    "terminal_nodes, outputs, and budget. Nodes use the closed action, branch, loop, parallel, "
+    "join, and subgraph kinds; edges use sequence, branch, loop_body, loop_exit, loop_back, "
+    "parallel, and join. Bind inputs and graph outputs only from graph_input or node_output. "
+    "Runtime validation remains authoritative for identifiers, dependencies, control shapes, "
+    "bindings, reachability, and budgets. If the task already contains one complete valid "
+    "TaskGraphSpec JSON object, preserve that exact object as graph_spec instead of redesigning "
+    "or restating it."
 )
 _SYSTEM_INSTRUCTIONS = (
     "Select the lowest-complexity truthful Runtime path for this task. Choose fixed_agent when the "
@@ -56,13 +59,16 @@ _SYSTEM_INSTRUCTIONS = (
     f"may declare exactly one input named {TASK_REQUEST_INPUT}; no other graph input is available. "
     "Action objectives must describe real work, control flow must use the closed node and edge "
     "meanings, every loop and parallel path must be bounded, and the graph must expose a terminal "
-    "answer. Never infer execution success. Return only the closed route object. TaskGraphSpec "
-    f"schema: {_GRAPH_SCHEMA}"
+    "answer. Never infer execution success. Return only the closed route object. "
+    f"{_GRAPH_RESPONSE_GUIDANCE}"
 )
 _REPAIR_INSTRUCTIONS = (
     "The previous route response was not a valid closed routing decision or TaskGraphSpec. Decide "
-    "again from the same task, preserve the lowest-complexity rule, and return exactly the "
-    "required route, rationale, and graph_spec fields."
+    "again from the same task, preserve the lowest-complexity rule, and return only one JSON "
+    "object with exactly route, rationale, and graph_spec. Route must be fixed_agent or "
+    "task_graph, rationale must be a non-empty string, and graph_spec must be an empty object for "
+    "fixed_agent or the complete valid TaskGraphSpec for task_graph. Do not return an error, "
+    "message, or explanatory wrapper."
 )
 
 

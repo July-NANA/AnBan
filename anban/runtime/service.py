@@ -45,6 +45,7 @@ from anban.runtime.contracts import (
     AgentOutcome,
     AgentOutcomeStatus,
     ExecutionResult,
+    WaitingExecution,
 )
 from anban.runtime.graph_execution import TaskGraphExecutor
 from anban.runtime.graph_routing import (
@@ -57,7 +58,7 @@ from anban.runtime.model_persistence import PersistedModelPort
 from anban.runtime.persistence import RunPersistence
 from anban.runtime.recovery import RuntimeRecovery
 from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
-from anban.runtime.update_service import RuntimeUpdateService
+from anban.runtime.update_service import RESULT_INPUT_KINDS, RuntimeUpdateService
 
 _STORAGE_FAILURE_DETAILS = frozenset(
     {
@@ -100,7 +101,7 @@ class PersistentRuntime:
         self._graph_executor = graph_executor or TaskGraphExecutor()
         self._continuations = ContinuationManager()
         self._updates = RuntimeUpdateService(
-            model, unit_of_work, response_repair_retries=response_repair_retries
+            model, capabilities, unit_of_work, response_repair_retries=response_repair_retries
         )
 
     @property
@@ -156,14 +157,13 @@ class PersistentRuntime:
         metadata: SafeMetadata,
         received_at: UtcDateTime,
     ) -> ExecutionResult:
-        await self._updates.apply(
-            checkpoint_id,
-            content,
-            interaction_id,
-            metadata,
-            received_at,
-        )
+        await self._updates.apply(checkpoint_id, content, interaction_id, metadata, received_at)
         if self._continuations.contains(checkpoint_id):
+            if metadata.root.get("input_kind") in RESULT_INPUT_KINDS:
+                current = await self._continuations.resume(checkpoint_id)
+                while isinstance(current, WaitingExecution):
+                    current = await self._continuations.resume(current.checkpoint_id)
+                return current
             await self._continuations.abandon(checkpoint_id)
         return await self._recovery().resume(checkpoint_id)
 

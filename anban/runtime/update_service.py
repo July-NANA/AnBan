@@ -1,9 +1,10 @@
-"""Durable coordination for correlated human-origin mid-run input."""
+"""Durable coordination for correlated mid-run input and result-ready signals."""
 
 from __future__ import annotations
 
 import hashlib
 
+from anban.capability import CapabilityPort, InventoryKind
 from anban.core.context import (
     ContextConflictState,
     ContextEntry,
@@ -23,7 +24,13 @@ from anban.core.ids import (
     new_context_entry_id,
 )
 from anban.core.metadata import SafeMetadata
-from anban.core.models import Checkpoint, CheckpointStatus, ExecutionRunStatus, UtcDateTime
+from anban.core.models import (
+    CapabilityInvocationStatus,
+    Checkpoint,
+    CheckpointStatus,
+    ExecutionRunStatus,
+    UtcDateTime,
+)
 from anban.core.persistence import ExecutionRunAggregate, UnitOfWorkFactory
 from anban.model import ModelPort
 from anban.runtime.graph_result_reuse import GraphResultPlan, GraphResultReuseEvaluator
@@ -36,6 +43,14 @@ from anban.runtime.model_persistence import PersistedModelPort
 from anban.runtime.persistence import RunPersistence
 from anban.runtime.persistence_errors import persistence_error
 
+_HUMAN_INPUT_KINDS = frozenset({"user_message", "supplemental_input", "human_input"})
+RESULT_INPUT_KINDS = frozenset({"async_capability_result", "mcp_result", "subagent_result"})
+_RESULT_INVENTORY_KINDS = {
+    "async_capability_result": InventoryKind.PROCESS,
+    "mcp_result": InventoryKind.MCP,
+    "subagent_result": InventoryKind.SUB_AGENT,
+}
+
 
 class RuntimeUpdateService:
     """Resolve one external correlation and append one governed update."""
@@ -43,6 +58,7 @@ class RuntimeUpdateService:
     def __init__(
         self,
         model: ModelPort,
+        capabilities: CapabilityPort,
         factory: UnitOfWorkFactory,
         *,
         evaluator: InteractionUpdateEvaluator | None = None,
@@ -50,6 +66,7 @@ class RuntimeUpdateService:
         response_repair_retries: int,
     ) -> None:
         self._model = model
+        self._capabilities = capabilities
         self._factory = factory
         self._evaluator = evaluator or InteractionUpdateEvaluator()
         self._result_evaluator = result_evaluator or GraphResultReuseEvaluator()
@@ -121,12 +138,31 @@ class RuntimeUpdateService:
     ) -> InteractionUpdateDecision | None:
         aggregate, checkpoint = await self._load(checkpoint_id)
         source, input_kind = self._interaction_fields(interaction_id, interaction_metadata)
+        result_kind = _RESULT_INVENTORY_KINDS.get(input_kind)
+        event_type = (
+            "interaction.result_received"
+            if result_kind is not None
+            else "interaction.update_received"
+        )
         if any(
-            event.event_type == "interaction.update_received"
+            event.event_type == event_type
             and event.metadata.root.get("interaction_id") == str(interaction_id)
             for event in aggregate.events
         ):
             return None
+        if result_kind is not None:
+            await self._signal_result(
+                aggregate,
+                checkpoint,
+                content,
+                interaction_id,
+                interaction_metadata,
+                input_kind,
+                result_kind,
+            )
+            return None
+        if input_kind not in _HUMAN_INPUT_KINDS:
+            raise self._error("resume_input_unavailable")
         persistence = self._persistence(aggregate, checkpoint)
         model = PersistedModelPort(self._model, persistence)
         active_graph_node_id = self._active_graph_node_id(aggregate, checkpoint)
@@ -205,6 +241,43 @@ class RuntimeUpdateService:
         except Exception:
             raise persistence_error("interaction_update_applied") from None
         return decision
+
+    async def _signal_result(
+        self,
+        aggregate: ExecutionRunAggregate,
+        checkpoint: Checkpoint,
+        content: str,
+        interaction_id: InteractionId,
+        interaction_metadata: SafeMetadata,
+        input_kind: str,
+        expected_kind: InventoryKind,
+    ) -> None:
+        invocation = next(
+            (item for item in aggregate.invocations if item.id == checkpoint.invocation_id),
+            None,
+        )
+        if invocation is None or invocation.status is not CapabilityInvocationStatus.RUNNING:
+            raise self._error("result_invocation_ineligible")
+        descriptor = self._capabilities.describe(invocation.capability_name)
+        if descriptor.inventory_kind is not expected_kind:
+            raise self._error("result_kind_mismatch")
+        persistence = self._persistence(aggregate, checkpoint)
+        try:
+            await persistence.interaction_updates.signal_result(
+                checkpoint,
+                interaction_id,
+                hashlib.sha256(content.encode()).hexdigest(),
+                interaction_metadata,
+                aggregate.task.id,
+                aggregate.nodes[0].id,
+                invocation.capability_name,
+                input_kind,
+                expected_kind,
+            )
+        except AnbanError:
+            raise
+        except Exception:
+            raise persistence_error("interaction_result_received") from None
 
     @classmethod
     def _interaction_fields(

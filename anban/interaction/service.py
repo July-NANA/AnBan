@@ -37,6 +37,13 @@ _HUMAN_RESUME_INPUTS = frozenset(
         InteractionInputKind.HUMAN_INPUT,
     }
 )
+_RESULT_RESUME_INPUTS = frozenset(
+    {
+        InteractionInputKind.ASYNC_CAPABILITY_RESULT,
+        InteractionInputKind.MCP_RESULT,
+        InteractionInputKind.SUBAGENT_RESULT,
+    }
+)
 
 
 class CorrelatedWaitingExecution(WaitingExecution):
@@ -244,7 +251,7 @@ class InteractionService:
             or correlation.resume_key is None
         ):
             raise _routing_error("malformed")
-        if envelope.input_kind not in _HUMAN_RESUME_INPUTS:
+        if envelope.input_kind not in _HUMAN_RESUME_INPUTS | _RESULT_RESUME_INPUTS:
             raise _routing_error("resume_input_unavailable")
         key = correlation.resume_key
         checkpoint_id = await self._runtime_service().resolve_resume_correlation(

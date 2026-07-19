@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Awaitable, Callable
 
+from anban.capability import InventoryKind
 from anban.core.context import ContextEntry
 from anban.core.graph import GraphRevision
-from anban.core.ids import GraphRevisionId, InteractionId, NodeRunId
+from anban.core.ids import GraphRevisionId, InteractionId, NodeRunId, TaskId
 from anban.core.metadata import SafeMetadata
 from anban.core.models import Checkpoint, CheckpointStatus
 from anban.core.persistence import ExecutionRepository
@@ -63,6 +64,66 @@ class InteractionUpdatePersistence:
                 ),
             ),
         )
+
+    async def signal_result(
+        self,
+        checkpoint: Checkpoint,
+        interaction_id: InteractionId,
+        content_hash: str,
+        interaction_metadata: SafeMetadata,
+        task_id: TaskId,
+        root_node_run_id: NodeRunId,
+        capability_name: str,
+        input_kind: str,
+        inventory_kind: InventoryKind,
+    ) -> None:
+        async def operation(repository: ExecutionRepository) -> None:
+            current = await repository.get_checkpoint(checkpoint.id)
+            if current is None or current.status is not CheckpointStatus.WAITING:
+                raise ValueError("Checkpoint is not eligible for an asynchronous result")
+            await route_managed_inbox(
+                repository,
+                interaction_metadata,
+                task_id,
+                checkpoint.run_id,
+                root_node_run_id,
+            )
+
+        metadata = SafeMetadata(
+            {
+                "interaction_id": str(interaction_id),
+                "source": interaction_metadata.root.get("source"),
+                "input_kind": input_kind,
+                "inventory_kind": inventory_kind.value,
+                "capability_name": capability_name,
+                "result_content_hash": content_hash,
+                "retry_safe": True,
+                "side_effect_replayed": False,
+            }
+        )
+        facts = [interaction_routed_event_fact(interaction_metadata, checkpoint.node_run_id)]
+        inbox_fact = inbox_routed_event_fact(interaction_metadata, root_node_run_id)
+        if inbox_fact is not None:
+            facts.append(inbox_fact)
+        facts.extend(
+            (
+                EventFact(
+                    "interaction.result_received",
+                    metadata,
+                    node_run_id=checkpoint.node_run_id,
+                    invocation_id=checkpoint.invocation_id,
+                    checkpoint_id=checkpoint.id,
+                ),
+                EventFact(
+                    "interaction.result_correlated",
+                    metadata,
+                    node_run_id=checkpoint.node_run_id,
+                    invocation_id=checkpoint.invocation_id,
+                    checkpoint_id=checkpoint.id,
+                ),
+            )
+        )
+        await self._writer("interaction_result_received", operation, tuple(facts))
 
     async def apply(
         self,

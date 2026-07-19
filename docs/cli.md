@@ -31,7 +31,15 @@ The same eligible-Run route accepts an ordinary user reply with
 with `anban run human-input <namespace> <correlation-value> <content...>`. All three commands use
 the same durable inbox, bounded update classification, Task Context, immutable revision, and
 Checkpoint recovery path while preserving their distinct semantic input kind in Audit and Context
-metadata. Unsupported machine-result kinds remain unavailable until their owning delivery.
+metadata.
+
+An asynchronous worker signals result readiness with
+`anban run process-result <namespace> <correlation-value> <content...>`,
+`anban run mcp-result ...`, or `anban run subagent-result ...`. The content is a bounded delivery
+notice, not an authoritative Capability result. Runtime resolves the Checkpoint-owned Invocation,
+requires the matching Process/MCP/Sub-agent inventory kind, and retrieves the real terminal result
+and Artifacts through the existing Capability lifecycle. Wrong-kind, unknown, duplicate-conflict,
+or terminal signals fail or deduplicate without executing a result payload.
 
 `capabilities list` returns a point-in-time snapshot. `capabilities search [TEXT]` accepts repeated
 `--kind`, `--available-only`, and a bounded `--limit`. `capabilities describe KEY` requires an

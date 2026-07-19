@@ -48,6 +48,14 @@ EXIT_FAILURE = 1
 EXIT_USAGE = 2
 EXIT_TIMEOUT = 124
 EXIT_INTERRUPTED = 130
+_RUN_INPUT_COMMANDS = {
+    "reply": InteractionInputKind.USER_MESSAGE,
+    "update": InteractionInputKind.SUPPLEMENTAL_INPUT,
+    "human-input": InteractionInputKind.HUMAN_INPUT,
+    "process-result": InteractionInputKind.ASYNC_CAPABILITY_RESULT,
+    "mcp-result": InteractionInputKind.MCP_RESULT,
+    "subagent-result": InteractionInputKind.SUBAGENT_RESULT,
+}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -640,20 +648,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                         json_output=json_output,
                     )
                 )
-            if values[0] in {"reply", "update", "human-input"}:
+            if values[0] in _RUN_INPUT_COMMANDS:
                 if len(values) < 4 or arguments.async_mode or arguments.detach:
                     raise ValueError(
                         f"run {values[0]} requires a namespace, correlation value, and content"
                     )
                 if values[0] != "update":
-                    kind = (
-                        InteractionInputKind.USER_MESSAGE
-                        if values[0] == "reply"
-                        else InteractionInputKind.HUMAN_INPUT
-                    )
                     return asyncio.run(
                         execute_run_input(
-                            kind,
+                            _RUN_INPUT_COMMANDS[values[0]],
                             values[1],
                             values[2],
                             " ".join(values[3:]),

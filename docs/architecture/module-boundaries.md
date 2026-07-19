@@ -21,8 +21,10 @@ different semantics under that identity conflict, terminal duplicates reconstruc
 Run without Model or Capability replay, and an already-routed unknown outcome remains pending.
 Only an unrouted claim older than its lease may be reclaimed after restart. Expiry after receipt
 and unsupported input kinds become durable terminal inbox facts without creating a Run. Raw
-correlation values never enter storage or queries. Background delivery, Trigger behavior, domain
-lifecycle, and execution scheduling remain later scope.
+correlation values never enter storage or queries. D27 human-origin input shares the governed
+update path. D28 asynchronous result input is only a readiness signal: Runtime resolves and checks
+the Checkpoint-owned Invocation, then Capability supplies the authoritative Process/MCP/Sub-agent
+terminal result. Trigger behavior and scheduling remain later scope.
 
 ## Core
 

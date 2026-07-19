@@ -56,7 +56,12 @@ claim, route, terminal outcome, and attempt disposition. Identical terminal retr
 original persisted Run; changed semantics conflict; routed or active work is never replayed; only
 a stale claim with no Run link is safe to reclaim. Runtime links accepted input atomically during
 Task/Run/Node creation and records `interaction.inbox_routed`. Unsupported future kinds are
-durably rejected without creating work.
+durably rejected without creating work. D27 routes user replies, supplemental input, and explicit
+Human Input through that same update path while preserving semantic kind. D28 routes Process, MCP,
+and Sub-agent result-ready signals without accepting their content as execution output. Runtime
+derives the Invocation from the Checkpoint, validates its inventory kind, and consumes the real
+terminal result and Artifacts through the existing Capability lifecycle. Result routing and inbox
+linkage commit before live continuation release or restart recovery.
 
 Every Skill follows `SKILL.md -> uniform parser -> SkillPackage -> skill.activate ->
 process.execute`. No production code selects behavior by source, installer, registry, publisher,

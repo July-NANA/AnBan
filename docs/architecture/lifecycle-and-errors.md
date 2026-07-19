@@ -112,3 +112,12 @@ payload under one deduplication identity is `conflicting`; unsupported input bec
 Terminal duplicates reconstruct the existing Run. Routed, active, and unknown outcomes remain
 fail-closed and never replay a side effect. Only an expired claim without a Run link can be safely
 reclaimed.
+
+D27 permits correlated user replies, supplemental input, and explicit Human Input without adding a
+second update channel. D28 permits correlated Process, MCP, and Sub-agent result-ready signals, but
+the envelope content is never a Capability result or Tool Result. The waiting Checkpoint supplies
+the Invocation identity; Runtime requires a running Invocation and matching inventory kind, commits
+`interaction.result_received` and `interaction.result_correlated` with inbox routing, then releases
+the live continuation or invokes restart recovery. Capability `progress` and `wait` remain the only
+source of terminal observation, failure, and Artifact facts. Wrong-kind, unknown, terminal, and
+conflicting signals fail explicitly, while identical terminal redelivery reconstructs the Run.

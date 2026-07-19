@@ -78,6 +78,11 @@ These commands fail closed and emit only bounded evidence:
   and Runtime recovery path and reconciles one Artifact. Bad signature, stale timestamp, unknown
   endpoint, conflicting replay, and authenticated unknown resume fail closed; fresh inbox,
   Audit/Trace, and database queries verify the authentication and persistence boundary.
+- `pnpm run acceptance:schedule`: D32 real CLI/PostgreSQL/timezone acceptance. Separate processes
+  create weekday and daily Cron definitions in two IANA timezones plus one UTC Interval, then fresh
+  Application and CLI queries reconcile identity, civil time, and safe content hashes. Invalid
+  Cron, timezone, interval, and duplicate name fail without a partial row. The Gate proves D32
+  creates no Run or inbox delivery; worker dispatch remains D33.
 - `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
   ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three

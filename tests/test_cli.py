@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,8 @@ import pytest
 import anban.cli as cli
 from anban.application import InventoryApplication
 from anban.capability import CapabilityRegistry, UnifiedCapabilityInventory
+from anban.cli_schedule import schedule_projection
+from anban.core import ScheduleDefinition, ScheduleKind, new_schedule_id
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.interaction import InteractionInputKind
 
@@ -66,6 +69,26 @@ def test_webhook_serve_dispatches_the_production_http_application(
         cli.main(["webhook", "serve", "--host", "127.0.0.1", "--port", "9123"]) == cli.EXIT_SUCCESS
     )
     assert calls == [(application, "127.0.0.1", 9123, False)]
+
+
+def test_schedule_projection_excludes_raw_business_content() -> None:
+    created_at = datetime(2026, 7, 19, 8, 0, tzinfo=UTC)
+    schedule = ScheduleDefinition(
+        id=new_schedule_id(),
+        name="projection-test",
+        kind=ScheduleKind.INTERVAL,
+        timezone="UTC",
+        content="bounded private task input",
+        every_seconds=60,
+        anchor_at=created_at,
+        next_occurrence_at=created_at + timedelta(seconds=60),
+        created_at=created_at,
+    )
+
+    projection = schedule_projection(schedule)
+
+    assert schedule.content not in str(projection)
+    assert projection["content_size"] == len(schedule.content.encode())
 
 
 def test_run_command_dispatch_and_global_json_option(

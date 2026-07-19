@@ -36,6 +36,10 @@ CLI_HELP = (
     ("trace", "--help"),
     ("artifacts", "--help"),
     ("webhook", "serve", "--help"),
+    ("schedules", "--help"),
+    ("schedule", "create-cron", "--help"),
+    ("schedule", "create-interval", "--help"),
+    ("schedule", "show", "--help"),
 )
 
 

@@ -250,7 +250,16 @@ class RuntimeRecovery:
             return await self._terminal_graph_failure(
                 persistence, aggregate, "graph_route_state_missing"
             )
-        action_nodes = tuple(node for node in aggregate.nodes if node.id != route_event.node_run_id)
+        invalidated_node_run_ids = {
+            event.node_run_id
+            for event in aggregate.events
+            if event.event_type == "graph.result_invalidated" and event.node_run_id is not None
+        }
+        action_nodes = tuple(
+            node
+            for node in aggregate.nodes
+            if node.id != route_event.node_run_id and node.id not in invalidated_node_run_ids
+        )
         if not action_nodes or persistence.node.id not in {node.id for node in action_nodes}:
             return await self._terminal_graph_failure(
                 persistence, aggregate, "graph_action_state_missing"

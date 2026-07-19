@@ -11,6 +11,11 @@ from anban.core.ids import GraphRevisionId
 from anban.core.metadata import SafeMetadata
 from anban.core.models import Checkpoint, CheckpointStatus
 from anban.core.persistence import ExecutionRepository
+from anban.runtime.graph_result_reuse import (
+    GraphResultDecision,
+    GraphResultDisposition,
+    GraphResultPlan,
+)
 from anban.runtime.interaction_updates import InteractionUpdateDecision
 from anban.runtime.persistence_events import EventFact
 
@@ -61,6 +66,7 @@ class InteractionUpdatePersistence:
         decision: InteractionUpdateDecision,
         revision: GraphRevision | None,
         previous_revision_id: GraphRevisionId | None,
+        result_plan: GraphResultPlan | None = None,
     ) -> None:
         async def operation(repository: ExecutionRepository) -> None:
             current = await repository.get_checkpoint(checkpoint.id)
@@ -150,6 +156,12 @@ class InteractionUpdatePersistence:
                     ),
                 )
             )
+            if result_plan is None:
+                raise ValueError("Structural update requires a graph result plan")
+            facts.extend(
+                self._result_fact(item, previous_revision_id, revision)
+                for item in result_plan.decisions
+            )
         else:
             facts.append(
                 EventFact(
@@ -161,3 +173,163 @@ class InteractionUpdatePersistence:
                 )
             )
         await self._writer("interaction_update_applied", operation, tuple(facts))
+
+    async def reject_results(
+        self,
+        checkpoint: Checkpoint,
+        interaction_id: str,
+        content_hash: str,
+        decision: InteractionUpdateDecision,
+        revision: GraphRevision,
+        previous_revision_id: GraphRevisionId | None,
+        result_plan: GraphResultPlan,
+    ) -> None:
+        async def operation(repository: ExecutionRepository) -> None:
+            current = await repository.get_checkpoint(checkpoint.id)
+            if current is None or current.status is not CheckpointStatus.WAITING:
+                raise ValueError("Checkpoint is not eligible for an Interaction update")
+
+        metadata = self._update_metadata(
+            interaction_id,
+            content_hash,
+            decision,
+            None,
+            previous_revision_id,
+            proposed_spec_hash=revision.spec_hash,
+        )
+        facts = [
+            EventFact(
+                "interaction.update_received",
+                metadata,
+                node_run_id=checkpoint.node_run_id,
+                invocation_id=checkpoint.invocation_id,
+                checkpoint_id=checkpoint.id,
+            ),
+            EventFact(
+                "interaction.update_classified",
+                metadata,
+                node_run_id=checkpoint.node_run_id,
+                invocation_id=checkpoint.invocation_id,
+                checkpoint_id=checkpoint.id,
+            ),
+        ]
+        rejected = tuple(
+            item
+            for item in result_plan.decisions
+            if item.disposition is GraphResultDisposition.INVALIDATED
+            and item.will_reexecute
+            and item.side_effect_detected
+        )
+        facts.extend(
+            self._rejection_fact(item, previous_revision_id, revision) for item in rejected
+        )
+        if not result_plan.active_node_stable:
+            facts.append(
+                EventFact(
+                    "graph.result_invalidation_rejected",
+                    SafeMetadata(
+                        {
+                            "graph_node_id": result_plan.active_graph_node_id,
+                            "graph_spec_hash": revision.spec_hash,
+                            "previous_graph_revision_id": (
+                                None if previous_revision_id is None else str(previous_revision_id)
+                            ),
+                            "result_validity_reason": "active_input_or_definition_changed",
+                            "will_reexecute": True,
+                            "side_effect_detected": True,
+                            "side_effect_replayed": False,
+                        }
+                    ),
+                    node_run_id=checkpoint.node_run_id,
+                    invocation_id=checkpoint.invocation_id,
+                    checkpoint_id=checkpoint.id,
+                )
+            )
+        await self._writer("interaction_update_rejected", operation, tuple(facts))
+
+    @staticmethod
+    def _update_metadata(
+        interaction_id: str,
+        content_hash: str,
+        decision: InteractionUpdateDecision,
+        revision: GraphRevision | None,
+        previous_revision_id: GraphRevisionId | None,
+        *,
+        proposed_spec_hash: str | None = None,
+    ) -> SafeMetadata:
+        return SafeMetadata(
+            {
+                "interaction_id": interaction_id,
+                "update_impact": decision.impact.value,
+                "update_content_hash": content_hash,
+                "rationale_hash": hashlib.sha256(decision.rationale.encode()).hexdigest(),
+                "model_turn_count": decision.model_turn_count,
+                "graph_revision_id": None if revision is None else str(revision.id),
+                "previous_graph_revision_id": (
+                    None if previous_revision_id is None else str(previous_revision_id)
+                ),
+                "graph_spec_hash": (
+                    proposed_spec_hash
+                    if proposed_spec_hash is not None
+                    else (None if revision is None else revision.spec_hash)
+                ),
+                "side_effect_replayed": False,
+            }
+        )
+
+    @staticmethod
+    def _result_fact(
+        decision: GraphResultDecision,
+        previous_revision_id: GraphRevisionId | None,
+        revision: GraphRevision,
+    ) -> EventFact:
+        return EventFact(
+            f"graph.result_{decision.disposition.value}",
+            InteractionUpdatePersistence._result_metadata(
+                decision,
+                previous_revision_id,
+                revision,
+            ),
+            node_run_id=decision.node_run_id,
+        )
+
+    @staticmethod
+    def _rejection_fact(
+        decision: GraphResultDecision,
+        previous_revision_id: GraphRevisionId | None,
+        revision: GraphRevision,
+    ) -> EventFact:
+        return EventFact(
+            "graph.result_invalidation_rejected",
+            InteractionUpdatePersistence._result_metadata(
+                decision,
+                previous_revision_id,
+                revision,
+                linked=False,
+            ),
+            node_run_id=decision.node_run_id,
+        )
+
+    @staticmethod
+    def _result_metadata(
+        decision: GraphResultDecision,
+        previous_revision_id: GraphRevisionId | None,
+        revision: GraphRevision,
+        *,
+        linked: bool = True,
+    ) -> SafeMetadata:
+        return SafeMetadata(
+            {
+                "graph_node_id": decision.graph_node_id,
+                "graph_revision_id": str(revision.id) if linked else None,
+                "previous_graph_revision_id": (
+                    None if previous_revision_id is None else str(previous_revision_id)
+                ),
+                "graph_spec_hash": revision.spec_hash,
+                "result_disposition": decision.disposition.value,
+                "result_validity_reason": decision.reason.value,
+                "will_reexecute": decision.will_reexecute,
+                "side_effect_detected": decision.side_effect_detected,
+                "side_effect_replayed": False,
+            }
+        )

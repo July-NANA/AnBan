@@ -78,6 +78,7 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "graph_node_count",
         "graph_node_id",
         "graph_node_kind",
+        "previous_graph_revision_id",
         "graph_revision_id",
         "graph_selected",
         "graph_spec_hash",
@@ -120,10 +121,13 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "route",
         "reason",
         "result_kind",
+        "result_disposition",
+        "result_validity_reason",
         "retry_safe",
         "should_acquire_skill",
         "should_replan",
         "side_effect_completed",
+        "side_effect_detected",
         "side_effect_replayed",
         "size_bytes",
         "status_code",
@@ -153,6 +157,7 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "target",
         "turn_number",
         "unmet_condition_count",
+        "will_reexecute",
     }
 )
 

@@ -88,6 +88,7 @@ class PersistentGraphTaskRunner:
         for replay in replay_actions:
             self._replay_actions[replay.node_run.node_name].append(replay)
         self._recovered_action = recovered_action
+        self._pending_recovered_node = persistence.node if recovered_action is not None else None
         self._action_lock = asyncio.Lock()
         self._outcomes: list[AgentOutcome] = []
 
@@ -126,11 +127,10 @@ class PersistentGraphTaskRunner:
             )
         except TaskGraphExecutionError as exc:
             outcome = self._failure_outcome(exc.reason, routing_model_turns)
-            if (
-                self._recovered_action is not None
-                and self._persistence.node.status is NodeRunStatus.RUNNING
-            ):
+            if self._pending_recovered_node is not None:
+                self._persistence.node = self._pending_recovered_node
                 await self._persistence.finish_node(outcome)
+                self._pending_recovered_node = None
             return outcome
 
     async def _execute_action(
@@ -225,12 +225,15 @@ class PersistentGraphTaskRunner:
         if (
             node_run.status is not NodeRunStatus.RUNNING
             or self._recovered_action is None
-            or node_run.id != self._persistence.node.id
+            or self._pending_recovered_node is None
+            or node_run.id != self._pending_recovered_node.id
         ):
             raise TaskGraphExecutionError(TaskGraphExecutionFailureReason.RECOVERY_STATE_INVALID)
+        self._persistence.node = node_run
         outcome = await self._recovered_action(node, node_input)
         if outcome.status is not AgentOutcomeStatus.SUCCEEDED:
             await self._persistence.finish_node(outcome)
+            self._pending_recovered_node = None
             self._outcomes.append(outcome)
             raise TaskGraphExecutionError(TaskGraphExecutionFailureReason.ACTION_FAILED)
         output = self._parse_node_output(outcome.final_text)
@@ -240,9 +243,11 @@ class PersistentGraphTaskRunner:
                 source=outcome,
             )
             await self._persistence.finish_node(failure)
+            self._pending_recovered_node = None
             self._outcomes.append(failure)
             raise TaskGraphExecutionError(TaskGraphExecutionFailureReason.ACTION_OUTPUT_INVALID)
         await self._persistence.finish_node(outcome, output=output)
+        self._pending_recovered_node = None
         self._outcomes.append(outcome)
         return output
 

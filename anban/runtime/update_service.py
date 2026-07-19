@@ -26,6 +26,7 @@ from anban.core.metadata import SafeMetadata
 from anban.core.models import Checkpoint, CheckpointStatus, ExecutionRunStatus, UtcDateTime
 from anban.core.persistence import ExecutionRunAggregate, UnitOfWorkFactory
 from anban.model import ModelPort
+from anban.runtime.graph_result_reuse import GraphResultPlan, GraphResultReuseEvaluator
 from anban.runtime.interaction_updates import (
     InteractionUpdateDecision,
     InteractionUpdateEvaluator,
@@ -45,11 +46,13 @@ class RuntimeUpdateService:
         factory: UnitOfWorkFactory,
         *,
         evaluator: InteractionUpdateEvaluator | None = None,
+        result_evaluator: GraphResultReuseEvaluator | None = None,
         response_repair_retries: int,
     ) -> None:
         self._model = model
         self._factory = factory
         self._evaluator = evaluator or InteractionUpdateEvaluator()
+        self._result_evaluator = result_evaluator or GraphResultReuseEvaluator()
         self._response_repair_retries = response_repair_retries
 
     async def bind_resume(
@@ -125,7 +128,8 @@ class RuntimeUpdateService:
             return None
         persistence = self._persistence(aggregate, checkpoint)
         model = PersistedModelPort(self._model, persistence)
-        protected = self._protected_node_ids(aggregate)
+        active_graph_node_id = self._active_graph_node_id(aggregate, checkpoint)
+        protected = () if active_graph_node_id is None else (active_graph_node_id,)
         decision = await self._evaluator.decide(
             aggregate.task.request,
             content,
@@ -135,6 +139,28 @@ class RuntimeUpdateService:
             repair_limit=self._response_repair_retries,
         )
         revision = self._revision(aggregate, decision)
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+        result_plan = self._result_plan(
+            aggregate,
+            revision,
+            active_graph_node_id,
+        )
+        if revision is not None and result_plan is not None and not result_plan.accepted:
+            try:
+                await persistence.interaction_updates.reject_results(
+                    checkpoint,
+                    str(interaction_id),
+                    content_hash,
+                    decision,
+                    revision,
+                    aggregate.run.graph_revision_id,
+                    result_plan,
+                )
+            except AnbanError:
+                raise
+            except Exception:
+                raise persistence_error("interaction_update_rejected") from None
+            raise self._error("graph_result_invalidation_unsafe")
         entry = ContextEntry(
             id=new_context_entry_id(),
             scope=ContextScope.TASK,
@@ -152,7 +178,7 @@ class RuntimeUpdateService:
                     "interaction_id": str(interaction_id),
                     "checkpoint_id": str(checkpoint.id),
                     "source": source,
-                    "content_hash": hashlib.sha256(content.encode()).hexdigest(),
+                    "content_hash": content_hash,
                     "update_impact": decision.impact.value,
                     "graph_revision_id": None if revision is None else str(revision.id),
                 }
@@ -166,6 +192,7 @@ class RuntimeUpdateService:
                 decision,
                 revision,
                 aggregate.run.graph_revision_id,
+                result_plan,
             )
         except AnbanError:
             raise
@@ -247,13 +274,39 @@ class RuntimeUpdateService:
         )
 
     @staticmethod
-    def _protected_node_ids(aggregate: ExecutionRunAggregate) -> tuple[str, ...]:
-        values: list[str] = []
-        for node in aggregate.nodes:
-            graph_node_id = node.metadata.root.get("graph_node_id")
-            if isinstance(graph_node_id, str) and graph_node_id not in values:
-                values.append(graph_node_id)
-        return tuple(values)
+    def _active_graph_node_id(
+        aggregate: ExecutionRunAggregate,
+        checkpoint: Checkpoint,
+    ) -> str | None:
+        node = next((item for item in aggregate.nodes if item.id == checkpoint.node_run_id), None)
+        if node is None:
+            return None
+        graph_node_id = node.metadata.root.get("graph_node_id")
+        return graph_node_id if isinstance(graph_node_id, str) else None
+
+    def _result_plan(
+        self,
+        aggregate: ExecutionRunAggregate,
+        revision: GraphRevision | None,
+        active_graph_node_id: str | None,
+    ) -> GraphResultPlan | None:
+        if revision is None:
+            return None
+        if aggregate.graph_revision is None or active_graph_node_id is None:
+            raise self._error("graph_result_state_invalid")
+        invalidated = frozenset(
+            event.node_run_id
+            for event in aggregate.events
+            if event.event_type == "graph.result_invalidated" and event.node_run_id is not None
+        )
+        return self._result_evaluator.plan(
+            aggregate.graph_revision.spec,
+            revision.spec,
+            aggregate.nodes,
+            aggregate.invocations,
+            active_graph_node_id,
+            invalidated,
+        )
 
     @staticmethod
     def _revision(

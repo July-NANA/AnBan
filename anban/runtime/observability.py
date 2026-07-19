@@ -18,6 +18,7 @@ from anban.runtime.contracts import RuntimeValue
 
 _TERMINAL = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 _AUDIT_EVENT_PREFIXES = (
+    "interaction.",
     "agent.",
     "model.",
     "skill.",
@@ -84,6 +85,9 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "graph_spec_hash",
         "high_improvisation_risk",
         "input_tokens",
+        "input_kind",
+        "interaction_id",
+        "interaction_route",
         "invocation_compensation_failed",
         "method",
         "media_type",
@@ -117,6 +121,8 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "repeated_reusable_need",
         "response_variant",
         "result_correlation_id",
+        "resume_correlation_hash",
+        "resume_namespace",
         "restart_recoverable",
         "route",
         "reason",
@@ -131,6 +137,7 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "side_effect_replayed",
         "size_bytes",
         "status_code",
+        "source",
         "state_hash",
         "strategy",
         "substantial_temporary_code",
@@ -155,6 +162,8 @@ _EVENT_METADATA_ALLOWLIST = frozenset(
         "transport_retry_count",
         "transport_retry_limit",
         "target",
+        "deduplication_correlation_hash",
+        "deduplication_namespace",
         "turn_number",
         "unmet_condition_count",
         "will_reexecute",

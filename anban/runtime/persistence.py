@@ -54,6 +54,7 @@ from anban.runtime.contracts import (
     CompletionAssessment,
     ReplanDecision,
 )
+from anban.runtime.initialization_events import initialization_event_facts
 from anban.runtime.interaction_update_persistence import InteractionUpdatePersistence
 from anban.runtime.persistence_errors import audit_trace_error, persistence_error
 from anban.runtime.persistence_events import EventFact, task_route_transition
@@ -135,11 +136,7 @@ class RunPersistence:
         await self._write(
             "initialize",
             operation,
-            (
-                EventFact("task.created"),
-                EventFact("run.created"),
-                EventFact("node.created", node_run_id=self.node.id),
-            ),
+            initialization_event_facts(self.task.metadata, self.node.id),
         )
 
     async def start(self) -> None:

@@ -62,16 +62,25 @@ def interaction_metadata(envelope: InteractionEnvelope) -> SafeMetadata:
     return SafeMetadata(values)
 
 
-def require_existing_cli_path(envelope: InteractionEnvelope) -> None:
-    """Fail closed until durable v0.5 routing and deduplication are implemented."""
+def require_new_work_route(envelope: InteractionEnvelope) -> None:
+    """Accept supported new work without granting later delivery semantics."""
 
-    if (
-        envelope.source != "cli"
-        or envelope.input_kind is not InteractionInputKind.USER_MESSAGE
-        or envelope.correlation.route is not InteractionRoute.NEW_TASK
-        or envelope.correlation.keys
-    ):
-        raise RuntimeError("v0.5 Interaction routing is not configured")
+    if envelope.correlation.route is not InteractionRoute.NEW_TASK:
+        raise _routing_error("route_mismatch")
+    if envelope.correlation.deduplication_key is not None:
+        raise _routing_error("deduplication_unavailable")
+    if envelope.input_kind is not InteractionInputKind.USER_MESSAGE:
+        raise _routing_error("new_work_input_unavailable")
+
+
+def _routing_error(reason: str) -> AnbanError:
+    return AnbanError(
+        ErrorInfo(
+            code=ErrorCode.VALIDATION_FAILED,
+            message="Interaction input cannot use the requested route",
+            details=SafeMetadata({"reason": reason}),
+        )
+    )
 
 
 class InteractionChatSession:
@@ -93,7 +102,7 @@ class InteractionChatSession:
         return self._session.remaining_seconds
 
     async def submit(self, envelope: InteractionEnvelope) -> ExecutionResult:
-        require_existing_cli_path(envelope)
+        require_new_work_route(envelope)
         return await self._session.submit(
             envelope.content,
             metadata=interaction_metadata(envelope),
@@ -121,18 +130,18 @@ class InteractionService:
         self._queries = queries
 
     async def submit(self, envelope: InteractionEnvelope) -> ExecutionResult:
-        if envelope.input_kind is InteractionInputKind.SUPPLEMENTAL_INPUT:
-            return await self._submit_update(envelope)
-        require_existing_cli_path(envelope)
-        return await self._runtime_service().execute(
-            envelope.content,
-            metadata=interaction_metadata(envelope),
-        )
+        if envelope.correlation.route is InteractionRoute.NEW_TASK:
+            require_new_work_route(envelope)
+            return await self._runtime_service().execute(
+                envelope.content,
+                metadata=interaction_metadata(envelope),
+            )
+        return await self._submit_resume(envelope)
 
     async def start_async(
         self, envelope: InteractionEnvelope
     ) -> CorrelatedWaitingExecution | ExecutionResult:
-        require_existing_cli_path(envelope)
+        require_new_work_route(envelope)
         result = await self._runtime_service().start_async(
             envelope.content,
             metadata=interaction_metadata(envelope),
@@ -173,20 +182,16 @@ class InteractionService:
             resume_key=key,
         )
 
-    async def _submit_update(self, envelope: InteractionEnvelope) -> ExecutionResult:
+    async def _submit_resume(self, envelope: InteractionEnvelope) -> ExecutionResult:
         correlation = envelope.correlation
         if (
             correlation.route is not InteractionRoute.RESUME_ELIGIBLE_RUN
             or correlation.resume_key is None
             or correlation.deduplication_key is not None
         ):
-            raise AnbanError(
-                ErrorInfo(
-                    code=ErrorCode.VALIDATION_FAILED,
-                    message="Supplemental Interaction correlation is invalid",
-                    details=SafeMetadata({"reason": "malformed"}),
-                )
-            )
+            raise _routing_error("malformed")
+        if envelope.input_kind is not InteractionInputKind.SUPPLEMENTAL_INPUT:
+            raise _routing_error("resume_input_unavailable")
         key = correlation.resume_key
         checkpoint_id = await self._runtime_service().resolve_resume_correlation(
             key.namespace,

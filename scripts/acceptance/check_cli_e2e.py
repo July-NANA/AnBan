@@ -572,9 +572,11 @@ async def gate_bcd(root: Path) -> dict[str, object]:
         raise RuntimeGateError("Gate B Workspace was not initially empty")
     task_marker = hashlib.sha256(os.urandom(16)).hexdigest()[:12]
     install = await submit(
-        "The target workflow is a simple plain-text transformation Skill and is absent, so first "
-        "record the governed decision that one new Skill must be acquired; the available ClawHub "
-        "Skill is only the acquisition guide, not "
+        "I need a reusable plain-text uppercase transformation Skill installed for repeated future "
+        "use, and that target Skill is absent. Installing the reusable workflow is a material "
+        "deliverable, so a one-off Process-only transformation is not an adequate substitute. "
+        "First record the governed decision that one new Skill must be acquired; the available "
+        "ClawHub Skill is only the acquisition guide, not "
         "the target workflow. Use that guide to run exactly one public search for an "
         "uppercase-text Skill implemented by a bundled local Python or shell script, without "
         "logging in. Compare "

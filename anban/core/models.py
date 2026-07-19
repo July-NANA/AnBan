@@ -106,6 +106,9 @@ class Task(DomainModel):
 class ExecutionRun(DomainModel):
     id: ExecutionRunId
     task_id: TaskId
+    parent_run_id: ExecutionRunId | None = None
+    parent_invocation_id: CapabilityInvocationId | None = None
+    delegation_depth: int = Field(default=0, ge=0, le=3)
     status: ExecutionRunStatus = ExecutionRunStatus.CREATED
     graph_revision_id: GraphRevisionId | None = None
     created_at: UtcDateTime = Field(default_factory=now_utc)
@@ -114,6 +117,17 @@ class ExecutionRun(DomainModel):
     final_text: str | None = Field(default=None, max_length=32_768)
     error_code: ErrorCode | None = None
     metadata: SafeMetadata = Field(default_factory=SafeMetadata)
+
+    @model_validator(mode="after")
+    def validate_delegation_identity(self) -> Self:
+        delegated = self.parent_run_id is not None or self.parent_invocation_id is not None
+        if delegated != (self.parent_run_id is not None and self.parent_invocation_id is not None):
+            raise ValueError("delegated Run identity must be complete")
+        if delegated != (self.delegation_depth > 0):
+            raise ValueError("delegated Run identity disagrees with depth")
+        if self.parent_run_id == self.id:
+            raise ValueError("delegated Run cannot parent itself")
+        return self
 
 
 class NodeRun(DomainModel):

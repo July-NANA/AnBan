@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
@@ -13,22 +14,35 @@ from anban.capability import (
     CapabilityInventoryPort,
     CapabilityPort,
     CapabilityResult,
+    DelegateExecutionHandle,
+    DelegateRunOutcome,
     InvocationContext,
 )
 from anban.config import policy
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
 from anban.core.graph import GraphRevision
 from anban.core.ids import (
+    CapabilityInvocationId,
     CheckpointId,
+    ExecutionRunId,
     InteractionId,
+    NodeRunId,
     SessionId,
+    TaskId,
     new_execution_run_id,
     new_node_run_id,
     new_session_id,
     new_task_id,
 )
 from anban.core.metadata import SafeMetadata
-from anban.core.models import ExecutionRun, NodeRun, Task, UtcDateTime, now_utc
+from anban.core.models import (
+    ExecutionRun,
+    ExecutionRunStatus,
+    NodeRun,
+    Task,
+    UtcDateTime,
+    now_utc,
+)
 from anban.core.persistence import UnitOfWorkFactory
 from anban.model import ModelPort
 from anban.runtime.agent import FixedGeneralAgent
@@ -47,6 +61,13 @@ from anban.runtime.contracts import (
     ExecutionResult,
     WaitingExecution,
 )
+from anban.runtime.failure_outcomes import (
+    matches_terminal,
+    recover_run_terminal,
+    recover_terminal,
+    routing_failure_outcome,
+    storage_failure_outcome,
+)
 from anban.runtime.graph_execution import TaskGraphExecutor
 from anban.runtime.graph_routing import (
     TASK_REQUEST_INPUT,
@@ -59,17 +80,6 @@ from anban.runtime.persistence import RunPersistence
 from anban.runtime.recovery import RuntimeRecovery
 from anban.runtime.sufficiency import CapabilitySufficiencyEvaluator
 from anban.runtime.update_service import RESULT_INPUT_KINDS, RuntimeUpdateService
-
-_STORAGE_FAILURE_DETAILS = frozenset(
-    {
-        "artifact_cleanup_attempted",
-        "artifact_cleanup_failed",
-        "artifact_cleanup_succeeded",
-        "compensation_error_code",
-        "invocation_compensation_failed",
-        "persistence_state_unconfirmed",
-    }
-)
 
 
 class PersistentRuntime:
@@ -120,6 +130,52 @@ class PersistentRuntime:
         self, request: str, *, metadata: SafeMetadata | None = None
     ) -> ExecutionResult:
         return await self._execute(request, metadata=metadata)
+
+    async def start_child(
+        self,
+        objective: str,
+        parent_run_id: ExecutionRunId,
+        parent_invocation_id: CapabilityInvocationId,
+        delegation_depth: int,
+    ) -> DelegateExecutionHandle:
+        task_id = new_task_id()
+        run_id = new_execution_run_id()
+        node_run_id = new_node_run_id()
+        initialized = asyncio.get_running_loop().create_future()
+
+        async def execute() -> DelegateRunOutcome:
+            result = await self._execute(
+                objective,
+                task_id=task_id,
+                run_id=run_id,
+                node_run_id=node_run_id,
+                parent_run_id=parent_run_id,
+                parent_invocation_id=parent_invocation_id,
+                delegation_depth=delegation_depth,
+                initialized=initialized,
+            )
+            return DelegateRunOutcome(
+                task_id=result.task_id,
+                run_id=result.run_id,
+                node_run_id=result.node_run_id,
+                status=ExecutionRunStatus(result.outcome.status.value),
+                final_text=result.outcome.final_text,
+                error=result.outcome.error,
+                artifact_count=len(result.outcome.artifacts),
+                delegation_depth=delegation_depth,
+            )
+
+        completion = asyncio.create_task(execute())
+        if not await initialized:
+            outcome = await completion
+            raise AnbanError(
+                outcome.error
+                or ErrorInfo(
+                    code=ErrorCode.PERSISTENCE_WRITE_FAILED,
+                    message="Delegated child Run could not be created",
+                )
+            )
+        return DelegateExecutionHandle(task_id, run_id, node_run_id, completion)
 
     async def start_async(
         self, request: str, *, metadata: SafeMetadata | None = None
@@ -183,12 +239,38 @@ class PersistentRuntime:
         *,
         metadata: SafeMetadata | None = None,
         continuation: ContinuationControl | None = None,
+        task_id: TaskId | None = None,
+        run_id: ExecutionRunId | None = None,
+        node_run_id: NodeRunId | None = None,
+        parent_run_id: ExecutionRunId | None = None,
+        parent_invocation_id: CapabilityInvocationId | None = None,
+        delegation_depth: int = 0,
+        initialized: asyncio.Future[bool] | None = None,
     ) -> ExecutionResult:
         safe_metadata = metadata or SafeMetadata()
-        task = Task(id=new_task_id(), request=request, metadata=safe_metadata)
-        run = ExecutionRun(id=new_execution_run_id(), task_id=task.id, metadata=safe_metadata)
+        delegated = parent_run_id is not None or parent_invocation_id is not None
+        if delegated:
+            if parent_run_id is None or parent_invocation_id is None:
+                raise ValueError("delegated child identity must be complete")
+            safe_metadata = SafeMetadata(
+                {
+                    "delegation_depth": delegation_depth,
+                    "objective_hash": hashlib.sha256(request.encode()).hexdigest(),
+                    "parent_invocation_id": str(parent_invocation_id),
+                    "parent_run_id": str(parent_run_id),
+                }
+            )
+        task = Task(id=task_id or new_task_id(), request=request, metadata=safe_metadata)
+        run = ExecutionRun(
+            id=run_id or new_execution_run_id(),
+            task_id=task.id,
+            parent_run_id=parent_run_id,
+            parent_invocation_id=parent_invocation_id,
+            delegation_depth=delegation_depth,
+            metadata=safe_metadata,
+        )
         node = NodeRun(
-            id=new_node_run_id(),
+            id=node_run_id or new_node_run_id(),
             run_id=run.id,
             node_name="general_agent",
             metadata=safe_metadata,
@@ -196,10 +278,14 @@ class PersistentRuntime:
         persistence = RunPersistence(self._unit_of_work, task, run, node)
         try:
             await persistence.initialize()
+            if initialized is not None and not initialized.done():
+                initialized.set_result(True)
             await persistence.start()
         except AnbanError as exc:
+            if initialized is not None and not initialized.done():
+                initialized.set_result(False)
             outcome = storage_failure_outcome(exc.info, stage="setup")
-            persisted = await self.recover_terminal(persistence, outcome)
+            persisted = await recover_terminal(persistence, outcome)
             return ExecutionResult(
                 task_id=task.id,
                 run_id=run.id,
@@ -207,6 +293,9 @@ class PersistentRuntime:
                 outcome=outcome,
                 persisted=persisted,
             )
+        finally:
+            if initialized is not None and not initialized.done():
+                initialized.set_result(False)
 
         persisted_model = PersistedModelPort(self._model, persistence)
         graph_execution = False
@@ -233,7 +322,7 @@ class PersistentRuntime:
                 )
             except AnbanError as exc:
                 outcome = routing_failure_outcome(exc.info, persisted_model.turn_count)
-                persisted = await self.recover_terminal(persistence, outcome)
+                persisted = await recover_terminal(persistence, outcome)
                 return ExecutionResult(
                     task_id=task.id,
                     run_id=run.id,
@@ -249,7 +338,7 @@ class PersistentRuntime:
                     ),
                     persisted_model.turn_count,
                 )
-                persisted = await self.recover_terminal(persistence, outcome)
+                persisted = await recover_terminal(persistence, outcome)
                 return ExecutionResult(
                     task_id=task.id,
                     run_id=run.id,
@@ -273,7 +362,7 @@ class PersistentRuntime:
                         stage="graph_planning_finalize",
                         model_turn_count=decision.model_turn_count,
                     )
-                    persisted = await self.recover_run_terminal(persistence, outcome)
+                    persisted = await recover_run_terminal(persistence, outcome)
                     return ExecutionResult(
                         task_id=task.id,
                         run_id=run.id,
@@ -326,7 +415,7 @@ class PersistentRuntime:
             else:
                 await persistence.finish(outcome)
         except AnbanError as exc:
-            if await self.matches_terminal(persistence, outcome):
+            if await matches_terminal(persistence, outcome):
                 persisted = True
             else:
                 outcome = storage_failure_outcome(
@@ -337,9 +426,9 @@ class PersistentRuntime:
                     artifacts=outcome.artifacts,
                 )
                 persisted = await (
-                    self.recover_run_terminal(persistence, outcome)
+                    recover_run_terminal(persistence, outcome)
                     if graph_execution
-                    else self.recover_terminal(persistence, outcome)
+                    else recover_terminal(persistence, outcome)
                 )
         else:
             persisted = True
@@ -399,49 +488,6 @@ class PersistentRuntime:
             response_repair_retries=self._response_repair_retries,
             artifact_cleanup=self._artifact_cleanup,
         )
-
-    @staticmethod
-    async def matches_terminal(persistence: RunPersistence, outcome: AgentOutcome) -> bool:
-        try:
-            aggregate = await persistence.load()
-        except AnbanError:
-            return False
-        return aggregate is not None and aggregate.run.status.value == outcome.status.value
-
-    @staticmethod
-    async def recover_terminal(persistence: RunPersistence, outcome: AgentOutcome) -> bool:
-        """Confirm an ambiguous commit or persist a safe failure without side-effect replay."""
-
-        try:
-            aggregate = await persistence.load()
-            if aggregate is None:
-                return False
-            if aggregate.run.status.value == outcome.status.value:
-                return True
-            if aggregate.run.status.value == "created":
-                await persistence.start()
-            await persistence.finish(outcome)
-            return await PersistentRuntime.matches_terminal(persistence, outcome)
-        except AnbanError:
-            return False
-
-    @staticmethod
-    async def recover_run_terminal(
-        persistence: RunPersistence,
-        outcome: AgentOutcome,
-    ) -> bool:
-        """Confirm or persist one Run terminal after its graph nodes already finished."""
-
-        try:
-            aggregate = await persistence.load()
-            if aggregate is None:
-                return False
-            if aggregate.run.status.value == outcome.status.value:
-                return True
-            await persistence.finish_run(outcome)
-            return await PersistentRuntime.matches_terminal(persistence, outcome)
-        except AnbanError:
-            return False
 
 
 class PersistentChatSession:
@@ -532,7 +578,7 @@ class PersistentChatSession:
                 await persistence.start()
             except AnbanError as exc:
                 outcome = storage_failure_outcome(exc.info, stage="chat_setup")
-                persisted = await PersistentRuntime.recover_terminal(persistence, outcome)
+                persisted = await recover_terminal(persistence, outcome)
                 return self._stop(persistence, outcome, persisted)
         else:
             node = NodeRun(
@@ -620,7 +666,7 @@ class PersistentChatSession:
                 artifact_count=self._artifact_count,
             )
         except AnbanError as exc:
-            if await PersistentRuntime.matches_terminal(persistence, outcome):
+            if await matches_terminal(persistence, outcome):
                 persisted = True
             else:
                 outcome = storage_failure_outcome(
@@ -716,7 +762,7 @@ class PersistentChatSession:
             )
             return True
         except AnbanError:
-            return await PersistentRuntime.matches_terminal(persistence, outcome)
+            return await matches_terminal(persistence, outcome)
 
     def _stop(
         self, persistence: RunPersistence, outcome: AgentOutcome, persisted: bool
@@ -737,62 +783,3 @@ class PersistentChatSession:
             outcome=outcome,
             persisted=persisted,
         )
-
-
-def storage_failure_outcome(
-    cause: ErrorInfo,
-    *,
-    stage: str,
-    model_turn_count: int = 0,
-    capability_call_count: int = 0,
-    artifacts: tuple[ArtifactReference, ...] = (),
-) -> AgentOutcome:
-    code = (
-        cause.code
-        if cause.code
-        in {
-            ErrorCode.PERSISTENCE_UNAVAILABLE,
-            ErrorCode.PERSISTENCE_WRITE_FAILED,
-            ErrorCode.AUDIT_TRACE_WRITE_FAILED,
-        }
-        else ErrorCode.PERSISTENCE_WRITE_FAILED
-    )
-    return AgentOutcome(
-        status=AgentOutcomeStatus.FAILED,
-        error=ErrorInfo(
-            code=code,
-            message=(
-                "Runtime Event persistence failed"
-                if code is ErrorCode.AUDIT_TRACE_WRITE_FAILED
-                else "Runtime persistence failed"
-            ),
-            details=SafeMetadata(
-                {
-                    "stage": stage,
-                    **{
-                        key: value
-                        for key, value in cause.details.root.items()
-                        if key in _STORAGE_FAILURE_DETAILS
-                    },
-                }
-            ),
-        ),
-        model_turn_count=model_turn_count,
-        capability_call_count=capability_call_count,
-        artifacts=artifacts,
-    )
-
-
-def routing_failure_outcome(cause: ErrorInfo, model_turn_count: int) -> AgentOutcome:
-    """Retain one explicit model or persistence failure from route selection."""
-
-    return AgentOutcome(
-        status=(
-            AgentOutcomeStatus.TIMED_OUT
-            if cause.code is ErrorCode.MODEL_TIMEOUT
-            else AgentOutcomeStatus.FAILED
-        ),
-        error=cause,
-        model_turn_count=model_turn_count,
-        capability_call_count=0,
-    )

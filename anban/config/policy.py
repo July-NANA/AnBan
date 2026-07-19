@@ -93,3 +93,7 @@ MCP_OUTPUT_MAX_BYTES = 65_536
 MCP_OUTPUT_HARD_MAX_BYTES = 262_144
 MCP_TOOLS_MAX = 128
 MCP_TOOLS_HARD_MAX = 256
+
+# Delegation remains one bounded use of the ordinary Agent Runtime per Tool invocation.
+SUBAGENT_OBJECTIVE_MAX_CHARS = 8192
+SUBAGENT_DEPTH_MAX = 3

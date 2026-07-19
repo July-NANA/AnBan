@@ -207,6 +207,9 @@ def run_record(run: ExecutionRun) -> ExecutionRunRecord:
     return ExecutionRunRecord(
         id=run.id,
         task_id=run.task_id,
+        parent_run_id=run.parent_run_id,
+        parent_invocation_id=run.parent_invocation_id,
+        delegation_depth=run.delegation_depth,
         status=run.status.value,
         graph_revision_id=run.graph_revision_id,
         created_at=run.created_at,
@@ -222,6 +225,15 @@ def run_domain(record: ExecutionRunRecord) -> ExecutionRun:
     return ExecutionRun(
         id=ExecutionRunId(record.id),
         task_id=TaskId(record.task_id),
+        parent_run_id=(
+            None if record.parent_run_id is None else ExecutionRunId(record.parent_run_id)
+        ),
+        parent_invocation_id=(
+            None
+            if record.parent_invocation_id is None
+            else CapabilityInvocationId(record.parent_invocation_id)
+        ),
+        delegation_depth=record.delegation_depth,
         status=ExecutionRunStatus(record.status),
         graph_revision_id=(
             None if record.graph_revision_id is None else GraphRevisionId(record.graph_revision_id)

@@ -229,14 +229,32 @@ class ExecutionRunRecord(SafeMetadataMixin, Base):
             ondelete="RESTRICT",
             name="fk_execution_runs_graph_revision_task",
         ),
+        ForeignKeyConstraint(
+            ["parent_invocation_id", "parent_run_id"],
+            ["capability_invocations.id", "capability_invocations.run_id"],
+            ondelete="RESTRICT",
+            name="fk_execution_runs_parent_invocation",
+        ),
+        CheckConstraint(
+            "(parent_run_id IS NULL AND parent_invocation_id IS NULL AND delegation_depth = 0) "
+            "OR (parent_run_id IS NOT NULL AND parent_invocation_id IS NOT NULL "
+            "AND delegation_depth BETWEEN 1 AND 3)",
+            name="delegation_identity",
+        ),
+        CheckConstraint("parent_run_id IS NULL OR parent_run_id <> id", name="parent_not_self"),
+        UniqueConstraint("parent_invocation_id", name="uq_execution_runs_parent_invocation_id"),
         Index("ix_execution_runs_task_id", "task_id"),
         Index("ix_execution_runs_created_at", "created_at"),
+        Index("ix_execution_runs_parent_run_id", "parent_run_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
     task_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
     )
+    parent_run_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    parent_invocation_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    delegation_depth: Mapped[int] = mapped_column(default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     graph_revision_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

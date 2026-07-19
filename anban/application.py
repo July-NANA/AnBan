@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from anban.capability import (
+    AgentDelegateCapability,
     CapabilityInventoryItem,
     CapabilityInventoryPort,
     CapabilityInventoryQuery,
@@ -41,10 +42,12 @@ class Application:
     sufficiency: CapabilitySufficiencyEvaluator
     graph_builder: DynamicTaskGraphBuilder
     graph_executor: TaskGraphExecutor
+    _delegate: AgentDelegateCapability
     _model: OpenAICompatibleAdapter
     _engine: AsyncEngine
 
     async def close(self) -> None:
+        await self._delegate.aclose()
         await self._model.aclose()
         await self._engine.dispose()
 
@@ -115,6 +118,10 @@ async def build_application() -> Application:
             unit_of_work,
             protected_values=configuration.protected_values(),
         )
+        delegate = AgentDelegateCapability(
+            unit_of_work,
+            protected_values=configuration.protected_values(),
+        )
         capabilities, inventory = local_capability_components(
             workspace_root=configuration.workspace,
             process_default_timeout_seconds=configuration.process.default_timeout_seconds,
@@ -127,7 +134,7 @@ async def build_application() -> Application:
             artifact_max_bytes=configuration.process.artifact_max_bytes,
             protected_values=configuration.protected_values(),
             model_available=True,
-            additional_handlers=(memory, *mcp_capabilities),
+            additional_handlers=(memory, delegate, *mcp_capabilities),
         )
         workspace_boundary = WorkspaceBoundary(configuration.workspace)
         sufficiency = CapabilitySufficiencyEvaluator(inventory)
@@ -145,6 +152,7 @@ async def build_application() -> Application:
             route_evaluator=TaskRouteEvaluator(),
             graph_executor=graph_executor,
         )
+        delegate.bind(runtime.start_child)
         queries = ExecutionQueryService(unit_of_work)
         return Application(
             InteractionService(runtime, queries, unit_of_work),
@@ -152,6 +160,7 @@ async def build_application() -> Application:
             sufficiency,
             graph_builder,
             graph_executor,
+            delegate,
             model,
             engine,
         )
@@ -184,6 +193,11 @@ async def build_inventory_application() -> InventoryApplication:
         unit_of_work,
         protected_values=configuration.protected_values(),
     )
+    delegate = AgentDelegateCapability(
+        unit_of_work,
+        protected_values=configuration.protected_values(),
+        available=configuration.model is not None,
+    )
     _, inventory = local_capability_components(
         workspace_root=configuration.workspace,
         process_default_timeout_seconds=configuration.process.default_timeout_seconds,
@@ -196,6 +210,6 @@ async def build_inventory_application() -> InventoryApplication:
         artifact_max_bytes=configuration.process.artifact_max_bytes,
         protected_values=configuration.protected_values(),
         model_available=configuration.model is not None,
-        additional_handlers=(memory, *mcp_capabilities),
+        additional_handlers=(memory, delegate, *mcp_capabilities),
     )
     return InventoryApplication(inventory, engine)

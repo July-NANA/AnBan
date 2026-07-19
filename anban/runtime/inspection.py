@@ -62,6 +62,9 @@ MAX_CONTEXT_SUMMARIES = 64
 class RunSummary(RuntimeValue):
     id: ExecutionRunId
     task_id: TaskId
+    parent_run_id: ExecutionRunId | None = None
+    parent_invocation_id: CapabilityInvocationId | None = None
+    delegation_depth: int = Field(default=0, ge=0, le=3)
     status: ExecutionRunStatus
     graph_revision_id: GraphRevisionId | None = None
     created_at: UtcDateTime
@@ -320,6 +323,9 @@ def run_summary(run: ExecutionRun) -> RunSummary:
     return RunSummary(
         id=run.id,
         task_id=run.task_id,
+        parent_run_id=run.parent_run_id,
+        parent_invocation_id=run.parent_invocation_id,
+        delegation_depth=run.delegation_depth,
         status=run.status,
         graph_revision_id=run.graph_revision_id,
         created_at=run.created_at,

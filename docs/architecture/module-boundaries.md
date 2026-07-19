@@ -79,6 +79,10 @@ complete replacement graph and preserves the active action plus its transitive i
 Runtime atomically appends the revision, concrete result dispositions, and the active Run link.
 Recovery shares the configured response-repair budget across sufficiency, final-response, and
 completion decisions and never replays a Capability-backed result.
+Delegation creates an independent child Task/Run through this same Runtime rather than adding a
+sub-agent scheduler. Runtime supplies system identities and depth, initializes the child durably
+before acceptance, propagates parent cancellation to an active owned child, and returns only the
+child's terminal aggregate to the shared Capability lifecycle.
 
 ## Model
 
@@ -89,15 +93,16 @@ Owns the Model Port and its adapters. Model reasoning is deliberately separate f
 Owns `CapabilityPort`, `CapabilityHandler`, the Registry, uniform `SKILL.md` discovery/activation,
 the general Process Handler, and the read-only `CapabilityInventoryPort` projection. The unified
 inventory describes the independently configured Model, registered Capabilities, ready Skills,
-Process, implemented Memory, dynamically discovered MCP Tools, and the explicitly unavailable
-future sub-agent path without
+Process, implemented Memory, dynamically discovered MCP Tools, and the ready `agent.delegate`
+sub-agent path without
 invoking any of them or creating a second Registry. The shared Workspace catalog refreshes through the same
 parser, bounds, protected-value checks, conflict rules, and logical identities for both inventory
 and `skill.activate`; an Application rebuild is not required to observe an installed, changed, or
 removed Skill. Multiple activated Skill instructions remain authoritative native Tool Results in
 the same bounded model exchange, with a shared hard context limit rather than a second prompt or
-execution channel. Fixed production Capability names are `memory.context`, `skill.activate`, and
-`process.execute`; configured MCP Tools add bounded dynamic logical names. The Memory Handler uses
+execution channel. Fixed production Capability names are `memory.context`, `skill.activate`,
+`process.execute`, and `agent.delegate`; configured MCP Tools add bounded dynamic logical names.
+The Memory Handler uses
 the existing Unit of Work Port and the same Registry;
 it does not define another backend or discovery path. A concrete tool normally adds a Skill, not a
 Handler. No Skill source or installer receives a special branch. Configured MCP stdio servers use
@@ -105,7 +110,10 @@ one shared Adapter/Handler implementation: Application composition performs real
 registers stable logical `mcp.<server>.<tool-fragment>.<digest>` names in the same Registry, and
 each invocation reconnects, rediscovers, verifies descriptor identity, and performs `tools/call`.
 Server commands, physical cwd, environment values, raw protocol data, and `_meta` never enter
-inventory or durable facts. The sub-agent remains a future category. `process.execute` can launch
+inventory or durable facts. The shared delegation Handler starts the ordinary Runtime as one
+independently durable child Task/Run, preserves child Artifact provenance, and reconstructs a
+terminal child result from PostgreSQL after parent restart. It adds no second Registry, worker, or
+scheduler. `process.execute` can launch
 the same governed process in background mode only
 after real spawn succeeds. The Registry retains its authoritative Runtime-supplied Invocation
 context, enforces monotonic progress, supports cancellation and waiting, and correlates the result
@@ -145,6 +153,11 @@ safe hashes, expiry, claim, route identities, terminal outcome, attempt count, a
 disposition. A database unique constraint owns deduplication identity. Runtime initialization links
 the inbox row to Task/Run/root Node in the same transaction and appends
 `interaction.inbox_routed`; queries expose hashes and lifecycle facts rather than raw content.
+Delegated Runs add nullable parent Run/Invocation identities and a bounded depth to
+`execution_runs`. Composite foreign keys require the Invocation to belong to the parent Run, a
+unique constraint permits only one child per parent Invocation, and checks forbid partial or
+self-parent relationships. `subagent.child_created` is the durable recovery and Audit fact; child
+Artifacts stay on the child Run and are never copied into the parent as fabricated provenance.
 
 Dependencies point toward Ports and stable Core vocabulary. Adapters depend on external systems; Core never depends on a concrete provider, Skill source, filesystem root, or frontend.
 

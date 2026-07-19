@@ -63,6 +63,15 @@ answer. Timeout produces `timed_out`, and cancellation propagates to the active 
 stdio process tree. Once `tools/call` begins, the external side-effect outcome may be uncertain, so
 Runtime does not replay the Invocation automatically.
 
+Sub-agent delegation also follows the same non-terminal Capability lifecycle. `agent.delegate`
+returns `accepted` only after one independently durable child Task/Run has been initialized with a
+parent Run, parent Invocation, and bounded depth. The parent Invocation remains `running` behind a
+Checkpoint while the child follows the ordinary Model/Capability lifecycle. A
+`SUBAGENT_RESULT` Interaction is only a readiness signal; after restart, the Handler loads the
+terminal child aggregate and returns its authoritative status and bounded result. Child Artifacts
+remain owned by the child Invocation. Failure, cancellation, and timeout remain terminal, and the
+unique parent-Invocation relationship prevents automatic duplicate child creation.
+
 If a Capability has returned but its terminal transaction reports failure, Runtime first reads the
 authoritative Invocation, Event, and Artifact facts. An actually committed transaction is accepted
 without replay. A confirmed uncommitted transaction receives one independent `failed` compensation

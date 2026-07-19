@@ -22,6 +22,11 @@ from anban.capability.contracts import (
     RiskLevel,
     SideEffectLevel,
 )
+from anban.capability.delegate import (
+    AgentDelegateCapability,
+    DelegateExecutionHandle,
+    DelegateRunOutcome,
+)
 from anban.capability.inventory import UnifiedCapabilityInventory
 from anban.capability.local import local_capability_components, local_capability_registry
 from anban.capability.mcp import McpToolCapability, discover_mcp_capabilities
@@ -36,6 +41,7 @@ from anban.capability.skill import (
 
 __all__ = [
     "ArtifactReference",
+    "AgentDelegateCapability",
     "AvailabilityStatus",
     "CapabilityDescriptor",
     "CapabilityHandler",
@@ -50,6 +56,8 @@ __all__ = [
     "CapabilityRegistry",
     "CapabilityResult",
     "CapabilityResultStatus",
+    "DelegateExecutionHandle",
+    "DelegateRunOutcome",
     "CostLevel",
     "InventoryBoundary",
     "InventoryKind",

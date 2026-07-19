@@ -25,6 +25,14 @@ _INTERACTION_METADATA = frozenset(
 _REQUIRED_INTERACTION_METADATA = frozenset(
     {"input_kind", "interaction_id", "interaction_route", "source"}
 )
+_DELEGATION_METADATA = frozenset(
+    {
+        "delegation_depth",
+        "objective_hash",
+        "parent_invocation_id",
+        "parent_run_id",
+    }
+)
 
 
 def initialization_event_facts(
@@ -43,6 +51,14 @@ def initialization_event_facts(
         inbox = inbox_routed_event_fact(metadata, node_run_id)
         if inbox is not None:
             facts.append(inbox)
+    if _DELEGATION_METADATA.issubset(metadata.root):
+        facts.append(
+            EventFact(
+                "subagent.child_created",
+                metadata_projection(metadata, _DELEGATION_METADATA),
+                node_run_id=node_run_id,
+            )
+        )
     return tuple(facts)
 
 

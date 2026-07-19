@@ -112,6 +112,7 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
         process = descriptor.inventory_kind is InventoryKind.PROCESS
         memory = descriptor.inventory_kind is InventoryKind.MEMORY
         mcp = descriptor.inventory_kind is InventoryKind.MCP
+        sub_agent = descriptor.inventory_kind is InventoryKind.SUB_AGENT
         return CapabilityInventoryItem(
             key=descriptor.name,
             kind=descriptor.inventory_kind,
@@ -124,11 +125,11 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
             input_schema=descriptor.input_schema,
             constraints=("Invocation requires an authoritative Runtime context.",),
             boundary=InventoryBoundary(
-                risk=RiskLevel.HIGH if process or mcp else RiskLevel.LOW,
-                cost=CostLevel.LOW,
+                risk=RiskLevel.HIGH if process or mcp or sub_agent else RiskLevel.LOW,
+                cost=CostLevel.HIGH if sub_agent else CostLevel.LOW,
                 side_effects=(
                     SideEffectLevel.EXTERNAL
-                    if process or mcp
+                    if process or mcp or sub_agent
                     else SideEffectLevel.REVERSIBLE
                     if memory
                     else SideEffectLevel.NONE
@@ -138,6 +139,8 @@ class UnifiedCapabilityInventory(CapabilityInventoryPort):
                     if process
                     else "MCP Tool execution may create server-defined external side effects."
                     if mcp
+                    else "Delegation may execute model and Capability work in a durable child Run."
+                    if sub_agent
                     else "Durable Context writes are retained as reversible, inspectable facts."
                     if memory
                     else "Structured invocation remains governed by the registered Capability."

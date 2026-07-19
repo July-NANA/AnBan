@@ -44,6 +44,12 @@ These commands fail closed and emit only bounded evidence:
   randomized identity and reconstructs that Run without replay. Fresh queries reconcile two
   deliveries, `interaction.inbox_routed`, complete Trace, conflict, post-receipt expiry, and durable
   unsupported-input rejection.
+- `pnpm run acceptance:human-input`: D27 real Provider/PostgreSQL/Process acceptance. A user reply,
+  supplemental input, and explicit Human Input event route into three active Runs through fresh
+  Applications and the ordinary eligible-Run correlation. The CLI covers reply and Human Input;
+  the supplemental variant proves duplicate delivery reconstruction. Context, Checkpoint, inbox,
+  ordered Audit/Trace, one real side effect, restart recovery, and unknown/terminal reverse cases
+  reconcile without raw correlations or replay.
 - `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
   ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three

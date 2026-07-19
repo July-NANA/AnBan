@@ -164,6 +164,22 @@ async def test_external_new_work_uses_the_same_async_entry() -> None:
                     ),
                 ),
             ),
+            "unknown",
+        ),
+        (
+            InteractionEnvelope(
+                id=new_interaction_id(),
+                input_kind=InteractionInputKind.ASYNC_CAPABILITY_RESULT,
+                content="Machine result cannot use the human-input delivery path.",
+                correlation=InteractionCorrelation(
+                    route=InteractionRoute.RESUME_ELIGIBLE_RUN,
+                    resume_key=CorrelationKey(
+                        purpose=CorrelationPurpose.RESUME,
+                        namespace="external.thread",
+                        value="thread-7359",
+                    ),
+                ),
+            ),
             "resume_input_unavailable",
         ),
     ],

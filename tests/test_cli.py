@@ -12,6 +12,7 @@ import anban.cli as cli
 from anban.application import InventoryApplication
 from anban.capability import CapabilityRegistry, UnifiedCapabilityInventory
 from anban.core.errors import AnbanError, ErrorCode, ErrorInfo
+from anban.interaction import InteractionInputKind
 
 
 def test_cli_module_does_not_import_provider_or_capability_adapters() -> None:
@@ -140,6 +141,59 @@ def test_mid_run_update_dispatches_external_correlation(
             "anban.continuation",
             "opaque-correlation",
             "Apply the new constraint.",
+            True,
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("command", "input_kind"),
+    [
+        ("reply", InteractionInputKind.USER_MESSAGE),
+        ("human-input", InteractionInputKind.HUMAN_INPUT),
+    ],
+)
+def test_human_origin_commands_preserve_their_semantic_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    input_kind: InteractionInputKind,
+) -> None:
+    received: list[tuple[InteractionInputKind, str, str, str, bool]] = []
+
+    async def route(
+        kind: InteractionInputKind,
+        namespace: str,
+        correlation_value: str,
+        content: str,
+        *,
+        json_output: bool,
+    ) -> int:
+        received.append((kind, namespace, correlation_value, content, json_output))
+        return cli.EXIT_SUCCESS
+
+    monkeypatch.setattr(cli, "execute_run_input", route)
+
+    assert (
+        cli.main(
+            [
+                "run",
+                command,
+                "anban.continuation",
+                "opaque-reply",
+                "Apply",
+                "this",
+                "input.",
+                "--json",
+            ]
+        )
+        == cli.EXIT_SUCCESS
+    )
+    assert received == [
+        (
+            input_kind,
+            "anban.continuation",
+            "opaque-reply",
+            "Apply this input.",
             True,
         )
     ]

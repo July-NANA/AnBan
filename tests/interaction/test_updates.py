@@ -57,15 +57,31 @@ from tests.runtime.test_recovery import (
 )
 
 
-def supplemental(key: CorrelationKey, content: str) -> InteractionEnvelope:
+def supplemental(
+    key: CorrelationKey,
+    content: str,
+    *,
+    input_kind: InteractionInputKind = InteractionInputKind.SUPPLEMENTAL_INPUT,
+    source: str = "message.adapter",
+    delivery: str | None = None,
+) -> InteractionEnvelope:
     return InteractionEnvelope(
         id=new_interaction_id(),
-        source="message.adapter",
-        input_kind=InteractionInputKind.SUPPLEMENTAL_INPUT,
+        source=source,
+        input_kind=input_kind,
         content=content,
         correlation=InteractionCorrelation(
             route=InteractionRoute.RESUME_ELIGIBLE_RUN,
             resume_key=key,
+            deduplication_key=(
+                None
+                if delivery is None
+                else CorrelationKey(
+                    purpose=CorrelationPurpose.DEDUPLICATION,
+                    namespace="external.delivery",
+                    value=delivery,
+                )
+            ),
         ),
     )
 
@@ -141,8 +157,31 @@ def parallel_update_graph() -> TaskGraphSpec:
     )
 
 
-async def test_context_update_survives_detach_and_completes_without_replay(
+@pytest.mark.parametrize(
+    ("input_kind", "source", "update"),
+    [
+        (
+            InteractionInputKind.USER_MESSAGE,
+            "conversation.adapter",
+            "Reply with the completed result using the newly requested concise format.",
+        ),
+        (
+            InteractionInputKind.SUPPLEMENTAL_INPUT,
+            "message.adapter",
+            "Report the completed result using the newly requested concise format.",
+        ),
+        (
+            InteractionInputKind.HUMAN_INPUT,
+            "operator.adapter",
+            "Use the supplied human direction and report the result concisely.",
+        ),
+    ],
+)
+async def test_human_origin_input_survives_restart_and_completes_without_replay(
     tmp_path: Path,
+    input_kind: InteractionInputKind,
+    source: str,
+    update: str,
 ) -> None:
     factory = MemoryUnitOfWorkFactory()
     initial_registry = registry(tmp_path)
@@ -165,7 +204,8 @@ async def test_context_update_survives_detach_and_completes_without_replay(
             factory,
             sufficiency=sufficiency(initial_registry),
             response_repair_retries=0,
-        )
+        ),
+        unit_of_work=factory,
     )
     waiting = await initial.start_async(
         InteractionEnvelope(
@@ -176,7 +216,6 @@ async def test_context_update_survives_detach_and_completes_without_replay(
     assert isinstance(waiting, CorrelatedWaitingExecution)
     await initial.detach_async(waiting.checkpoint_id)
 
-    update = "Report the completed result using the newly requested concise format."
     final = "The original operation completed once and the concise update was applied."
     restarted_registry = registry(tmp_path)
     restarted_model = TransactionCheckingModel(
@@ -195,13 +234,44 @@ async def test_context_update_survives_detach_and_completes_without_replay(
             factory,
             sufficiency=sufficiency(restarted_registry),
             response_repair_retries=0,
+        ),
+        unit_of_work=factory,
+    )
+
+    delivery = f"delivery-{input_kind.value}"
+    result = await restarted.submit(
+        supplemental(
+            waiting.resume_key,
+            update,
+            input_kind=input_kind,
+            source=source,
+            delivery=delivery,
+        )
+    )
+    calls_after_result = restarted_model.calls
+    duplicate = await InteractionService(
+        PersistentRuntime(
+            restarted_model,
+            restarted_registry,
+            factory,
+            sufficiency=sufficiency(restarted_registry),
+            response_repair_retries=0,
+        ),
+        unit_of_work=factory,
+    ).submit(
+        supplemental(
+            waiting.resume_key,
+            update,
+            input_kind=input_kind,
+            source=source,
+            delivery=delivery,
         )
     )
 
-    result = await restarted.submit(supplemental(waiting.resume_key, update))
-
     assert result.outcome.status is AgentOutcomeStatus.SUCCEEDED
+    assert duplicate.run_id == result.run_id
     assert result.outcome.final_text == final
+    assert restarted_model.calls == calls_after_result
     assert (tmp_path / "update-count.txt").read_text() == "1"
     async with factory() as unit:
         aggregate = await unit.executions.load_run(waiting.run_id)
@@ -209,12 +279,35 @@ async def test_context_update_survives_detach_and_completes_without_replay(
     assert aggregate is not None
     assert aggregate.graph_revision is None
     assert [entry.content for entry in entries] == [update]
+    assert entries[0].metadata.root["input_kind"] == input_kind.value
+    assert entries[0].metadata.root["source"] == source
     event_types = [event.event_type for event in aggregate.events]
     assert event_types.count("interaction.resume_bound") == 1
+    assert event_types.count("interaction.routed") == 2
+    assert event_types.count("interaction.inbox_routed") == 2
     assert event_types.count("interaction.update_received") == 1
     assert event_types.count("interaction.context_applied") == 1
     assert event_types.count("run.recovery_completed") == 1
     assert waiting.resume_key.value not in str(aggregate.events)
+    assert delivery not in str(aggregate.events)
+    routed = [
+        event
+        for event in aggregate.events
+        if event.event_type == "interaction.routed"
+        and event.metadata.root.get("interaction_route") == "resume_eligible_run"
+    ]
+    assert len(routed) == 1
+    assert routed[0].metadata.root["input_kind"] == input_kind.value
+    assert routed[0].metadata.root["source"] == source
+    inbox = await restarted.inbox()
+    assert len(inbox) == 2
+    update_delivery = next(item for item in inbox if item.route == "resume_eligible_run")
+    assert update_delivery.input_kind == input_kind.value
+    assert update_delivery.delivery_count == 2
+    assert update_delivery.status.value == "processed"
+    assert all(item.status.value == "processed" for item in inbox), [
+        (item.route, item.status.value, item.node_run_id) for item in inbox
+    ]
     assert any(
         update in (message.content or "")
         for request in restarted_model.requests

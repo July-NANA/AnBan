@@ -50,6 +50,13 @@ These commands fail closed and emit only bounded evidence:
   the supplemental variant proves duplicate delivery reconstruction. Context, Checkpoint, inbox,
   ordered Audit/Trace, one real side effect, restart recovery, and unknown/terminal reverse cases
   reconcile without raw correlations or replay.
+- `pnpm run acceptance:async-result`: D28 real Provider/PostgreSQL/Process acceptance. Three
+  changed background Process tasks cross fresh Applications and resume only after a correlated
+  result-ready signal. One variant first rejects the MCP/Process kind mismatch, one deduplicates a
+  repeated signal, and all reconcile the real terminal result, Invocation, Checkpoint, Artifact,
+  inbox, ordered Audit/Trace, original delivery, and exactly-once side effect. Deterministic MCP
+  and Sub-agent lifecycle variants cover the same generic path until D29/D30 provide their real
+  integrations.
 - `pnpm run acceptance:p1-main-agent`: twelve real-model Runs in an isolated Workspace through the
   ordinary production Composition Root: direct answer, structured durable Memory, three semantic
   ready-Skill variants, three multi-Skill variants, clarification without a side effect, and three

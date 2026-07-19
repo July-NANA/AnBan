@@ -151,9 +151,12 @@ def test_mid_run_update_dispatches_external_correlation(
     [
         ("reply", InteractionInputKind.USER_MESSAGE),
         ("human-input", InteractionInputKind.HUMAN_INPUT),
+        ("process-result", InteractionInputKind.ASYNC_CAPABILITY_RESULT),
+        ("mcp-result", InteractionInputKind.MCP_RESULT),
+        ("subagent-result", InteractionInputKind.SUBAGENT_RESULT),
     ],
 )
-def test_human_origin_commands_preserve_their_semantic_kind(
+def test_correlated_input_commands_preserve_their_semantic_kind(
     monkeypatch: pytest.MonkeyPatch,
     command: str,
     input_kind: InteractionInputKind,

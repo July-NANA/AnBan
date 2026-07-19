@@ -180,7 +180,7 @@ async def test_external_new_work_uses_the_same_async_entry() -> None:
                     ),
                 ),
             ),
-            "resume_input_unavailable",
+            "unknown",
         ),
     ],
 )

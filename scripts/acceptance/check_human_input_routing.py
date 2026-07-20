@@ -27,6 +27,7 @@ from scripts.acceptance.check_interaction_updates import (
     WaitingIdentity,
     aggregate,
     context_entries,
+    increment_process_arguments,
     query,
     start_detached,
 )
@@ -153,14 +154,14 @@ async def run_variant(
     variant: InputVariant,
 ) -> tuple[dict[str, object], WaitingIdentity]:
     count_name = f"d27-{variant.label}-{marker}.txt"
+    arguments = increment_process_arguments(count_name)
     identity = await start_detached(
-        "Complete one bounded background operation and truthfully report its real result. Use "
-        "exactly one process.execute call with command=python and background=true. Pass a Python "
-        "-c program that sleeps four seconds, reads the relative Workspace file "
-        f"{count_name} if present, increments its integer value once, and writes it back. Use "
-        "cwd=., print the resulting integer, and declare the same file as one text/plain "
-        "Artifact. Use no environment override, stdin, Skill, or other Capability. Do not report "
-        f"completion before the real result is available. Dynamic task object: {marker}."
+        "Start one bounded background operation that must first produce a durable waiting "
+        "checkpoint so correlated human-origin input can resume it; synchronous execution does "
+        "not satisfy this request. Make exactly one process.execute Tool Call using the following "
+        f"complete arguments object without changing any field or value: {arguments}. Use no "
+        "Skill or additional Capability call. Do not report completion before the real result is "
+        f"available. Dynamic task object: {marker}."
     )
     delivery = f"{marker}-{variant.label}" if variant.deduplicate else None
     payload, original = await apply_variant(identity, variant, delivery)

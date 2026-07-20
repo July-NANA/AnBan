@@ -147,30 +147,39 @@ def supplied_graph(
     )
 
 
-async def start_graph(graph: TaskGraphSpec, label: str) -> WaitingIdentity:
+async def start_graph(graph: TaskGraphSpec, label: str) -> tuple[WaitingIdentity, tuple[str, ...]]:
     graph_json = json.dumps(
         graph.model_dump(mode="json"),
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
     )
-    code, payloads = await cli(
-        "run",
-        "Execute the following dynamically supplied, already validated TaskGraphSpec through the "
-        "Task graph path. Its explicit persisted action boundaries and dependencies are a material "
-        "part of the request, so a fixed Agent loop would not satisfy it. Preserve this plan "
-        f"exactly for the {label} task, use ordinary real execution, and do not report completion "
-        "before the background result is durable. "
-        f"TaskGraphSpec JSON: {graph_json}",
-        "--async",
-        "--detach",
-        "--json",
-        timeout=420,
-    )
-    if code != 0 or not payloads:
+    route_failures: list[str] = []
+    for attempt in range(3):
+        code, payloads = await cli(
+            "run",
+            "Execute the following dynamically supplied, already validated TaskGraphSpec through "
+            "the Task graph path. Its explicit persisted action boundaries and dependencies are a "
+            "material part of the request, so a fixed Agent loop would not satisfy it. Preserve "
+            f"this plan exactly for the {label} task, use ordinary real execution, and do not "
+            "report completion before the background result is durable. "
+            f"TaskGraphSpec JSON: {graph_json}",
+            "--async",
+            "--detach",
+            "--json",
+            timeout=420,
+        )
+        if code == 0 and payloads:
+            return waiting_identity(payloads[-1]), tuple(route_failures)
         reason = safe_failure_reason(payloads[-1]) if payloads else "missing_result"
-        raise GraphResultAcceptanceError(f"detached graph start failed: {reason}")
-    return waiting_identity(payloads[-1])
+        run_id = payloads[-1].get("run_id") if payloads else None
+        if reason != "task_route_invalid" or not isinstance(run_id, str) or attempt == 2:
+            raise GraphResultAcceptanceError(f"detached graph start failed: {reason}")
+        failed = await aggregate(run_id)
+        if failed.invocations or failed.checkpoints or failed.artifacts:
+            raise GraphResultAcceptanceError("failed graph route produced executable side effects")
+        route_failures.append(run_id)
+    raise GraphResultAcceptanceError("detached graph start exhausted safe route retries")
 
 
 async def apply_structural(identity: WaitingIdentity, update: str) -> dict[str, object]:
@@ -204,7 +213,7 @@ async def reuse_variant(marker: str, variant: ResultVariant) -> dict[str, object
     run_marker = f"{marker}{hashlib.sha256(variant.label.encode()).hexdigest()[:4]}"
     count_name = f"d23-{variant.label}-{run_marker}.txt"
     supplied = supplied_graph(run_marker, count_name, variant)
-    identity = await start_graph(supplied, variant.label)
+    identity, route_failures = await start_graph(supplied, variant.label)
     before = await aggregate(identity.run_id)
     if before.graph_revision is None:
         raise GraphResultAcceptanceError("Provider did not select the graph path")
@@ -283,6 +292,7 @@ async def reuse_variant(marker: str, variant: ResultVariant) -> dict[str, object
         "run_id": identity.run_id,
         "label": variant.label,
         "reused_occurrences": len(reused),
+        "route_retry_count": len(route_failures),
     }
 
 

@@ -147,11 +147,12 @@ async def run_variant(
     count_name = f"d28-{variant.label}-{marker}.txt"
     arguments = increment_process_arguments(count_name)
     identity = await start_detached(
-        "Complete one bounded background operation and truthfully report its real result. Make "
-        "exactly one process.execute Tool Call using the following complete arguments object "
-        f"without changing any field or value: {arguments}. Use no Skill or additional "
-        "Capability call. Do not report completion before the real result is available. After "
-        "the result is retrieved, "
+        "Start one bounded background operation that must first produce a durable waiting "
+        "checkpoint so an authoritative asynchronous result signal can resume it; synchronous "
+        "execution does not satisfy this request. Make exactly one process.execute Tool Call "
+        "using the following complete arguments object without changing any field or value: "
+        f"{arguments}. Use no Skill or additional Capability call. Do not report completion "
+        "before the real result is available. After the result is retrieved, "
         f"{variant.final_instruction} Dynamic task object: {marker}-{variant.label}."
     )
     delivery = f"{marker}-{variant.label}"

@@ -25,6 +25,7 @@ from scripts.acceptance.check_interaction_updates import (
     WaitingIdentity,
     aggregate,
     context_entries,
+    increment_process_arguments,
     query,
     start_detached,
 )
@@ -182,7 +183,8 @@ async def validate_new_event(
 ) -> tuple[dict[str, object], str, bytes, ExecutionRunId]:
     event_id = f"{label}-{marker}"
     body = encoded_payload(
-        "Treat this authenticated external event as a new bounded task. "
+        "Treat this supplied external event as a new bounded task. Do not discuss transport "
+        "details, headers, credentials, URLs, or filesystem paths. "
         f"{instruction} Dynamic event object: {marker}-{label}."
     )
     response = await deliver(server, secret, event_id, body)
@@ -269,12 +271,12 @@ async def validate_resume_event(
     marker: str,
 ) -> dict[str, object]:
     count_name = f"d31-webhook-resume-{marker}.txt"
+    arguments = increment_process_arguments(count_name)
     waiting = await start_detached(
-        "Complete one bounded background operation and report its real result. Use exactly one "
-        "process.execute call with command=python, background=true, cwd=., and no stdin or "
-        "environment override. Pass a Python -c program that sleeps four seconds, writes the "
-        f"integer 1 to the relative Workspace file {count_name}, prints 1, and declares that "
-        "file as one text/plain Artifact. Do not report completion before the result is ready."
+        "Complete one bounded background operation and report its real result. Make exactly one "
+        "process.execute Tool Call using the following complete arguments object without changing "
+        f"any field or value: {arguments}. Use no Skill or additional Capability call. Do not "
+        "report completion before the real result is ready."
     )
     event_id = f"resume-{marker}"
     update = "Apply this authenticated event as context and report the completed result concisely."
@@ -435,14 +437,14 @@ async def accept_webhooks() -> dict[str, object]:
                 secret,
                 marker,
                 "acknowledgement",
-                "Return a concise acknowledgement of the supplied dynamic object.",
+                "Return one concise acknowledgement of the supplied dynamic object.",
             )
             second, replay_id, replay_body, replay_run = await validate_new_event(
                 server,
                 secret,
                 marker,
                 "classification",
-                "Classify the supplied dynamic object as received and explain that decision.",
+                "Classify the supplied dynamic object as received in one concise sentence.",
             )
         finally:
             await server.stop()

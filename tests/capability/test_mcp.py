@@ -220,8 +220,8 @@ async def test_mcp_tool_timeout_is_explicit_and_stops_before_side_effect(tmp_pat
     gateway = await registry(
         tmp_path,
         f"timeout-{uuid4().hex}",
-        request_timeout_seconds=1,
-        delay_milliseconds=2_000,
+        request_timeout_seconds=3,
+        delay_milliseconds=4_000,
     )
 
     result = await gateway.invoke(

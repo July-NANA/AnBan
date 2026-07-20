@@ -192,3 +192,25 @@ async def test_missed_occurrence_policy_is_explicit_and_bounded(
     assert occurrence.status is expected_status
     assert occurrence.missed_count == expected_missed
     assert occurrence.scheduled_for == fixed_clock() + timedelta(seconds=30)
+
+
+async def test_large_skip_backlog_advances_in_a_bounded_durable_chunk() -> None:
+    factory = MemoryUnitOfWorkFactory()
+    service = ScheduleService(factory, clock=fixed_clock)
+    schedule = await service.create_interval(
+        name="bounded-skip-backlog",
+        every_seconds=1,
+        timezone="UTC",
+        content="Skip a large delayed interval without poisoning later worker scans.",
+        missed_policy=ScheduleMissedPolicy.SKIP,
+    )
+
+    occurrence, claimed = await service.claim_due(
+        schedule, fixed_clock() + timedelta(seconds=10_001)
+    )
+
+    assert occurrence is not None
+    assert claimed is False
+    assert occurrence.status is ScheduleOccurrenceStatus.SKIPPED
+    assert occurrence.missed_count == 10_000
+    assert occurrence.scheduled_for == fixed_clock() + timedelta(seconds=10_000)

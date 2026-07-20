@@ -83,16 +83,39 @@ async def create_daily_variant(
     return projection
 
 
-async def run_concurrent_workers(count: int) -> tuple[dict[str, object], ...]:
+async def run_concurrent_workers(
+    count: int, owned_schedule_ids: frozenset[str]
+) -> tuple[tuple[dict[str, object], ...], int]:
     results = await asyncio.gather(
         *(cli_json("scheduler", "run-once", "--json") for _ in range(count))
     )
     payloads: list[dict[str, object]] = []
+    retained_failure_workers = 0
     for code, payload in results:
-        if code != 0 or not isinstance(payload, dict):
-            raise ScheduleDispatchAcceptanceError("Concurrent Schedule worker failed")
-        payloads.append(cast(dict[str, object], payload))
-    return tuple(payloads)
+        if code not in {0, 1}:
+            raise ScheduleDispatchAcceptanceError(
+                f"Concurrent Schedule worker exited with safe code {code}"
+            )
+        if not isinstance(payload, dict):
+            raise ScheduleDispatchAcceptanceError(
+                "Concurrent Schedule worker returned no bounded projection"
+            )
+        values = cast(dict[str, object], payload)
+        dispatches = values.get("dispatches")
+        if not isinstance(dispatches, list):
+            raise ScheduleDispatchAcceptanceError("Concurrent Schedule worker result was invalid")
+        for item in cast(list[object], dispatches):
+            if not isinstance(item, dict):
+                continue
+            dispatch = cast(dict[str, object], item)
+            if dispatch.get("schedule_id") in owned_schedule_ids and dispatch.get("status") in {
+                "failed",
+                "retry_pending",
+            }:
+                raise ScheduleDispatchAcceptanceError("Owned Schedule worker failed")
+        retained_failure_workers += int(code != 0)
+        payloads.append(values)
+    return tuple(payloads), retained_failure_workers
 
 
 async def verify_owned(
@@ -216,12 +239,16 @@ async def accept_schedule_dispatch() -> dict[str, object]:
         await asyncio.sleep(
             max(0.0, (target + timedelta(seconds=1) - datetime.now(UTC)).total_seconds())
         )
-        worker_results = await run_concurrent_workers(len(projections))
+        worker_results, retained_failure_workers = await run_concurrent_workers(
+            len(projections),
+            frozenset(cast(str, projection["id"]) for projection in projections),
+        )
         owned = await verify_owned(projections, contents)
         missed = await verify_missed_skip(marker)
     return {
         "variants": owned,
         "worker_processes": len(worker_results),
+        "retained_failure_worker_processes": retained_failure_workers,
         "concurrent_claims": "one_occurrence_per_schedule",
         "fresh_application_reconstruction": True,
         "missed_policy": missed,

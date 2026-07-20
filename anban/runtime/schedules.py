@@ -214,23 +214,25 @@ class ScheduleService:
         due: list[UtcDateTime] = []
         while cursor <= now:
             due.append(cursor)
-            if len(due) > _MISSED_OCCURRENCES_MAX:
-                raise schedule_error("missed_occurrence_limit_exceeded")
             cursor = next_schedule_occurrence(schedule, cursor)
+            if len(due) == _MISSED_OCCURRENCES_MAX and cursor <= now:
+                if schedule.missed_policy is ScheduleMissedPolicy.SKIP:
+                    return await self._skip_missed(
+                        schedule,
+                        scheduled_for=due[-1],
+                        now=now,
+                        missed_count=len(due),
+                    )
+                raise schedule_error("missed_occurrence_limit_exceeded")
         if not due:
             return None, False
         if len(due) > 1 and schedule.missed_policy is ScheduleMissedPolicy.SKIP:
-            skipped = self._occurrence(
+            return await self._skip_missed(
                 schedule,
                 scheduled_for=due[-1],
                 now=now,
                 missed_count=len(due),
-                status=ScheduleOccurrenceStatus.SKIPPED,
             )
-            async with self._unit_of_work() as unit_of_work:
-                stored, _ = await unit_of_work.executions.add_schedule_occurrence(skipped)
-                await unit_of_work.commit()
-            return stored, False
         candidate = self._occurrence(
             schedule,
             scheduled_for=due[-1],
@@ -290,6 +292,26 @@ class ScheduleService:
             stored, claimed = await unit_of_work.executions.claim_schedule_occurrence(occurrence)
             await unit_of_work.commit()
         return stored, claimed
+
+    async def _skip_missed(
+        self,
+        schedule: ScheduleDefinition,
+        *,
+        scheduled_for: UtcDateTime,
+        now: UtcDateTime,
+        missed_count: int,
+    ) -> tuple[ScheduleOccurrence, bool]:
+        skipped = self._occurrence(
+            schedule,
+            scheduled_for=scheduled_for,
+            now=now,
+            missed_count=missed_count,
+            status=ScheduleOccurrenceStatus.SKIPPED,
+        )
+        async with self._unit_of_work() as unit_of_work:
+            stored, _ = await unit_of_work.executions.add_schedule_occurrence(skipped)
+            await unit_of_work.commit()
+        return stored, False
 
     @staticmethod
     def _occurrence(

@@ -62,6 +62,20 @@ def waiting_identity(payload: dict[str, object]) -> WaitingIdentity:
     return WaitingIdentity(*cast(tuple[str, str, str, str, str], values))
 
 
+def safe_failure_reason(payload: dict[str, object]) -> str:
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return "missing_result"
+    error_values = cast(dict[str, object], error)
+    details = error_values.get("details")
+    detail_values = cast(dict[str, object], details) if isinstance(details, dict) else {}
+    reason = detail_values.get("reason")
+    if isinstance(reason, str):
+        return reason
+    code = error_values.get("code")
+    return code if isinstance(code, str) else "unknown_failure"
+
+
 async def aggregate(run_id: str) -> ExecutionRunAggregate:
     configuration = load_configuration()
     engine = create_database_engine(configuration.database.require("development"))
@@ -106,10 +120,24 @@ async def query(run_id: str) -> RunDetail:
 
 
 async def start_detached(prompt: str, *, timeout: float = 180) -> WaitingIdentity:
-    code, payloads = await cli("run", prompt, "--async", "--detach", "--json", timeout=timeout)
-    if code != 0 or not payloads:
-        raise InteractionUpdateAcceptanceError("detached update case did not start")
-    return waiting_identity(payloads[-1])
+    for attempt in range(3):
+        code, payloads = await cli("run", prompt, "--async", "--detach", "--json", timeout=timeout)
+        if code == 0 and payloads:
+            return waiting_identity(payloads[-1])
+        reason = safe_failure_reason(payloads[-1]) if payloads else "missing_result"
+        run_id = payloads[-1].get("run_id") if payloads else None
+        if (
+            reason not in {"model_response_invalid", "task_route_invalid"}
+            or not isinstance(run_id, str)
+            or attempt == 2
+        ):
+            raise InteractionUpdateAcceptanceError(f"detached update case did not start: {reason}")
+        failed = await aggregate(run_id)
+        if failed.invocations or failed.checkpoints or failed.artifacts:
+            raise InteractionUpdateAcceptanceError(
+                "failed detached start produced executable side effects"
+            )
+    raise InteractionUpdateAcceptanceError("detached update start exhausted safe retries")
 
 
 async def apply_update(identity: WaitingIdentity, update: str) -> dict[str, object]:

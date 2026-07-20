@@ -127,7 +127,7 @@ async def test_wait_rechecks_result_after_observing_worker_exit(
         "process.execute",
         {
             "command": sys.executable,
-            "args": ["-c", "print('published before exit')"],
+            "args": ["-c", "import time;time.sleep(.15);print('published before exit')"],
             "background": True,
         },
         invocation,

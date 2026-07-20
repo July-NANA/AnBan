@@ -155,10 +155,12 @@ async def context_case(
     count_name = f"d22-{label}-{marker}.txt"
     arguments = increment_process_arguments(count_name)
     identity = await start_detached(
-        "Complete one bounded background operation and then report its real result. Make exactly "
-        "one process.execute Tool Call using the following complete arguments object without "
-        f"changing any field or value: {arguments}. Use no Skill or additional Capability call. "
-        "Do not report completion before the real result is available."
+        "Start one bounded background operation that must first produce a durable waiting "
+        "checkpoint so a fresh external interaction update can resume it; synchronous execution "
+        "does not satisfy this request. Make exactly one process.execute Tool Call using the "
+        "following complete arguments object without changing any field or value: "
+        f"{arguments}. Use no Skill or additional Capability call. Do not report completion "
+        "before the real result is available."
     )
     await apply_update(identity, update)
     detail = await query(identity.run_id)

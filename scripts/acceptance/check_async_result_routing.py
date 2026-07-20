@@ -23,11 +23,12 @@ from anban.interaction import (
 )
 from scripts.acceptance.check_cli_e2e import isolated_environment, prepare_workspace
 from scripts.acceptance.check_interaction_updates import (
+    InteractionUpdateAcceptanceError,
     WaitingIdentity,
     aggregate,
     increment_process_arguments,
     query,
-    start_detached,
+    waiting_identity,
 )
 from scripts.acceptance.check_restart_recovery import cli
 from scripts.workspace_bootstrap import resolve_workspace
@@ -144,17 +145,7 @@ async def run_variant(
     marker: str,
     variant: ResultVariant,
 ) -> tuple[dict[str, object], WaitingIdentity]:
-    count_name = f"d28-{variant.label}-{marker}.txt"
-    arguments = increment_process_arguments(count_name)
-    identity = await start_detached(
-        "Start one bounded background operation that must first produce a durable waiting "
-        "checkpoint so an authoritative asynchronous result signal can resume it; synchronous "
-        "execution does not satisfy this request. Make exactly one process.execute Tool Call "
-        "using the following complete arguments object without changing any field or value: "
-        f"{arguments}. Use no Skill or additional Capability call. Do not report completion "
-        "before the real result is available. After the result is retrieved, "
-        f"{variant.final_instruction} Dynamic task object: {marker}-{variant.label}."
-    )
+    identity, count_name, synchronous_attempts = await start_variant(marker, variant)
     delivery = f"{marker}-{variant.label}"
     original = await apply_result(identity, variant, delivery)
     detail = await query(identity.run_id)
@@ -212,9 +203,56 @@ async def run_variant(
             "run_id": identity.run_id,
             "deliveries": inbox.delivery_count,
             "artifact_count": len(correlated_artifacts),
+            "synchronous_start_attempts": synchronous_attempts,
         },
         identity,
     )
+
+
+async def start_variant(marker: str, variant: ResultVariant) -> tuple[WaitingIdentity, str, int]:
+    """Start one resumable Process, isolating any safe synchronous Provider attempt."""
+
+    for attempt in range(3):
+        count_name = f"d28-{variant.label}-{marker}-{attempt + 1}.txt"
+        arguments = increment_process_arguments(count_name)
+        code, payloads = await cli(
+            "run",
+            "Start one bounded background operation that must first produce a durable waiting "
+            "checkpoint so an authoritative asynchronous result signal can resume it; synchronous "
+            "execution does not satisfy this request. Make exactly one process.execute Tool Call "
+            "using the following complete arguments object without changing any field or value: "
+            f"{arguments}. Use no Skill or additional Capability call. Do not report completion "
+            "before the real result is available. After the result is retrieved, "
+            f"{variant.final_instruction} Dynamic task object: {marker}-{variant.label}.",
+            "--async",
+            "--detach",
+            "--json",
+            timeout=180,
+        )
+        if code != 0 or not payloads:
+            raise AsyncResultAcceptanceError("detached Process result case did not start")
+        terminal = payloads[-1]
+        try:
+            return waiting_identity(terminal), count_name, attempt
+        except InteractionUpdateAcceptanceError:
+            run_id = terminal.get("run_id")
+            if terminal.get("status") != "succeeded" or not isinstance(run_id, str) or attempt == 2:
+                raise AsyncResultAcceptanceError(
+                    "Process result case did not produce a resumable checkpoint"
+                ) from None
+            state = await aggregate(run_id)
+            count_path = load_configuration().workspace / count_name
+            if (
+                state.run.status.value != "succeeded"
+                or len(state.invocations) != 1
+                or state.checkpoints
+                or not count_path.is_file()
+                or count_path.read_text(encoding="utf-8").strip() != "1"
+            ):
+                raise AsyncResultAcceptanceError(
+                    "synchronous Process attempt was not safe to isolate"
+                ) from None
+    raise AsyncResultAcceptanceError("Process result start attempts were exhausted")
 
 
 async def reverse_cases(identity: WaitingIdentity, marker: str) -> dict[str, str]:

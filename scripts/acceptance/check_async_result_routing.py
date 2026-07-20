@@ -25,6 +25,7 @@ from scripts.acceptance.check_cli_e2e import isolated_environment, prepare_works
 from scripts.acceptance.check_interaction_updates import (
     WaitingIdentity,
     aggregate,
+    increment_process_arguments,
     query,
     start_detached,
 )
@@ -144,14 +145,13 @@ async def run_variant(
     variant: ResultVariant,
 ) -> tuple[dict[str, object], WaitingIdentity]:
     count_name = f"d28-{variant.label}-{marker}.txt"
+    arguments = increment_process_arguments(count_name)
     identity = await start_detached(
-        "Complete one bounded background operation and truthfully report its real result. Use "
-        "exactly one process.execute call with command=python and background=true. Pass a Python "
-        "-c program that sleeps four seconds, reads the relative Workspace file "
-        f"{count_name} if present, increments its integer value once, and writes it back. Use "
-        "cwd=., print the resulting integer, and declare the same file as one text/plain "
-        "Artifact. Use no environment override, stdin, Skill, or other Capability. Do not report "
-        "completion before the real result is available. After the result is retrieved, "
+        "Complete one bounded background operation and truthfully report its real result. Make "
+        "exactly one process.execute Tool Call using the following complete arguments object "
+        f"without changing any field or value: {arguments}. Use no Skill or additional "
+        "Capability call. Do not report completion before the real result is available. After "
+        "the result is retrieved, "
         f"{variant.final_instruction} Dynamic task object: {marker}-{variant.label}."
     )
     delivery = f"{marker}-{variant.label}"

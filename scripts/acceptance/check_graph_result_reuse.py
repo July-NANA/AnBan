@@ -88,6 +88,41 @@ def publication_objective(value: str) -> str:
     )
 
 
+def counting_objective(
+    count_name: str,
+    *,
+    output_key: str,
+    output_value: str,
+    background: bool,
+) -> str:
+    """Build one controlled counting Process action with an exact node output."""
+
+    output_json = json.dumps({output_key: output_value}, ensure_ascii=True, separators=(",", ":"))
+    delay = "time.sleep(4);" if background else ""
+    program = (
+        "import time;from pathlib import Path;"
+        f"{delay}p=Path({count_name!r});"
+        "value=int(p.read_text())+1 if p.exists() else 1;"
+        f"p.write_text(str(value));print({output_json!r})"
+    )
+    arguments = json.dumps(
+        {
+            "command": "python",
+            "args": ["-c", program],
+            "cwd": ".",
+            "background": background,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return (
+        "Make exactly one process.execute Tool Call using the following complete arguments "
+        f"object without changing any field or value: {arguments}. Use no Skill or additional "
+        "Capability call. After the real result, return exactly this JSON object with no "
+        f"surrounding prose: {output_json}."
+    )
+
+
 def supplied_graph(
     marker: str,
     count_name: str,
@@ -101,26 +136,22 @@ def supplied_graph(
         TaskGraphNode(
             id=prepare_id,
             kind=TaskGraphNodeKind.ACTION,
-            objective=(
-                "Use exactly one process.execute call with command=python, background=false, "
-                "cwd=., and no stdin, environment override, Skill, or other Capability. Run a "
-                "Python -c program that reads the relative Workspace integer file "
-                f"{prepare_count_name} when present, otherwise uses zero, increments it once, "
-                "writes it back, and prints it. After the real result, return exactly "
-                f'one JSON object with item equal to "{variant.label}-input".'
+            objective=counting_objective(
+                prepare_count_name,
+                output_key="item",
+                output_value=f"{variant.label}-input",
+                background=False,
             ),
             outputs=("item",),
         ),
         TaskGraphNode(
             id=active_id,
             kind=TaskGraphNodeKind.ACTION,
-            objective=(
-                "Use exactly one process.execute call with command=python, background=true, "
-                "cwd=., and no stdin, environment override, Skill, or other Capability. Run a "
-                "Python -c program that sleeps four seconds, reads the relative Workspace integer "
-                f"file {count_name} when present, otherwise uses zero, increments it once, writes "
-                "it back, and prints it. After the real result, "
-                f'return exactly one JSON object with effect equal to "{variant.original_value}".'
+            objective=counting_objective(
+                count_name,
+                output_key="effect",
+                output_value=variant.original_value,
+                background=True,
             ),
             dependencies=(prepare_id,),
             inputs={"item": output(prepare_id, "item")},

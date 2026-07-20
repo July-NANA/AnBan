@@ -199,7 +199,8 @@ def supplied_structural_graph(marker: str, count_name: str) -> TaskGraphSpec:
         objective=(
             "Make exactly one process.execute Tool Call using this complete arguments object "
             f"without changing any field or value: {arguments}. Use no Skill or additional "
-            "Capability call. Then return exactly the transformed JSON output."
+            "Capability call. After the real result, return exactly this JSON object with no "
+            'surrounding prose: {"transformed":"structural-update-complete"}.'
         ),
         outputs=("transformed",),
     )

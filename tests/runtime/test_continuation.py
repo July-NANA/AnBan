@@ -46,7 +46,7 @@ def background_turn(label: str, code: str) -> ModelTurn:
                 name="process.execute",
                 arguments={
                     "command": sys.executable,
-                    "args": ["-c", code],
+                    "args": ["-c", f"import time;time.sleep(.15);{code}"],
                     "background": True,
                 },
             ),
@@ -309,11 +309,14 @@ async def test_detach_releases_local_coroutine_without_cancelling_worker(tmp_pat
     waiting = await runtime.start_async("Detach local ownership from durable external work.")
     assert isinstance(waiting, WaitingExecution)
     await runtime.detach_async(waiting.checkpoint_id)
-    await asyncio.sleep(0.3)
-
-    assert (tmp_path / "detached.txt").read_text() == "durable"
+    detached = tmp_path / "detached.txt"
     state = tmp_path / ".anban" / "process" / str(waiting.invocation_id)
-    assert (state / "result.json").is_file()
+    result_path = state / "result.json"
+    async with asyncio.timeout(2):
+        while not result_path.is_file():
+            await asyncio.sleep(0.01)
+
+    assert detached.read_text() == "durable"
     assert not (state / "cancel").exists()
     aggregate = await load(factory, waiting)
     assert aggregate is not None

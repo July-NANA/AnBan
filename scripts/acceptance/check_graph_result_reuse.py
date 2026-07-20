@@ -91,13 +91,14 @@ def publication_objective(value: str) -> str:
 def counting_objective(
     count_name: str,
     *,
-    output_key: str,
-    output_value: str,
+    output_key: str | None,
+    output_value: str | None,
     background: bool,
 ) -> str:
     """Build one controlled counting Process action with an exact node output."""
 
-    output_json = json.dumps({output_key: output_value}, ensure_ascii=True, separators=(",", ":"))
+    output = {} if output_key is None else {output_key: output_value}
+    output_json = json.dumps(output, ensure_ascii=True, separators=(",", ":"))
     delay = "time.sleep(4);" if background else ""
     program = (
         "import time;from pathlib import Path;"
@@ -149,20 +150,19 @@ def supplied_graph(
             kind=TaskGraphNodeKind.ACTION,
             objective=counting_objective(
                 count_name,
-                output_key="effect",
-                output_value=variant.original_value,
+                output_key=None,
+                output_value=None,
                 background=True,
             ),
             dependencies=(prepare_id,),
             inputs={"item": output(prepare_id, "item")},
-            outputs=("effect",),
+            outputs=(),
         ),
         TaskGraphNode(
             id=publish_id,
             kind=TaskGraphNodeKind.ACTION,
             objective=publication_objective(variant.original_value),
             dependencies=(active_id,),
-            inputs={"effect": output(active_id, "effect")},
             outputs=("result",),
         ),
     )

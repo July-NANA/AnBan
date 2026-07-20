@@ -153,18 +153,41 @@ async def run_variant(
     marker: str,
     variant: InputVariant,
 ) -> tuple[dict[str, object], WaitingIdentity]:
-    count_name = f"d27-{variant.label}-{marker}.txt"
-    arguments = increment_process_arguments(count_name)
-    identity = await start_detached(
-        "Start one bounded background operation that must first produce a durable waiting "
-        "checkpoint so correlated human-origin input can resume it; synchronous execution does "
-        "not satisfy this request. Make exactly one process.execute Tool Call using the following "
-        f"complete arguments object without changing any field or value: {arguments}. Use no "
-        "Skill or additional Capability call. Do not report completion before the real result is "
-        f"available. Dynamic task object: {marker}."
-    )
-    delivery = f"{marker}-{variant.label}" if variant.deduplicate else None
-    payload, original = await apply_variant(identity, variant, delivery)
+    accepted: (
+        tuple[
+            WaitingIdentity,
+            str,
+            str | None,
+            dict[str, object],
+            InteractionEnvelope | None,
+        ]
+        | None
+    ) = None
+    completion_failures: list[str] = []
+    for attempt in range(3):
+        count_name = f"d27-{variant.label}-{marker}-{attempt}.txt"
+        arguments = increment_process_arguments(count_name)
+        identity = await start_detached(
+            "Start one bounded background operation that must first produce a durable waiting "
+            "checkpoint so correlated human-origin input can resume it; synchronous execution "
+            "does not satisfy this request. Make exactly one process.execute Tool Call using the "
+            f"following complete arguments object without changing any field or value: "
+            f"{arguments}. Use no Skill or additional Capability call. Do not report completion "
+            f"before the real result is available. Dynamic task object: {marker}-{attempt}."
+        )
+        delivery = f"{marker}-{variant.label}-{attempt}" if variant.deduplicate else None
+        try:
+            payload, original = await apply_variant(identity, variant, delivery)
+        except HumanInputAcceptanceError:
+            if attempt == 2 or not await retryable_incomplete_recovery(identity, count_name):
+                raise
+            completion_failures.append(identity.run_id)
+            continue
+        accepted = (identity, count_name, delivery, payload, original)
+        break
+    if accepted is None:
+        raise HumanInputAcceptanceError("human input exhausted bounded completion retries")
+    identity, count_name, delivery, payload, original = accepted
     detail = await query(identity.run_id)
     state = await aggregate(identity.run_id)
     entries = await context_entries(identity.task_id)
@@ -221,8 +244,35 @@ async def run_variant(
             "input_kind": variant.input_kind.value,
             "run_id": identity.run_id,
             "deliveries": inbox.delivery_count,
+            "completion_retry_count": len(completion_failures),
         },
         identity,
+    )
+
+
+async def retryable_incomplete_recovery(identity: WaitingIdentity, count_name: str) -> bool:
+    state = await aggregate(identity.run_id)
+    count_path = load_configuration().workspace / count_name
+    completion = tuple(
+        event
+        for event in state.events
+        if event.event_type == "agent.completion_assessed"
+        and event.metadata.root.get("complete") is False
+    )
+    return (
+        state.run.status.value == "failed"
+        and state.run.error_code is not None
+        and state.run.error_code.value == "validation_failed"
+        and state.graph_revision is None
+        and len(state.invocations) == 1
+        and state.invocations[0].status.value == "succeeded"
+        and len(state.checkpoints) == 1
+        and state.checkpoints[0].status.value == "completed"
+        and len(state.artifacts) == 1
+        and len(completion) == 1
+        and sum(event.event_type == "run.recovery_completed" for event in state.events) == 1
+        and count_path.is_file()
+        and count_path.read_text(encoding="utf-8").strip() == "1"
     )
 
 
@@ -262,14 +312,14 @@ async def accept_human_input() -> dict[str, object]:
                 InteractionInputKind.USER_MESSAGE,
                 "cli",
                 "reply",
-                "Answer the user reply with one concise sentence after the real work completes.",
+                "After the real work completes, return exactly this final text: Reply accepted.",
             ),
             InputVariant(
                 "update",
                 InteractionInputKind.SUPPLEMENTAL_INPUT,
                 "message.adapter",
                 "supplement",
-                "Apply the supplemental requirement and label the final result Verified.",
+                "After the real work completes, return exactly this final text: Verified.",
                 deduplicate=True,
             ),
             InputVariant(
@@ -277,7 +327,8 @@ async def accept_human_input() -> dict[str, object]:
                 InteractionInputKind.HUMAN_INPUT,
                 "cli",
                 "human",
-                "Apply the bounded human direction and summarize the real result in one sentence.",
+                "After the real work completes, return exactly this final text: Human direction "
+                "applied.",
             ),
         )
         accepted: list[dict[str, object]] = []

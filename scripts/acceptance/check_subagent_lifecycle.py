@@ -187,20 +187,37 @@ async def validate_variant(
 ) -> tuple[dict[str, object], CorrelatedWaitingExecution]:
     file_name = f"d30-{variant.label}-{marker}.txt"
     content = f"verified-{variant.label}-{marker}"
+    program = f"import pathlib;pathlib.Path({file_name!r}).write_text({content!r},encoding='utf-8')"
+    process_arguments = json.dumps(
+        {
+            "command": "python",
+            "args": ["-c", program],
+            "cwd": ".",
+            "background": False,
+            "artifacts": [{"path": file_name, "media_type": "text/plain"}],
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    child_objective = (
+        "Make exactly one process.execute Tool Call using the following complete arguments "
+        f"object without changing any field or value: {process_arguments}. Use no Skill, "
+        "additional Capability call, or further delegation. After the real result, verify the "
+        "declared Artifact and report completion truthfully."
+    )
+    delegate_arguments = json.dumps(
+        {"objective": child_objective}, ensure_ascii=True, separators=(",", ":")
+    )
     application = await build_application()
     try:
         started = await application.interactions.start_async(
             InteractionEnvelope(
                 id=new_interaction_id(),
                 content=(
-                    "Coordinate exactly one independently durable child Agent for this bounded "
-                    "objective, then wait for and truthfully aggregate its authoritative result. "
-                    "The child must use exactly one process.execute operation, with command=python "
-                    "and cwd=., and no further delegation. Pass a Python -c program that imports "
-                    "pathlib and uses pathlib.Path.write_text to create the relative Workspace "
-                    f"file {file_name} containing exactly {json.dumps(content)} with no prefix or "
-                    "newline. It must declare that file as one text/plain Artifact and verify the "
-                    "real operation before reporting completion. After recovery, "
+                    "Make exactly one agent.delegate Tool Call using the following complete "
+                    f"arguments object without changing any field or value: {delegate_arguments}. "
+                    "Use no additional Capability call. Wait for and truthfully aggregate the "
+                    "independently durable child result. After recovery, "
                     f"{variant.result_instruction}"
                 ),
             )

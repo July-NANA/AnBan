@@ -294,7 +294,6 @@ async def test_graph_recovery_reuses_prior_output_and_continues_future_node(
             [
                 assessment_turn(ExecutionStrategy.USE_PROCESS, "process.execute"),
                 final_turn(active_final),
-                completion_turn(final_text="A rewritten recovered-action summary."),
                 *direct_action_turns(future_final),
             ],
         ),

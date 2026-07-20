@@ -61,6 +61,7 @@ class RecoveredContinuationAgent:
         prior_model_turns: int,
         prior_capability_calls: int,
         preserve_proposed_final: bool = False,
+        assess_completion: bool = True,
     ) -> AgentOutcome:
         observation = result.observation
         if observation is None:
@@ -151,6 +152,14 @@ class RecoveredContinuationAgent:
                     repair_attempts += 1
                     repair_request = True
             final_text = self._final_text(turn)
+            if not assess_completion:
+                return AgentOutcome(
+                    status=AgentOutcomeStatus.SUCCEEDED,
+                    final_text=final_text,
+                    model_turn_count=prior_model_turns + self._model.turn_count,
+                    capability_call_count=prior_capability_calls,
+                    artifacts=(*prior_artifacts, *result.artifacts),
+                )
             messages.append(ModelMessage(role="assistant", content=final_text))
             repair_request = False
             while True:

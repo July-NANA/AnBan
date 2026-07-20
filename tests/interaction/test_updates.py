@@ -406,8 +406,6 @@ async def test_structural_update_appends_revision_and_reuses_started_graph_actio
                     repairable,
                     assessment_turn(ExecutionStrategy.USE_PROCESS, "process.execute"),
                     final_turn(active_final),
-                    repairable,
-                    completion_turn(final_text=active_final),
                     assessment_turn(ExecutionStrategy.DIRECT_ANSWER, target=""),
                     final_turn(future_final),
                     repairable,
@@ -451,7 +449,7 @@ async def test_structural_update_appends_revision_and_reuses_started_graph_actio
     assert event_types.count("graph.result_reused") == 1
     assert event_types.count("graph.result_invalidated") == 0
     assert event_types.count("run.recovery_completed") == 1
-    assert event_types.count("model.repair_requested") == 3
+    assert event_types.count("model.repair_requested") == 2
 
 
 async def test_structural_update_reexecutes_only_invalidated_pure_result(
@@ -510,7 +508,6 @@ async def test_structural_update_reexecutes_only_invalidated_pure_result(
                     *direct_action_turns('{"derived":"recomputed-result"}'),
                     assessment_turn(ExecutionStrategy.USE_PROCESS, "process.execute"),
                     final_turn(active_final),
-                    completion_turn(final_text=active_final),
                     *direct_action_turns(published),
                 ],
             ),

@@ -295,7 +295,9 @@ class RuntimeRecovery:
                 prior_artifacts=self._artifact_references(aggregate, persistence.node),
                 prior_model_turns=active_model_turns,
                 prior_capability_calls=active_capability_calls,
-                preserve_proposed_final=True,
+                # The graph executor validates this response against the node's exact
+                # JSON output contract; a second model assessment is not authoritative.
+                assess_completion=False,
             )
 
         spec = aggregate.graph_revision.spec
